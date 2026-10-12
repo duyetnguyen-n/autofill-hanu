@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.runtime/
+.backups/
+.local-data/
+releases/
+test-results/
+playwright-report/
+*.sqlite*
+.DS_Store

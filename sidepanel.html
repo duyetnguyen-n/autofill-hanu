@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HSK Autofill</title>
+  </head>
+  <body>
+    <main>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">GOOGLE FORMS <span id="buildVersion"></span></p>
+          <h1>HSK Autofill</h1>
+        </div>
+        <span id="stateBadge" class="badge idle">Sẵn sàng</span>
+      </header>
+
+      <section class="notice">
+        Chỉ dùng cho hồ sơ của bạn. Dữ liệu được lưu cục bộ trên máy này.
+      </section>
+      <section class="card">
+        <h2>Liên kết app quản lý</h2>
+        <div class="extension-id-row"><p>ID extension: <code id="extensionId"></code></p><button id="copyExtensionId" class="text-button">Sao chép ID</button></div>
+        <p id="nativeStatus" class="muted">Đang kiểm tra kết nối...</p>
+        <label class="field">Mã liên kết<input id="pairCode" autocomplete="off" placeholder="Mã từ màn hình quản lý" /></label>
+        <button id="pairProfile" class="secondary">Liên kết profile</button>
+        <button id="openCoordinator" class="text-button" disabled>Mở màn hình quản lý</button>
+      </section>
+
+      <section class="card mode-card">
+        <label for="runMode">Chế độ chạy</label>
+        <select id="runMode">
+          <option value="test">Test — không gửi form</option>
+          <option value="live">Live — tự gửi khi hoàn tất</option>
+        </select>
+        <p id="modeHelp">Chế độ Test luôn dừng trước nút Gửi.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <h2>Khảo sát form</h2>
+          <button id="scanForm" class="text-button">Quét trang này</button>
+        </div>
+        <p class="muted">Chỉ dùng để chẩn đoán khi form đổi cấu trúc — không cần bấm trong luồng tự động. Chỉ đọc DOM, không điền và không gửi.</p>
+        <ol id="formAudit" class="form-audit"></ol>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <h2>Hồ sơ HSK</h2>
+          <button id="saveProfile" class="text-button">Lưu</button>
+        </div>
+        <div id="profileFields" class="fields"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading"><h2>Tệp đã lưu</h2></div>
+        <label class="field-label" for="identityFile">Ảnh CCCD/hộ chiếu</label>
+        <input id="identityFile" type="file" accept="image/*,.pdf" />
+        <p id="identityFileStatus" class="muted">Chưa chọn tệp.</p>
+        <p class="muted">Chọn ảnh trước khi chạy. Khi tới câu upload, extension dùng tệp đã lưu, không cần tìm đường dẫn lại. Test vẫn tải ảnh lên Google nhưng dừng trước nút Gửi.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <h2>Trường tùy chỉnh</h2>
+          <button id="addCustomField" class="text-button">Thêm</button>
+        </div>
+        <p class="muted">Alias phân cách bằng dấu phẩy; chỉ ghép chính xác.</p>
+        <div id="customFields" class="fields"></div>
+      </section>
+
+      <section id="blockingCard" class="card blocking hidden">
+        <h2>Cần bạn xử lý</h2>
+        <p id="blockingMessage"></p>
+        <div id="mappingControls" class="hidden">
+          <label for="mappingRule">Gán câu hỏi này với</label>
+          <select id="mappingRule"></select>
+          <button id="saveMapping" class="secondary">Lưu ánh xạ</button>
+        </div>
+      </section>
+
+      <section class="actions">
+        <button id="startRun" class="primary">Bắt đầu</button>
+        <button id="pauseRun" class="secondary">Tạm dừng</button>
+        <button id="resumeRun" class="secondary">Tiếp tục</button>
+        <button id="stopRun" class="danger">Dừng</button>
+      </section>
+
+      <button id="clearData" class="clear-data">Xóa toàn bộ dữ liệu cục bộ</button>
+
+      <section class="card">
+        <div class="section-heading"><h2>Nhật ký</h2></div>
+        <ol id="runLog" class="run-log"></ol>
+      </section>
+    </main>
+    <script type="module" src="/src/sidepanel.ts"></script>
+  </body>
+</html>

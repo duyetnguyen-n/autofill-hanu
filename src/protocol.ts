@@ -1,0 +1,47 @@
+import type { Profile, RunMode, RunState } from './shared';
+
+export const PROTOCOL_VERSION = 1;
+export const NATIVE_HOST = 'vn.hanu.autofill';
+export const CHUNK_BYTES = 64 * 1024;
+export type CommandKind = 'PING' | 'FOCUS' | 'READ_PROFILE' | 'ATTACHMENT_INFO' | 'ATTACHMENT_READ' | 'ATTACHMENT_BEGIN' | 'ATTACHMENT_CHUNK' | 'ATTACHMENT_FINISH' | 'COMMIT_PROFILE' | 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'RECONCILE' | 'RESOLVE_SUBMISSION';
+export interface Command {
+  type: 'COMMAND'; protocol: 1; sessionId: string; commandId: string;
+  runId?: string; kind: CommandKind; payload: Record<string, unknown>;
+}
+export interface ProfileDocument { profile: Profile; revision: number }
+export interface SessionView {
+  id: string; name: string; expectedEmail: string; connected: boolean;
+  lastSeen: string; profile?: Profile; revision: number; synced: boolean;
+  conflict?: ProfileDocument; error?: string; run?: RunState;
+}
+export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string }
+export function canonicalFormId(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com') return;
+    return u.pathname.match(/^\/forms\/d\/(?:e\/)?([^/]+)\/(?:viewform|formResponse)/)?.[1];
+  } catch { return; }
+}
+export function allowedFormUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && !u.username && !u.password &&
+      (u.hostname === 'forms.gle' || Boolean(canonicalFormId(url)));
+  } catch { return false; }
+}
+export function validateProfile(value: unknown): asserts value is Profile {
+  const p = value as Profile;
+  if (!p || typeof p !== 'object' || !p.values || !p.attachments || !p.mappings || !Array.isArray(p.customFields)) throw new Error('Hồ sơ không hợp lệ.');
+  for (const map of [p.values, p.mappings]) {
+    if (typeof map !== 'object' || Array.isArray(map) || Object.values(map).some(v => typeof v !== 'string')) throw new Error('Giá trị hồ sơ phải là chuỗi.');
+  }
+  for (const f of p.customFields) if (!f || typeof f.id !== 'string' || typeof f.label !== 'string' || typeof f.value !== 'string' || !Array.isArray(f.aliases) || f.aliases.some(a => typeof a !== 'string')) throw new Error('Trường tùy chỉnh không hợp lệ.');
+  for (const a of Object.values(p.attachments)) if (a && (typeof a.id !== 'string' || typeof a.name !== 'string' || typeof a.type !== 'string' || !Number.isSafeInteger(a.size) || a.size < 0)) throw new Error('Tham chiếu ảnh không hợp lệ.');
+}
+export async function sha256(bytes: ArrayBuffer): Promise<string> {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
+}
+export function bytesToBase64(bytes: Uint8Array): string {
+  let s = ''; for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(s);
+}

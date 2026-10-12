@@ -1,0 +1,134 @@
+{
+  "blockingIssue": {
+    "candidates": [],
+    "message": "Câu xác thực cần tự trả lời: Năm nay là năm bao nhiêu?今年是哪一年？ *",
+    "questionId": "label:nam nay la nam bao nhieu?今年是哪一年？ *",
+    "questionLabel": "Năm nay là năm bao nhiêu?今年是哪一年？ *",
+    "reason": "verification"
+  },
+  "filled": 18,
+  "formId": "1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ",
+  "logs": [
+    {
+      "at": "2026-10-07T17:19:18.972Z",
+      "level": "info",
+      "message": "Bắt đầu ở chế độ Test."
+    },
+    {
+      "at": "2026-10-07T17:19:19.038Z",
+      "level": "info",
+      "message": "Đã điền: Ghi email tài khoản Google"
+    },
+    {
+      "at": "2026-10-07T17:19:20.814Z",
+      "level": "info",
+      "message": "Đã điền: Cam kết tự đăng ký"
+    },
+    {
+      "at": "2026-10-07T17:19:22.774Z",
+      "level": "info",
+      "message": "Hồ sơ chưa có dữ liệu tùy chọn: Tên tiếng Trung"
+    },
+    {
+      "at": "2026-10-07T17:19:22.790Z",
+      "level": "info",
+      "message": "Đã điền: Họ và tên"
+    },
+    {
+      "at": "2026-10-07T17:19:23.116Z",
+      "level": "info",
+      "message": "Đã điền: Loại giấy tờ tùy thân"
+    },
+    {
+      "at": "2026-10-07T17:19:24.146Z",
+      "level": "info",
+      "message": "Đã điền: Số CCCD"
+    },
+    {
+      "at": "2026-10-07T17:19:25.752Z",
+      "level": "info",
+      "message": "Đã điền: Tiếng mẹ đẻ"
+    },
+    {
+      "at": "2026-10-07T17:19:26.066Z",
+      "level": "info",
+      "message": "Đã điền: Giới tính"
+    },
+    {
+      "at": "2026-10-07T17:19:26.125Z",
+      "level": "info",
+      "message": "Đã điền: Quốc tịch"
+    },
+    {
+      "at": "2026-10-07T17:19:26.501Z",
+      "level": "info",
+      "message": "Đã điền: Thời gian học tiếng Trung"
+    },
+    {
+      "at": "2026-10-07T17:19:26.509Z",
+      "level": "info",
+      "message": "Đã điền: Ngày sinh"
+    },
+    {
+      "at": "2026-10-07T17:19:26.517Z",
+      "level": "info",
+      "message": "Đã điền: Email"
+    },
+    {
+      "at": "2026-10-07T17:19:26.525Z",
+      "level": "info",
+      "message": "Đã điền: Số điện thoại"
+    },
+    {
+      "at": "2026-10-07T17:19:26.531Z",
+      "level": "info",
+      "message": "Đang mở hộp upload cho ảnh đã lưu: upload-fixture.png"
+    },
+    {
+      "at": "2026-10-07T17:19:27.969Z",
+      "level": "info",
+      "message": "Đang tải upload-fixture.png lên Google; chờ form xác nhận nhận ảnh."
+    },
+    {
+      "at": "2026-10-07T17:19:31.999Z",
+      "level": "info",
+      "message": "Đã điền: Ảnh giấy tờ tùy thân"
+    },
+    {
+      "at": "2026-10-07T17:19:35.281Z",
+      "level": "info",
+      "message": "Đã điền: Tên ngân hàng"
+    },
+    {
+      "at": "2026-10-07T17:19:35.290Z",
+      "level": "info",
+      "message": "Đã điền: Số tài khoản"
+    },
+    {
+      "at": "2026-10-07T17:19:35.351Z",
+      "level": "info",
+      "message": "Đã điền: Phương thức chuyển khoản"
+    },
+    {
+      "at": "2026-10-07T17:19:35.357Z",
+      "level": "info",
+      "message": "Đã điền: Chủ tài khoản"
+    },
+    {
+      "at": "2026-10-07T17:19:36.875Z",
+      "level": "info",
+      "message": "Đã điền: Cam kết tự đăng ký"
+    },
+    {
+      "at": "2026-10-07T17:19:40.290Z",
+      "level": "warning",
+      "message": "Câu xác thực cần tự trả lời: Năm nay là năm bao nhiêu?今年是哪一年？ *"
+    }
+  ],
+  "mode": "test",
+  "skipped": 8,
+  "status": "waiting_manual",
+  "submitAttempted": false,
+  "tabId": 1410662733,
+  "updatedAt": "2026-10-07T17:19:40.290Z"
+}
