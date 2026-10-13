@@ -31,3 +31,8 @@ it('rejects invalid pairing codes before opening a native connection',async()=>{
   const f=fixture();await expect(f.client.pair('123')).rejects.toThrow('12 ký tự');expect(f.runtime.connectNative).not.toHaveBeenCalled();
 });
 it('halts the page and refuses requests when the coordinator reports a storage failure',async()=>{const f=fixture();const pairing=f.client.pair('ABCDEF123456');await vi.waitFor(()=>expect(f.ports).toHaveLength(1));const port=f.ports[0];port.messages.forEach((fn:any)=>fn({type:'PAIRED',token:'token'}));await pairing;port.messages.forEach((fn:any)=>fn({type:'EMERGENCY_STOP',error:'Ổ đĩa đầy'}));expect(f.client.isConnected()).toBe(false);expect(f.adapter.disconnected).toHaveBeenCalledOnce();await expect(f.client.request('SUBMIT')).rejects.toThrow('App mất kết nối');});
+it('reports standalone execution ownership on heartbeat without leaking its profile snapshot',async()=>{
+ const f=fixture(),execution={runId:'standalone',tabId:9,mode:'test',status:'running',active:true,managed:false,tabOpen:true,updatedAt:''};Object.assign(f.adapter,{execution:vi.fn(async()=>execution)});
+ const pairing=f.client.pair('ABCDEF123456');await vi.waitFor(()=>expect(f.ports).toHaveLength(1));const port=f.ports[0];port.messages.forEach((fn:any)=>fn({type:'PAIRED',token:'token'}));await pairing;
+ f.client.heartbeat();await vi.waitFor(()=>expect(port.sent.find((m:any)=>m.type==='EXECUTION')?.execution).toEqual(execution));expect(port.sent.find((m:any)=>m.type==='EXECUTION')).not.toHaveProperty('profile');
+});

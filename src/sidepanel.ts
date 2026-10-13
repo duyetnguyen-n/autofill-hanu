@@ -287,7 +287,7 @@ $(HTMLInputElement, "#identityFile").addEventListener("change", async (event) =>
     reader.readAsDataURL(file);
   });
   const result = await send<{ profile: Profile }>({ type: "SAVE_ATTACHMENT", attachmentKey: "identityDocument", name: file.name, mimeType: file.type, dataUrl });
-  profile = result.profile;
+  profile = { ...readProfileFromForm(), attachments: { ...profile.attachments, identityDocument: result.profile.attachments.identityDocument } };
   renderAttachment();
 });
 $(HTMLButtonElement, "#clearData").addEventListener("click", async () => {

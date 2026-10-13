@@ -12,6 +12,27 @@ export type RunStatus =
 
 export type ControlKind = "text" | "textarea" | "radio" | "checkbox" | "dropdown" | "date" | "file";
 
+export interface FinalQuestion {
+  label: string;
+  value: string;
+  kind?: Exclude<ControlKind, 'file'>;
+  formId?: string;
+  questionId?: string;
+}
+export const FINAL_QUESTION_KINDS = ['text','textarea','radio','checkbox','dropdown','date'] as const;
+export function validateFinalQuestion(value: unknown): asserts value is FinalQuestion | undefined {
+  if(value === undefined) return;
+  const q=value as FinalQuestion;
+  if(!q || typeof q.label!=='string' || !normalizeQuestionLabel(q.label) || q.label.length>4000 || typeof q.value!=='string' || !q.value.trim() || q.value.length>10000
+    || q.kind!==undefined && !FINAL_QUESTION_KINDS.includes(q.kind)
+    || q.formId!==undefined && (typeof q.formId!=='string' || !q.formId || q.formId.length>300)
+    || q.questionId!==undefined && (typeof q.questionId!=='string' || !q.questionId || q.questionId.length>300 || !q.formId)) throw new Error('Nhập đầy đủ nội dung câu hỏi cuối và đáp án; loại trường hoặc mã câu hỏi không hợp lệ.');
+}
+// Match the entire title, never a fragment or the last position on a page.
+export function matchesFinalQuestionLabel(label:string, expected:string):boolean {
+  return normalizeQuestionLabel(label)===normalizeQuestionLabel(expected);
+}
+
 export interface FieldRule {
   key: string;
   label: string;
@@ -59,6 +80,7 @@ export interface RunLogEntry {
 }
 
 export interface RunState {
+  finalQuestion?: FinalQuestion;
   runId?: string;
   sessionId?: string;
   managed?: boolean;
@@ -85,6 +107,7 @@ export interface RunState {
 }
 
 export interface FormQuestionSummary {
+  targetId?: string;
   id: string;
   label: string;
   required: boolean;
@@ -102,6 +125,9 @@ export type ExtensionMessage =
   | { type: "CLAIM_DOCUMENT"; epoch: string }
   | { type: "REQUEST_SUBMIT"; runId?: string; epoch?: string }
   | { type: "PAGE_ACCOUNT" }
+  | { type: "PAGE_RUN_STATUS" }
+  | { type: "PAGE_ATTENTION_ACQUIRE"; runId?:string; epoch:string; purpose:string }
+  | { type: "PAGE_ATTENTION_RELEASE"; token:string }
   | { type: "GET_PANEL_STATE"; tabId?: number }
   | { type: "GET_RUN_FOR_TAB" }
   | { type: "TRUSTED_CLICK"; x: number; y: number }
@@ -117,7 +143,7 @@ export type ExtensionMessage =
   | { type: "STOP_RUN"; tabId: number }
   | { type: "SCAN_FORM"; tabId: number }
   | { type: "SAVE_MAPPING"; tabId: number; questionId: string; ruleKey: string }
-  | { type: "RUN_CURRENT_PAGE"; mode: RunMode; skipQuestionId?: string; runId?: string; epoch?: string }
+  | { type: "RUN_CURRENT_PAGE"; mode: RunMode; skipQuestionId?: string; runId?: string; epoch?: string; finalQuestion?:FinalQuestion }
   | { type: "HALT_RUN" }
   | { type: "FORM_EVENT"; event: FormEvent; runId?: string; epoch?: string }
   | { type: "GET_PROFILE" };

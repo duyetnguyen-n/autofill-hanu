@@ -13,7 +13,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function materialFixture(initial = "", rejectSelection = false) {
+async function materialFixture(initial = "", rejectSelection = false,delay=0) {
   // Structure observed on the user's Google Form, including the presentation
   // separator and a popup INSIDE the listbox; templates lose their role when open.
   const options = `<div role="option" tabindex="0" aria-selected="true" data-value="">Choose</div>
@@ -38,7 +38,7 @@ async function materialFixture(initial = "", rejectSelection = false) {
       opener.setAttribute('aria-hidden', 'true');
       opener.querySelectorAll('[role="option"]').forEach(el => el.removeAttribute('role'));
       popup.removeAttribute('aria-hidden');
-      popup.innerHTML = options;
+      if(delay)setTimeout(()=>{popup.innerHTML=options;},delay);else popup.innerHTML = options;
     } else popup.setAttribute('aria-hidden', 'true');
   });
   opener.addEventListener('click', openClick);
@@ -81,9 +81,14 @@ it('replaces a previously committed wrong value', async () => {
   expect(fixture.submit).not.toHaveBeenCalled();
 });
 
+it('waits for options that appear after the old 1.2-second deadline',async()=>{
+  vi.useFakeTimers();
+  try{const f=await materialFixture('',false,1800);await vi.runAllTimersAsync();expect(f.hidden.value).toBe('CCCD   |   身份证');expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:{type:'ready_to_submit'}}));expect(f.submit).not.toHaveBeenCalled();}finally{vi.useRealTimers();}
+});
+
 it('does not report success just because a rejected selection still has an old value', async () => {
   const fixture = await materialFixture('HỘ CHIẾU   |   护照', true);
-  await vi.waitFor(() => expect(fixture.sent).toContainEqual(expect.objectContaining({ type: 'FORM_EVENT', event: expect.objectContaining({ type: 'block' }) })), { timeout: 4000 });
+  await vi.waitFor(() => expect(fixture.sent).toContainEqual(expect.objectContaining({ type: 'FORM_EVENT', event: expect.objectContaining({ type: 'block' }) })), { timeout: 9000 });
   expect(fixture.sent).not.toContainEqual(expect.objectContaining({ type: 'FORM_EVENT', event: expect.objectContaining({ type: 'ready_to_submit' }) }));
   expect(fixture.hidden.value).toBe('HỘ CHIẾU   |   护照');
   expect(fixture.submit).not.toHaveBeenCalled();

@@ -3,23 +3,26 @@ import type { Profile, RunMode, RunState } from './shared';
 export const PROTOCOL_VERSION = 1;
 export const NATIVE_HOST = 'vn.hanu.autofill';
 export const CHUNK_BYTES = 64 * 1024;
-export type CommandKind = 'PING' | 'FOCUS' | 'READ_PROFILE' | 'ATTACHMENT_INFO' | 'ATTACHMENT_READ' | 'ATTACHMENT_BEGIN' | 'ATTACHMENT_CHUNK' | 'ATTACHMENT_FINISH' | 'COMMIT_PROFILE' | 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'RECONCILE' | 'RESOLVE_SUBMISSION';
+export type CommandKind = 'PING' | 'FOCUS' | 'SCAN_FORM' | 'SET_FINAL_QUESTION' | 'READ_PROFILE' | 'ATTACHMENT_INFO' | 'ATTACHMENT_READ' | 'ATTACHMENT_BEGIN' | 'ATTACHMENT_CHUNK' | 'ATTACHMENT_FINISH' | 'COMMIT_PROFILE' | 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'STOP_PROFILE' | 'RECONCILE' | 'RESOLVE_SUBMISSION';
 export interface Command {
   type: 'COMMAND'; protocol: 1; sessionId: string; commandId: string;
   runId?: string; kind: CommandKind; payload: Record<string, unknown>;
 }
 export interface ProfileDocument { profile: Profile; revision: number }
+export interface ExecutionView {runId?:string;tabId:number;mode:RunMode;status:RunState['status'];managed:boolean;tabOpen:boolean;active?:boolean;message?:string;startedAt?:string;updatedAt:string}
 export interface SessionView {
   id: string; name: string; expectedEmail: string; connected: boolean;
   lastSeen: string; profile?: Profile; revision: number; synced: boolean;
-  conflict?: ProfileDocument; error?: string; run?: RunState;
+  conflict?: ProfileDocument; error?: string; run?: RunState; execution?:ExecutionView|null;
 }
 export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string }
 export function canonicalFormId(url: string): string | undefined {
   try {
     const u = new URL(url);
     if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com') return;
-    return u.pathname.match(/^\/forms\/d\/(?:e\/)?([^/]+)\/(?:viewform|formResponse)/)?.[1];
+    // Signed-in Forms posts to /forms/u/0/... even when the address bar is
+    // later rewritten to /forms/d/.... MessageSender.url retains that route.
+    return u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/(?:e\/)?([^/]+)\/(?:viewform|formResponse)(?:\/|$)/)?.[1];
   } catch { return; }
 }
 export function allowedFormUrl(url: string): boolean {

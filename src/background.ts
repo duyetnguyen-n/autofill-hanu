@@ -1,15 +1,90 @@
 import { attachmentReference, blobToDataUrl, clearAttachments, dataUrlToBlob, getAttachment, getProfile, getProfileRevision, saveAttachment, saveProfile } from "./storage";
-import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState } from "./shared";
+import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState, validateFinalQuestion } from "./shared";
 import { assignPickerFile, PickerUploadResult } from "./picker-upload";
 import { createNativeClient } from './native-client';
-import { canonicalFormId, allowedFormUrl, sha256, type Command } from './protocol';
+import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 
 const RUN_PREFIX = "run:";
 const interruptedRuns = new Set<string>();
 let runWriteQueue=Promise.resolve();
-let leaseQueue=Promise.resolve();
-async function acquireLease(runId:string){const claim=leaseQueue.then(async()=>{const lease=(await chrome.storage.local.get('executionLease')).executionLease;if(lease?.active&&lease.runId!==runId)throw new Error('Profile đang có lượt chạy. Dừng lượt hiện tại trước khi bắt đầu lượt khác.');await chrome.storage.local.set({executionLease:{runId,active:true}});});leaseQueue=claim.catch(()=>undefined);await claim;}
-const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:parkManaged,reconcile:reconcileManaged});
+const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
+function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.then(fn);runWriteQueue=work.then(()=>undefined,()=>undefined);return work;}
+async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
+const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:parkManaged,reconcile:reconcileManaged,execution:executionSnapshot});
+const pageAttention=new Map<number,{token:string;epoch:string;run:RunState;timer?:ReturnType<typeof setInterval>}>();
+interface RenderGuard {token:string;cancelled:boolean;attached:boolean;ready:Promise<void>;finish:()=>void}
+const renderGuards=new Map<number,RenderGuard>();
+async function enablePageRendering(tabId:number,token:string,foreground=false){
+  if(!chrome.debugger?.attach)return;
+  if(renderGuards.has(tabId))throw new Error('Trang đang xử lý một bước khác.');
+  const guard:RenderGuard={token,cancelled:false,attached:false,ready:Promise.resolve(),finish:()=>{}};
+  guard.ready=new Promise(resolve=>guard.finish=resolve);renderGuards.set(tabId,guard);
+  const valid=()=>{if(guard.cancelled)throw new Error('Lượt đã dừng; bỏ xử lý trang.');};
+  try{
+    await chrome.debugger.attach({tabId},'1.3');guard.attached=true;valid();
+    if(foreground)await chrome.debugger.sendCommand({tabId},'Page.bringToFront');
+    valid();
+    await chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled:true});
+    const metrics=await chrome.debugger.sendCommand({tabId},'Page.getLayoutMetrics') as {cssLayoutViewport?:{clientWidth:number;clientHeight:number};layoutViewport?:{clientWidth:number;clientHeight:number}}|undefined;
+    valid();
+    const viewport=metrics?.cssLayoutViewport??metrics?.layoutViewport;
+    // A restored window can still have an initial 0x0 renderer viewport. Repair
+    // only that startup state; normal dropdown/upload work remains concurrent.
+    if(viewport&&(viewport.clientWidth===0||viewport.clientHeight===0)){
+      await prepareFormWindow(tabId,true);
+      valid();
+      await chrome.debugger.sendCommand({tabId},'Page.bringToFront');
+    }
+    valid();
+  }
+  catch(error){if(guard.attached){guard.attached=false;await chrome.debugger.detach({tabId}).catch(()=>{});}if(renderGuards.get(tabId)===guard)renderGuards.delete(tabId);throw error;}
+  finally{guard.finish();}
+}
+async function disablePageRendering(tabId:number,token:string){
+  const guard=renderGuards.get(tabId);if(guard?.token!==token)return;
+  guard.cancelled=true;await guard.ready;
+  if(renderGuards.get(tabId)!==guard)return;
+  renderGuards.delete(tabId);
+  await chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});
+  await chrome.debugger.detach({tabId}).catch(()=>{});
+}
+async function prepareFormWindow(tabId:number,focused=false){
+  const tab=await chrome.tabs.get(tabId);
+  if(tab.windowId===undefined||!chrome.windows?.get||!chrome.windows?.update)return;
+  const window=await chrome.windows.get(tab.windowId);
+  if(window.state==='minimized')await chrome.windows.update(tab.windowId,{state:'normal',focused:false});
+  await chrome.tabs.update(tabId,{active:true});
+  if(focused)await chrome.windows.update(tab.windowId,{focused:true});
+}
+async function releasePageAttention(tabId:number,token?:string){
+  const lease=pageAttention.get(tabId);if(!lease||token&&lease.token!==token)return;
+  pageAttention.delete(tabId);clearInterval(lease.timer);
+  await disablePageRendering(tabId,lease.token);
+  if(lease.run.managed)await native.request('ATTENTION_RELEASE',lease.run,{token:lease.token}).catch(()=>{});
+}
+async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE_ATTENTION_ACQUIRE'}>,sender:chrome.runtime.MessageSender){
+  const tabId=sender.tab?.id;
+  if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
+  let run=await getRun(tabId);
+  const valid=(r?:RunState)=>r?.status==='running'&&!r.submitAttempted&&r.runId===message.runId&&r.contentEpoch===message.epoch&&(!r.managed||native.isConnected()&&!interruptedRuns.has(r.runId!));
+  if(!valid(run))throw new Error('Lượt/trang đã dừng; không mở cửa sổ.');
+  const old=pageAttention.get(tabId);if(old?.epoch===message.epoch)return {ok:true,token:old.token};
+  await releasePageAttention(tabId);
+  const rendering=typeof chrome.debugger?.attach==='function'?'background':'foreground';
+  run=addLog(run!,'info',`Đang xử lý${rendering==='background'?' đồng thời':''}: ${message.purpose.slice(0,100)}`);await saveRun(run);
+  const granted=run.managed?await native.request('ATTENTION_ACQUIRE',run,{rendering}):{token:crypto.randomUUID(),mode:rendering};
+  const foreground=granted.mode!=='background';
+  if(!valid(await getRun(tabId))){if(run.managed)await native.request('ATTENTION_RELEASE',run,{token:granted.token}).catch(()=>{});throw new Error('Lượt đã dừng; bỏ thao tác cửa sổ.');}
+  const lease={token:String(granted.token),epoch:message.epoch,run,timer:undefined as ReturnType<typeof setInterval>|undefined};pageAttention.set(tabId,lease);
+  try{
+    if(run.managed)lease.timer=setInterval(()=>{void native.request('ATTENTION_RENEW',run,{token:lease.token}).then(reply=>{if(!reply.renewed)void releasePageAttention(tabId,lease.token);}).catch(()=>void releasePageAttention(tabId,lease.token));},4000);
+    await prepareFormWindow(tabId,foreground);
+    await enablePageRendering(tabId,lease.token,foreground);
+    if(run.managed&&foreground){const marked=await native.request('ATTENTION_FOCUSED',run,{token:lease.token});if(!marked.focused)throw new Error('Lượt đã mất quyền xử lý cửa sổ.');}
+    if(!valid(await getRun(tabId)))throw new Error('Lượt đã dừng; bỏ thao tác cửa sổ.');
+    return {ok:true,token:lease.token};
+  }catch(e){await releasePageAttention(tabId,lease.token);throw e;}
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -27,19 +102,50 @@ async function getRun(tabId: number): Promise<RunState | undefined> {
   return result[`${RUN_PREFIX}${tabId}`] as RunState | undefined;
 }
 
-async function saveRun(run: RunState): Promise<void> {
-  const write=runWriteQueue.then(async()=>{
+async function writeRunNow(run:RunState):Promise<void>{
     const previous=await getRun(run.tabId);
     if(previous?.runId===run.runId){run.eventSeq=Math.max(previous?.eventSeq??0,run.eventSeq??0);run.contentEpoch??=previous?.contentEpoch;if(previous?.submitAttempted)run.submitAttempted=true;}
     if(run.managed&&interruptedRuns.has(run.runId!)&&run.status==='running'){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
     run.eventSeq = (run.eventSeq ?? 0) + 1;
     run.updatedAt=now();
-    await chrome.storage.local.set({ [`${RUN_PREFIX}${run.tabId}`]: run, ...(run.managed ? {managedRun:run} : {}) });
-    const lease=(await chrome.storage.local.get('executionLease')).executionLease;if(lease?.runId===run.runId)await chrome.storage.local.set({executionLease:{runId:run.runId,active:!['idle','completed','failed','ready_to_submit'].includes(run.status)}});
+    const lease=(await chrome.storage.local.get('executionLease')).executionLease;
+    const managed=run.managed?await getManaged():undefined;
+    const ownsManaged=run.managed&&(!managed||managed.runId===run.runId||lease?.runId===run.runId);
+    await chrome.storage.local.set({ [`${RUN_PREFIX}${run.tabId}`]: run, ...(ownsManaged ? {managedRun:run} : {}) });
+    if(lease?.runId===run.runId)await chrome.storage.local.set({executionLease:{runId:run.runId,tabId:run.tabId,active:!endedExecution(run)}});
     native.state(run);
-    await chrome.runtime.sendMessage({ type: "RUN_STATE_UPDATED", run }).catch(() => undefined);
-  });runWriteQueue=write.catch(()=>undefined);await write;
+    // Panel notifications must not hold the storage or request queue open.
+    // A panel can disappear during navigation or leave its reply unresolved.
+    void chrome.runtime.sendMessage({ type: "RUN_STATE_UPDATED", run }).catch(() => undefined);
 }
+async function saveRun(run:RunState):Promise<void>{return writeState(()=>writeRunNow(run));}
+async function leaseOwner():Promise<RunState|undefined>{
+ const lease=(await chrome.storage.local.get('executionLease')).executionLease;if(!lease?.active)return;
+ const direct=Number.isInteger(lease.tabId)?await getRun(lease.tabId):undefined;if(direct?.runId===lease.runId)return direct;
+ const managed=await getManaged();if(managed?.runId===lease.runId)return managed;
+ const data=await chrome.storage.local.get(null);
+ return Object.entries(data).filter(([key])=>key.startsWith(RUN_PREFIX)).map(([,run])=>run as RunState).filter(run=>run?.runId===lease.runId).sort((a,b)=>(b.eventSeq??0)-(a.eventSeq??0))[0];
+}
+async function repairLeaseNow():Promise<RunState|undefined>{
+ const lease=(await chrome.storage.local.get('executionLease')).executionLease;if(!lease?.active)return;
+ const run=await leaseOwner();
+ if(!run&&lease.acquiredAt&&Date.now()-Date.parse(lease.acquiredAt)<30000)return {runId:lease.runId,tabId:lease.tabId??-1,managed:lease.managed,formId:'',mode:'test',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,startedAt:lease.acquiredAt,updatedAt:lease.acquiredAt};
+ if(!run||endedExecution(run)){await chrome.storage.local.set({executionLease:{...lease,active:false}});return;}
+ const tab=run.tabId>=0?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;
+ const opening=run.tabId<0&&Date.now()-Date.parse(run.startedAt??run.updatedAt)<30000;
+ if(!opening&&(!tab||run.formId&&canonicalFormId(tab.url??tab.pendingUrl??'')!==run.formId)){
+   if(tab)await chrome.tabs.sendMessage(run.tabId,{type:'HALT_RUN'}).catch(()=>undefined);
+   const stopped=addLog({...run,status:run.submitAttempted?'submit_uncertain':'idle',recoveryRequired:false,blockingIssue:run.submitAttempted?run.blockingIssue:undefined},'warning','Tab của lượt đã đóng hoặc chuyển sang form khác. Đã dừng lượt và giải phóng profile.');
+   await writeRunNow(stopped);return;
+ }
+ return run;
+}
+async function executionSnapshot():Promise<ExecutionView|null>{return writeState(async()=>{
+ const run=await repairLeaseNow();if(!run)return null;
+ const page=run.tabId>=0?await chrome.tabs.sendMessage(run.tabId,{type:'PAGE_RUN_STATUS'}).catch(()=>undefined):undefined;
+ const active=page?.runId===run.runId&&typeof page.active==='boolean'?page.active:undefined;
+ return {runId:run.runId,tabId:run.tabId,mode:run.mode,status:run.status,managed:!!run.managed,tabOpen:run.tabId>=0,active,message:run.blockingIssue?.message??run.logs.at(-1)?.message,startedAt:run.startedAt,updatedAt:run.updatedAt};
+});}
 
 function addLog(run: RunState, level: RunLogEntry["level"], message: string): RunState {
   return { ...run, logs: [...run.logs.slice(-49), { at: now(), level, message }], updatedAt: now() };
@@ -57,11 +163,11 @@ async function sendToForm<T>(tabId: number, command: ExtensionMessage): Promise<
 }
 
 async function dispatchTrustedClick(tabId: number, x: number, y: number): Promise<boolean> {
+  if(renderGuards.get(tabId)?.cancelled)return false;
   const target = { tabId };
   let attached = false;
   try {
-    await chrome.debugger.attach(target, "1.3");
-    attached = true;
+    if(!renderGuards.has(tabId)){await chrome.debugger.attach(target, "1.3");attached=true;}
     // Google Forms' Material controls can ignore synthetic DOM clicks. CDP
     // creates a browser-trusted pointer sequence at the exact CSS position.
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0, pointerType: "mouse" });
@@ -79,11 +185,11 @@ async function dispatchTrustedClick(tabId: number, x: number, y: number): Promis
 }
 
 async function dispatchTrustedKeys(tabId: number, keys: string[]): Promise<boolean> {
+  if(renderGuards.get(tabId)?.cancelled)return false;
   const target = { tabId };
   let attached = false;
   try {
-    await chrome.debugger.attach(target, "1.3");
-    attached = true;
+    if(!renderGuards.has(tabId)){await chrome.debugger.attach(target, "1.3");attached=true;}
     for (const key of keys) {
       const windowsVirtualKeyCode = key === "ArrowDown" ? 40 : key === "Home" ? 36 : key === "Enter" ? 13 : 0;
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode });
@@ -100,7 +206,7 @@ async function dispatchTrustedKeys(tabId: number, keys: string[]): Promise<boole
 async function runOnTab(tabId: number, mode: RunMode, skipQuestionId?: string): Promise<void> {
   const run=await getRun(tabId);
   if(run?.status!=='running')throw new Error('Lượt đã dừng; không phát lệnh điền form.');
-  await sendToForm(tabId, { type: "RUN_CURRENT_PAGE", mode, skipQuestionId, runId:run?.runId });
+  await sendToForm(tabId, { type: "RUN_CURRENT_PAGE", mode, skipQuestionId, runId:run?.runId, finalQuestion:run.finalQuestion });
 }
 
 async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLOAD_STORED_FILE" }>, sender: chrome.runtime.MessageSender): Promise<PickerUploadResult> {
@@ -136,6 +242,7 @@ async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLO
 }
 
 async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
+  await executionSnapshot();
   const tab = await chrome.tabs.get(tabId);
   if (!isFormsUrl(tab.url)) throw new Error("Hãy mở một trang Google Forms trước khi chạy.");
   const formId = canonicalFormId(tab.url ?? '');
@@ -156,8 +263,9 @@ async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
     submitAttempted: false,
     updatedAt: now()
   };
-  await acquireLease(run.runId!);
+  await acquireLease(run.runId!,tabId);
   await saveRun(run);
+  await prepareFormWindow(tabId);
   // Start always validates every question again, including a failed dropdown.
   await runOnTab(tabId, mode);
   return run;
@@ -170,6 +278,7 @@ async function pauseRun(tabId: number): Promise<RunState | undefined> {
   const run = addLog({ ...current, status: current.submitAttempted?'submit_uncertain':"paused" }, "info", "Đã tạm dừng theo yêu cầu.");
   await saveRun(run);
   await chrome.tabs.sendMessage(tabId, { type: "HALT_RUN" }).catch(() => undefined);
+  await releasePageAttention(tabId);
   return run;
 }
 
@@ -177,9 +286,10 @@ async function stopRun(tabId: number): Promise<RunState | undefined> {
   const current = await getRun(tabId);
   if (!current) return undefined;
   if(current.status==='completed')return current;
-  const run = addLog({ ...current, status: current.submitAttempted?'submit_uncertain':"idle" }, "info", "Đã dừng. Giữ dữ liệu và khóa gửi của lượt.");
+  const run = addLog({ ...current, status: current.submitAttempted?'submit_uncertain':"idle", blockingIssue:current.submitAttempted?current.blockingIssue:undefined }, "info", "Đã dừng. Giữ dữ liệu và khóa gửi của lượt.");
   await saveRun(run);
   await chrome.tabs.sendMessage(tabId, { type: "HALT_RUN" }).catch(() => undefined);
+  await releasePageAttention(tabId);
   return run;
 }
 
@@ -190,7 +300,7 @@ async function resumeRun(tabId: number): Promise<RunState | undefined> {
   if(!current.runId){current.runId=crypto.randomUUID();current.profileSnapshot=await getProfile();current.profileRevision=await getProfileRevision();await saveRun(current);}
   if(current.managed&&!native.isConnected())throw new Error('App chưa kết nối.');
   if(current.managed)await checkAccount(tabId,current.expectedEmail!);
-  await acquireLease(current.runId!);
+  await acquireLease(current.runId!,tabId);
   const run = addLog({ ...current, status: "running", blockingIssue: undefined, updatedAt: now() }, "info", "Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.");
   await saveRun(run);
   // Some controls (notably the Google file picker) do not expose their value
@@ -249,11 +359,20 @@ if (chrome.sidePanel?.setPanelBehavior) {
     .catch(() => undefined);
 }
 
-async function openControllerWindow(tabId: number): Promise<void> {
-  await chrome.windows.create({
-    url: chrome.runtime.getURL(`sidepanel.html?tabId=${tabId}`),
-    type: "popup", width: 460, height: 760
-  });
+const controllerWindows=new Map<number,number>();
+let controllerQueue:Promise<unknown>=Promise.resolve();
+async function openControllerWindow(tabId: number, focused=true): Promise<number|undefined> {
+  const opening=controllerQueue.then(async()=>{
+    const remembered=controllerWindows.get(tabId);
+    if(remembered!==undefined&&await chrome.windows.get(remembered).catch(()=>undefined)){await chrome.windows.update(remembered,{state:'normal',focused});return remembered;}
+    const url=chrome.runtime.getURL(`sidepanel.html?tabId=${tabId}`);
+    // Query filters use URL match patterns, not exact URLs with query strings.
+    const existing=(await chrome.tabs.query({})).find(tab=>tab.url===url);
+    if(existing){controllerWindows.set(tabId,existing.windowId);await chrome.windows.update(existing.windowId,{state:'normal',focused});return existing.windowId;}
+    const window=await chrome.windows.create({url,type:"popup",width:460,height:760,focused});
+    if(window?.id!==undefined)controllerWindows.set(tabId,window.id);
+    return window?.id;
+  });controllerQueue=opening.catch(()=>undefined);return opening;
 }
 
 chrome.action.onClicked.addListener((tab) => {
@@ -274,11 +393,21 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void getRun(tabId).then(async run=>{if(run?.managed){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;run.logs.push({at:now(),level:'error',message:'Tab đăng ký đã đóng.'});await saveRun(run);}});
+  void releasePageAttention(tabId);
+  void writeState(async()=>{const run=await getRun(tabId);if(run&&!endedExecution(run)){run.status=run.submitAttempted?'submit_uncertain':'idle';run.recoveryRequired=false;run.blockingIssue=run.submitAttempted?run.blockingIssue:undefined;run.logs.push({at:now(),level:'warning',message:'Tab đăng ký đã đóng. Đã dừng lượt và giải phóng profile.'});await writeRunNow(run);}});
 });
 
 let messageQueue=Promise.resolve();
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  // An acquire may wait for another profile; never hold the regular page/Stop
+  // queue while waiting, otherwise navigation claims and cancellation deadlock.
+  if(message.type==='PAGE_ATTENTION_ACQUIRE'||message.type==='PAGE_ATTENTION_RELEASE'){
+    void (async()=>{
+      if(sender.tab?.id===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab.url))throw new Error('Trang không hợp lệ.');
+      if(message.type==='PAGE_ATTENTION_ACQUIRE')return acquirePageAttention(message,sender);
+      await releasePageAttention(sender.tab.id,message.token);return {ok:true};
+    })().then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
+  }
   messageQueue=messageQueue.then(async () => {
     try {
       if(sender.tab&&isFormsUrl(sender.url??sender.tab.url)&&!['CLAIM_DOCUMENT','REQUEST_SUBMIT','GET_RUN_FOR_TAB','GET_PROFILE','GET_ATTACHMENT','UPLOAD_STORED_FILE','TRUSTED_CLICK','TRUSTED_KEYS','FORM_EVENT'].includes(message.type))throw new Error('Trang form không được phép thay đổi cấu hình extension.');
@@ -288,7 +417,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if(message.type==='NATIVE_OPEN_MANAGER'){const result=await native.request('OPEN_MANAGER');await chrome.tabs.create({url:result.url,active:true});return sendResponse({ok:true});}
       if(message.type==='CLAIM_DOCUMENT'){
         if(sender.tab?.id===undefined||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
-        const run=await getRun(sender.tab.id);if(run){run.contentEpoch=message.epoch;await saveRun(run);}return sendResponse({ok:true});
+        const run=await getRun(sender.tab.id);
+        if(pageAttention.get(sender.tab.id)?.epoch!==message.epoch)await releasePageAttention(sender.tab.id);
+        if(run&&run.formId===canonicalFormId(sender.url??sender.tab.url??'')){
+          run.contentEpoch=message.epoch;await saveRun(run);
+          return sendResponse({ok:true,run:run.managed&&!native.isConnected()?{...run,recoveryRequired:true}:run});
+        }
+        return sendResponse({ok:true});
       }
       if(message.type==='REQUEST_SUBMIT')return sendResponse(await grantSubmit(message,sender));
       if (message.type === "GET_PANEL_STATE") return sendResponse(await panelState(message.tabId));
@@ -367,7 +502,27 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 async function getManaged():Promise<RunState|undefined>{return (await chrome.storage.local.get('managedRun')).managedRun;}
 async function hasLocalLock(formId:string){const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};return Object.values(locks).some((v:any)=>v.formId===formId&&v.resolution!=='not_received');}
 async function checkAccount(tabId:number,expected:string){
-  const result=await sendToForm<{email?:string;error?:string}>(tabId,{type:'PAGE_ACCOUNT'});
+  let result=await sendToForm<{email?:string;error?:string}>(tabId,{type:'PAGE_ACCOUNT'});
+  // Occluded Forms can have zero-width account headers before autofill starts.
+  // Read the account again under the same foreground queue as form controls.
+  if(!result.email&&!result.error){
+    const run=await getRun(tabId);
+    if(run?.status==='running'&&!run.submitAttempted){
+      const rendering=typeof chrome.debugger?.attach==='function'?'background':'foreground';
+      const granted=run.managed?await native.request('ATTENTION_ACQUIRE',run,{rendering}):undefined;
+      const token=granted?.token??crypto.randomUUID();
+      const foreground=(granted?.mode??rendering)!=='background';
+      try{
+        const current=await getRun(tabId);
+        if(!current||current.runId!==run.runId||current.status!=='running'||interruptedRuns.has(run.runId!))throw new Error('Lượt đã dừng; bỏ kiểm tra tài khoản.');
+        await prepareFormWindow(tabId,foreground);
+        await enablePageRendering(tabId,token,foreground);
+        if(granted&&foreground){const marked=await native.request('ATTENTION_FOCUSED',run,{token});if(!marked.focused)throw new Error('Lượt đã mất quyền xử lý cửa sổ.');}
+        const deadline=Date.now()+3000;
+        do{result=await sendToForm(tabId,{type:'PAGE_ACCOUNT'});if(result.email||result.error)break;await new Promise(r=>setTimeout(r,100));}while(Date.now()<deadline);
+      }finally{await disablePageRendering(tabId,token);if(granted)await native.request('ATTENTION_RELEASE',run,{token}).catch(()=>{});}
+    }
+  }
   if(result.error)throw new Error(result.error);
   if(!result.email||result.email.trim().toLowerCase()!==expected.trim().toLowerCase())throw new Error(result.email?'Tài khoản trên form không khớp nick đã gán.':'Không xác định được tài khoản trên form.');
 }
@@ -377,17 +532,25 @@ async function waitForForm(tabId:number):Promise<string>{
 }
 async function startManaged(command:Command,sessionId:string){
   if(!command.runId||!allowedFormUrl(String(command.payload.url)))throw new Error('Lệnh chạy không hợp lệ.');
+  validateFinalQuestion(command.payload.finalQuestion);
+  await executionSnapshot();
   const old=await getManaged();if(old&&old.runId===command.runId)return old;
   const ledger=(await chrome.storage.local.get('managedRunLedger')).managedRunLedger??{};if(ledger[command.runId])throw new Error('Lượt cũ đã được nhận; không khởi chạy lại.');
   if(old&&!['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(old.status))throw new Error('Profile đang chạy lượt khác.');
   if(await getProfileRevision()!==command.payload.revision)throw new Error('Hồ sơ chưa đồng bộ phiên bản.');
   const profile=await getProfile();const attachmentHashes=command.payload.attachmentHashes as Record<string,string>??{};for(const a of Object.values(profile.attachments))if(a){const blob=await getAttachment(a.id);if(!blob||blob.size!==a.size||await sha256(await blob.arrayBuffer())!==attachmentHashes[a.id])throw new Error('Ảnh chưa sẵn sàng hoặc mã băm khác bản đã đồng bộ.');}
+  await acquireLease(command.runId,-1,true);
   ledger[command.runId]=now();await chrome.storage.local.set({managedRunLedger:ledger});
-  await acquireLease(command.runId);
   interruptedRuns.delete(command.runId);
-  let run:RunState={runId:command.runId,sessionId,managed:true,profileSnapshot:profile,profileRevision:Number(command.payload.revision),attachmentHashes,recoveryRequired:true,expectedEmail:String(command.payload.expectedEmail),url:String(command.payload.url),tabId:-1,formId:'',mode:command.payload.mode as 'test'|'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:now(),startedAt:now(),eventSeq:0};
+  let run:RunState={runId:command.runId,sessionId,managed:true,profileSnapshot:profile,finalQuestion:command.payload.finalQuestion,profileRevision:Number(command.payload.revision),attachmentHashes,recoveryRequired:true,expectedEmail:String(command.payload.expectedEmail),url:String(command.payload.url),tabId:-1,formId:'',mode:command.payload.mode as 'test'|'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:now(),startedAt:now(),eventSeq:0};
   await saveRun(run);
-  const tab=await chrome.tabs.create({url:run.url,active:false});run.tabId=tab.id!;await saveRun(run);
+  // Keep the registration tab selected in its own profile window. Background
+  // tabs can throttle Forms initialization and the content script's timers.
+  try{
+    const window=chrome.windows?.getLastFocused?await chrome.windows.getLastFocused():undefined;
+    if(window?.id!==undefined&&window.state==='minimized')await chrome.windows.update(window.id,{state:'normal',focused:false});
+    const tab=await chrome.tabs.create({url:run.url,active:true,...(window?.id!==undefined?{windowId:window.id}:{})});run.tabId=tab.id!;await saveRun(run);await prepareFormWindow(run.tabId);
+  }catch(e){run=addLog({...run,status:'failed'},'error',`Không mở được tab form: ${(e as Error).message}`);await saveRun(run);throw e;}
   let loaded=false,loadError='';
   for(let attempt=0;attempt<4;attempt++){
     if(interruptedRuns.has(run.runId!))return getManaged();
@@ -405,11 +568,46 @@ async function startManaged(command:Command,sessionId:string){
     run=(await getManaged())!;run.recoveryRequired=false;await saveRun(run);await runOnTab(run.tabId,run.mode);return run;
   }catch(e){run=(await getManaged())!;run.status='waiting_manual';run.blockingIssue={reason:'validation',message:(e as Error).message};await saveRun(run);return run;}
 }
-async function parkManaged(){const run=await getManaged();if(!run||['idle','completed','ready_to_submit'].includes(run.status))return;interruptedRuns.add(run.runId!);if(run.tabId>=0)await chrome.tabs.sendMessage(run.tabId,{type:'HALT_RUN'}).catch(()=>undefined);run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;await saveRun(run);}
+async function parkManaged(){const run=await getManaged();if(!run||endedExecution(run))return;interruptedRuns.add(run.runId!);if(run.tabId>=0)await chrome.tabs.sendMessage(run.tabId,{type:'HALT_RUN'}).catch(()=>undefined);run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;await saveRun(run);}
 async function reconcileManaged(){await parkManaged();const run=await getManaged();if(run){native.state(run);return {run,tab:await chrome.tabs.get(run.tabId).catch(()=>undefined)};}return {run:null};}
-async function focusManaged(){const run=await getManaged();let tab=run?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;if(!tab)tab=await chrome.tabs.create({url:chrome.runtime.getURL('connection.html')});await chrome.tabs.update(tab.id!,{active:true});const window=await chrome.windows.get(tab.windowId);if(window.state==='minimized')await chrome.windows.update(tab.windowId,{state:'normal'});await chrome.windows.update(tab.windowId,{focused:true});return {tabId:tab.id};}
+async function focusManaged(){
+  const execution=await executionSnapshot();const run=execution?await getRun(execution.tabId):await getManaged();let tab=run?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;
+  if(tab&&run?.formId&&canonicalFormId(tab.url??'')!==run.formId)tab=undefined;
+  if(!tab){const forms=await chrome.tabs.query({url:'https://docs.google.com/forms/*'});tab=forms.find(t=>run?canonicalFormId(t.url??'')===(run.formId||canonicalFormId(run.url??'')):canonicalFormId(t.url??''));}
+  if(!tab)tab=await chrome.tabs.create({...(run?.url&&allowedFormUrl(run.url)?{url:run.url}:{}),active:true});
+  await chrome.tabs.update(tab.id!,{active:true});const window=await chrome.windows.get(tab.windowId);
+  if(window.state==='minimized')await chrome.windows.update(tab.windowId,{state:'normal'});
+  await chrome.windows.update(tab.windowId,{focused:true});
+  return {tabId:tab.id};
+}
+async function stopProfile(){
+ const data=await chrome.storage.local.get(null),managed=await getManaged();
+ const runs=new Map<string,RunState>();for(const [key,value]of Object.entries(data)){const run=value as RunState;if(key.startsWith(RUN_PREFIX)&&run?.runId&&!endedExecution(run)){const old=runs.get(run.runId);if(!old||(old.eventSeq??0)<(run.eventSeq??0))runs.set(run.runId,run);}}
+ if(managed?.runId&&managed.status!=='completed')runs.set(managed.runId,managed);
+ for(const run of runs.values()){interruptedRuns.add(run.runId!);await stopRun(run.tabId);}
+ return {run:await getManaged(),execution:await executionSnapshot()};
+}
 async function managedControl(command:Command){
+  if(command.kind==='STOP_PROFILE')return stopProfile();
+  if(command.kind==='SCAN_FORM'){
+    const execution=await executionSnapshot();if(execution&&['running','submitting'].includes(execution.status))throw new Error('Tạm dừng lượt trong profile trước khi đọc câu hỏi, để không ảnh hưởng bước đang chạy.');
+    const run=await getManaged();let tab=run?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;
+    if(!tab||!canonicalFormId(tab.url??'')){const tabs=await chrome.tabs.query({active:true,lastFocusedWindow:true});tab=tabs.find(t=>canonicalFormId(t.url??''));}
+    if(!tab?.id||!canonicalFormId(tab.url??''))throw new Error('Mở form và chuyển đến trang chứa câu hỏi cuối trong profile này trước khi đọc.');
+    if(renderGuards.has(tab.id))throw new Error('Form đang xử lý một bước. Chờ lượt dừng rồi đọc câu hỏi lại.');
+    const token=`scan:${crypto.randomUUID()}`;
+    try{await prepareFormWindow(tab.id);await enablePageRendering(tab.id,token);
+      const result=await sendToForm<{questions:unknown[]}>(tab.id,{type:'SCAN_FORM',tabId:tab.id});
+      return {...result,formId:canonicalFormId(tab.url!),url:tab.url};
+    }finally{await disablePageRendering(tab.id,token);}
+  }
   const run=await getManaged();if(!run||run.runId!==command.runId)throw new Error('Lượt điều khiển không khớp.');
+  if(command.kind==='SET_FINAL_QUESTION'){
+    validateFinalQuestion(command.payload.finalQuestion);
+    if(!command.payload.finalQuestion||run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(run.status))throw new Error('Chỉ cập nhật câu hỏi cuối khi lượt đang chờ và chưa gửi.');
+    if(command.payload.finalQuestion.formId&&command.payload.finalQuestion.formId!==run.formId)throw new Error('Câu hỏi đã chọn thuộc form khác.');
+    run.finalQuestion=structuredClone(command.payload.finalQuestion);await saveRun(run);return run;
+  }
   if(command.kind==='RESOLVE_SUBMISSION'){
     if(!['received','not_received'].includes(String(command.payload.result)))throw new Error('Kết quả xác minh không hợp lệ.');const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};if(locks[run.runId!])locks[run.runId!].resolution=command.payload.result;await chrome.storage.local.set({submissionLocks:locks});run.status=command.payload.result==='received'?'completed':'idle';run.blockingIssue=undefined;run.recoveryRequired=false;await saveRun(run);return run;
   }

@@ -47,7 +47,7 @@ it('uses action behavior on Chrome 114/115 without calling missing sidePanel.ope
 it('opens a controller bound to the original form tab when Side Panel is unavailable', async () => {
   const fixture = await setup();
   fixture.click();
-  expect(fixture.create).toHaveBeenCalledWith(expect.objectContaining({ url: 'chrome-extension://test/sidepanel.html?tabId=7', type: 'popup' }));
+  await vi.waitFor(()=>expect(fixture.create).toHaveBeenCalledWith(expect.objectContaining({ url: 'chrome-extension://test/sidepanel.html?tabId=7', type: 'popup' })));
   expect(await fixture.ask({ type: 'GET_PANEL_STATE', tabId: 7 })).toEqual(expect.objectContaining({ tabId: 7 }));
 });
 
@@ -62,6 +62,24 @@ it('does not resume a paused run from a late progress event', async () => {
   fixture.run.status = 'paused';
   await fixture.ask({ type: 'FORM_EVENT', event: { type: 'progress', message: 'Late message' } }, { tab: { id: 7, url:formUrl } });
   expect(fixture.data['run:7']).toEqual(expect.objectContaining({ status: 'paused' }));
+});
+
+it('keeps navigation claims and progress responsive when a panel notification never replies', async () => {
+  const fixture = await setup();
+  fixture.run.status = 'running';
+  vi.mocked(chrome.runtime.sendMessage).mockImplementation(() => new Promise(() => {}) as any);
+  const sender = { tab: { id: 7, url: formUrl }, url: formUrl, frameId: 0 };
+  await expect(fixture.ask({ type: 'CLAIM_DOCUMENT', epoch: 'next-page' }, sender)).resolves.toMatchObject({ ok: true,run:{status:'running',contentEpoch:'next-page'} });
+  await expect(fixture.ask({ type: 'GET_RUN_FOR_TAB' }, sender)).resolves.toMatchObject({ status: 'running', contentEpoch: 'next-page' });
+  await expect(fixture.ask({ type: 'FORM_EVENT', event: { type: 'progress', message: 'Next page filled' } }, sender)).resolves.toEqual({ ok: true });
+  expect(fixture.data['run:7']).toMatchObject({ logs: [expect.objectContaining({ message: 'Next page filled' })] });
+});
+
+it('clears a stopped pre-submit error so a fresh run is available',async()=>{
+  const fixture=await setup();
+  fixture.run.blockingIssue={reason:'unsupported',message:'Old validation error'};
+  await fixture.ask({type:'STOP_RUN',tabId:7});
+  expect(fixture.data['run:7']).toMatchObject({status:'idle',blockingIssue:undefined});
 });
 
 it('does not reuse a running session on a different form in the same tab', async () => {

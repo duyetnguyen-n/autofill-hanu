@@ -368,7 +368,7 @@ describe("compiled content-script behavior", () => {
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "block" }) }));
 
     listeners[0]({ type: "RUN_CURRENT_PAGE", mode: "test", skipQuestionId: "identity-file-question" });
-    await new Promise((resolve) => window.setTimeout(resolve, 310));
+    await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) })),{timeout:2000});
 
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "page_advanced" }) }));
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) }));
@@ -424,7 +424,7 @@ describe("compiled content-script behavior", () => {
 
     await import("../src/content");
     listeners[0]({ type: "RUN_CURRENT_PAGE", mode: "test" });
-    await new Promise((resolve) => window.setTimeout(resolve, 360));
+    await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) })),{timeout:2000});
 
     expect(male.getAttribute("aria-selected")).toBe("true");
     expect(mother.getAttribute("aria-checked")).toBe("true");

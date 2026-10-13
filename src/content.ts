@@ -1,5 +1,7 @@
 import { HSK_RULES, getRule } from "./rules";
-import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize } from "./shared";
+import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize, matchesFinalQuestionLabel } from "./shared";
+import {canonicalFormId} from './protocol';
+import type {FinalQuestion} from './shared';
 import type { PickerUploadResult } from "./picker-upload";
 
 let active = false;
@@ -7,9 +9,42 @@ let activeMode: RunMode = "test";
 let submitAttempted = false;
 let manualSkipQuestionId: string | undefined;
 let executionInFlight = false;
+let pendingStart:(()=>void)|undefined;
+let runRequestGeneration=0;
 let cancelManualResume: (() => void) | undefined;
 const documentEpoch=crypto.randomUUID();
 let boundRunId:string|undefined;
+let attentionToken:string|undefined;
+let attentionHeld=false;
+let activeFinalQuestion:FinalQuestion|undefined;
+
+async function releaseAttention(){const token=attentionToken;attentionToken=undefined;attentionHeld=false;if(token)await chrome.runtime.sendMessage({type:'PAGE_ATTENTION_RELEASE',token} satisfies ExtensionMessage).catch(()=>{});}
+async function withAttention<T>(purpose:string,work:()=>Promise<T>):Promise<T|undefined>{
+  if(!active)return;
+  // Nested readiness checks share the same lease; a fresh page gets its own.
+  if(attentionHeld)return work();
+  const reply=await chrome.runtime.sendMessage({type:'PAGE_ATTENTION_ACQUIRE',runId:boundRunId,epoch:documentEpoch,purpose} satisfies ExtensionMessage).catch(()=>undefined) as {ok?:boolean;token?:string;error?:string}|undefined;
+  if(reply?.ok===false)throw new Error(reply.error??'Không thể chuẩn bị cửa sổ form.');
+  attentionToken=reply?.token;
+  attentionHeld=true;
+  try{if(active)return await work();}finally{await releaseAttention();}
+}
+
+function layoutReady():boolean{
+  if(window.innerWidth<=0||window.innerHeight<=0||document.body.getBoundingClientRect().width<=0)return false;
+  const cards=Array.from(document.querySelectorAll<HTMLElement>('[role="listitem"], [data-item-id]'));
+  for(const card of cards){
+    let hidden=false;for(let p:HTMLElement|null=card;p;p=p.parentElement){const style=getComputedStyle(p);if(p.getAttribute('aria-hidden')==='true'||style.display==='none'||style.visibility==='hidden'){hidden=true;break;}}if(hidden)continue;
+    const hasControls=matchesOrHas(card,'select,input:not([type="hidden"]),textarea,[role="radio"],[role="checkbox"],[role="listbox"],[role="combobox"]');
+    const heading=card.querySelector('[role="heading"]')?.textContent??'';
+    if((hasControls||/\*\s*$/.test(heading))&&(!visible(card)||!hasControls&&!isGoogleFileUploadCard(card)))return false;
+  }
+  return true;
+}
+async function ensurePageReady():Promise<boolean>{
+  if(layoutReady())return true;
+  return Boolean(await withAttention('Chuẩn bị bố cục form',async()=>waitFor(layoutReady,100)));
+}
 
 // Clean up a one-off live-DOM diagnostic that could have been left by an
 // earlier development build when this content script is reloaded in-place.
@@ -110,6 +145,15 @@ function questionId(element: HTMLElement, label: string): string {
     || `label:${normalize(label)}`;
 }
 
+function stableQuestionId(element:HTMLElement):string|undefined {
+  // Auto-generated DOM ids vary across profiles. Google entry/item ids do not.
+  const entry=element.querySelector('[name^="entry."]')?.getAttribute('name')?.match(/^entry\.(\d+)/)?.[1];
+  if(entry)return `entry.${entry}`;
+  if(element.dataset.itemId)return `item.${element.dataset.itemId}`;
+  const item=element.getAttribute('data-params')?.match(/^\s*\[\s*(-?\d+)\s*,/)?.[1];
+  return item?`item.${item}`:undefined;
+}
+
 function inferKind(element: HTMLElement): ControlKind | "unknown" {
   if (isGoogleFileUploadCard(element)) return "file";
   // A Google Forms radio question with an "Other" answer contains a text input
@@ -166,7 +210,7 @@ function scanCurrentForm(): FormQuestionSummary[] {
           .filter((value, index, values) => value && !/^(choose|chọn)$/i.test(value) && values.indexOf(value) === index)
         : [];
     }
-    return { id: question.id, label: question.label, required: question.required, kind: question.kind, filled: isFilled(question), options, dateFormat: dateFormatFor(question) };
+    return { id: question.id, targetId:stableQuestionId(question.element), label: question.label, required: question.required, kind: question.kind, filled: isFilled(question), options, dateFormat: dateFormatFor(question) };
   });
 }
 
@@ -325,9 +369,10 @@ async function trustedClick(element: Element): Promise<boolean> {
 }
 
 async function clickIfNeeded(element: Element): Promise<boolean> {
+  if(document.hidden&&!attentionHeld)return Boolean(await withAttention('Chọn đáp án',()=>clickIfNeeded(element)));
   if (checked(element)) return true;
   (element as HTMLElement).scrollIntoView?.({ block: "center", behavior: "auto" });
-  (element as HTMLElement).click();
+  pointerClick(element);
   if (await waitFor(() => checked(element))) return true;
   if (!active) return false;
   await trustedClick(element);
@@ -335,9 +380,10 @@ async function clickIfNeeded(element: Element): Promise<boolean> {
 }
 
 async function waitFor(predicate: () => boolean, attempts = 12): Promise<boolean> {
+  const deadline=Date.now()+attempts*50;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (predicate()) return true;
-    if (!active) return false;
+    if (!active||Date.now()>=deadline) return false;
     await new Promise((resolve) => window.setTimeout(resolve, 50));
   }
   return predicate();
@@ -454,10 +500,11 @@ async function chooseDropdownWithKeyboard(trigger: HTMLElement, option: Element,
   }
 }
 
-async function waitForDropdownChoice(trigger: HTMLElement, value: string, aliases: string[]): Promise<Element | undefined> {
+async function waitForDropdownChoice(trigger: HTMLElement, value: string, aliases: string[],attempts=60): Promise<Element | undefined> {
   // Forms asynchronously mounts a popup inside the trigger; other controls
   // can use a detached popup. Neither should match the hidden template copy.
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  const deadline=Date.now()+attempts*60;
+  for (let attempt = 0; attempt < attempts&&Date.now()<deadline; attempt += 1) {
     if (!active) return undefined;
     const popupSelector = '[jsname="V68bde"], .exportSelectPopup, .OA0qNb';
     const relatedIds = `${trigger.getAttribute("aria-controls") ?? ""} ${trigger.getAttribute("aria-owns") ?? ""}`.trim().split(/\s+/);
@@ -597,13 +644,19 @@ async function fillQuestion(question: Question, rule: FieldRule, profile: Profil
   }
   if (question.kind === "radio" || question.kind === "checkbox") {
     const options = controlsIn(question.element, 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
-    const wantsBoolean = /^(true|1|co|yes|dong y)$/i.test(normalize(value));
+    const wantsBoolean = rule.key!=="sharedFinalQuestion" && /^(true|1|co|yes|dong y)$/i.test(normalize(value));
     const aliases = rule.optionAliases?.[value] ?? [];
     // A commitment may be represented as a radio group instead of a single
     // checkbox. Prefer its explicit affirmative wording; only fall back to
     // the first option for a single-option checkbox style control.
     const choice = wantsBoolean ? exactChoice(options, value, aliases) ?? options[0] : exactChoice(options, value, aliases);
     if (!choice) return false;
+    if(rule.key==='sharedFinalQuestion'&&question.kind==='checkbox'){
+      for(const other of options.filter(o=>o!==choice&&checked(o))){
+        const clear=async()=>{pointerClick(other as HTMLElement);if(await waitFor(()=>!checked(other)))return true;if(!active)return false;await trustedClick(other as HTMLElement);return waitFor(()=>!checked(other));};
+        if(!await (document.hidden?withAttention('Bỏ lựa chọn cũ của câu hỏi cuối',clear):clear()))return false;
+      }
+    }
     return clickIfNeeded(choice);
   }
   if (question.kind === "dropdown") {
@@ -619,23 +672,24 @@ async function fillQuestion(question: Question, rule: FieldRule, profile: Profil
       return false;
     }
 
-    const trigger = question.element.querySelector<HTMLElement>('[role="combobox"], [role="listbox"]');
-    if (!trigger) return false;
-    await activateDropdown(trigger);
-    const aliases = rule.optionAliases?.[value] ?? [];
-    const option = await waitForDropdownChoice(trigger, value, aliases);
-    if (!option) return false;
-    if (await chooseDropdownOption(question, option, rule, profile, value)) return true;
-    if (!active) return false;
-    // Some Forms Material menus ignore the pointer release despite receiving
-    // a trusted event. Keep the open menu and commit the same choice via its
-    // native keyboard contract before asking the user to intervene.
-    await activateDropdown(trigger);
-    await new Promise((resolve) => window.setTimeout(resolve, 80));
-    const keyboardOption = await waitForDropdownChoice(trigger, value, aliases);
-    if (!keyboardOption) return false;
-    await chooseDropdownWithKeyboard(trigger, keyboardOption, value, aliases);
-    return waitFor(() => matchesProfile(question, rule, profile, value));
+    return Boolean(await withAttention(`Chọn ${rule.label}`,async()=>{
+      if(!await ensurePageReady())return false;
+      const aliases=rule.optionAliases?.[value]??[];
+      for(let attempt=0;attempt<2&&active;attempt++){
+        if(matchesProfile(question,rule,profile,value))return true;
+        const trigger=question.element.querySelector<HTMLElement>('[role="combobox"], [role="listbox"]');if(!trigger)return false;
+        await activateDropdown(trigger);
+        const option=await waitForDropdownChoice(trigger,value,aliases);
+        if(!option)continue;
+        if(await chooseDropdownOption(question,option,rule,profile,value))return true;
+        if(!active)return false;
+        await activateDropdown(trigger);
+        const keyboardOption=await waitForDropdownChoice(trigger,value,aliases);
+        if(keyboardOption)await chooseDropdownWithKeyboard(trigger,keyboardOption,value,aliases);
+        if(await waitFor(()=>matchesProfile(question,rule,profile,value)))return true;
+      }
+      return false;
+    }));
   }
   return false;
 }
@@ -660,7 +714,8 @@ function matchesProfile(question: Question, rule: FieldRule, profile: Profile, v
   const aliases = rule.optionAliases?.[value] ?? [];
   if (question.kind === "radio" || question.kind === "checkbox") {
     const selected = controlsIn(question.element, 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]').filter(checked);
-    const wantsBoolean = /^(true|1|co|yes|dong y)$/i.test(normalize(value));
+    if(rule.key==='sharedFinalQuestion'&&selected.length!==1)return false;
+    const wantsBoolean = rule.key!=="sharedFinalQuestion" && /^(true|1|co|yes|dong y)$/i.test(normalize(value));
     return wantsBoolean
       ? (aliases.length > 0 ? selected.some((option) => choiceMatchesValue(option, value, aliases)) : selected.length > 0)
       : selected.some((option) => choiceMatchesValue(option, value, aliases));
@@ -749,9 +804,9 @@ export function pageAccount():{email?:string;error?:string}{
 }
 
 function button(kind: "next" | "submit"): HTMLElement | undefined {
-  const terms = kind === "next" ? [/^next$/i, /^tiếp/i, /^trang tiếp/i] : [/^submit$/i, /^gửi$/i, /^nộp$/i];
+  const terms = kind === "next" ? [/^next$/, /^tiep/, /^trang tiep/] : [/^submit$/, /^gui$/, /^nop$/];
   return Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((candidate) => {
-    const text = (candidate.innerText ?? candidate.textContent ?? "").trim();
+    const text = normalize(candidate.innerText ?? candidate.textContent ?? "");
     return visible(candidate) && terms.some((term) => term.test(text));
   });
 }
@@ -765,12 +820,13 @@ function validationError(): string | undefined {
   const alert = Array.from(document.querySelectorAll('[role="alert"]')).find((node) => visible(node) && node.textContent?.trim());
   if (alert?.textContent) return alert.textContent.trim();
   const text = document.body.innerText ?? document.body.textContent ?? "";
-  const match = text.match(/this is a required question|đây là câu hỏi bắt buộc/i);
+  const match = text.match(/this is a required question|đây là (?:một )?câu hỏi bắt buộc/i);
   return match?.[0];
 }
 
 async function waitForPageChange(before: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 28; attempt += 1) {
+  const deadline=Date.now()+7000;
+  for (let attempt = 0; attempt < 28&&Date.now()<deadline; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 250));
     if (!active) return false;
     if (pageFingerprint() !== before) return true;
@@ -791,15 +847,45 @@ async function execute(depth = 0): Promise<void> {
     return;
   }
 
+  if(!await ensurePageReady()){
+    if(!active)return;
+    active=false;await emit({type:'block',issue:{reason:'validation',message:'Form chưa có vùng hiển thị hoặc câu hỏi chưa tải xong. Chưa bấm Tiếp; hãy kiểm tra cửa sổ Chrome rồi bấm Tiếp tục.'}});return;
+  }
+
   const profile = await chrome.runtime.sendMessage({ type: "GET_PROFILE" } satisfies ExtensionMessage) as Profile;
   if (!profile?.values) throw new Error("Không đọc được hồ sơ. Hãy mở lại extension và lưu hồ sơ.");
+  const finalQuestion=activeFinalQuestion;
+  const pageQuestions=questions();
+  let sharedTarget:Question|undefined;
+  if(finalQuestion && button('submit') && !button('next')){
+    const candidates=pageQuestions.filter(q=>finalQuestion.questionId?stableQuestionId(q.element)===finalQuestion.questionId:matchesFinalQuestionLabel(q.label,finalQuestion.label));
+    const target=candidates.length===1?candidates[0]:undefined;
+    let error:string|undefined;
+    if(finalQuestion.formId&&finalQuestion.formId!==canonicalFormId(location.href))error='Câu hỏi cuối đã chọn thuộc form khác. Đọc lại câu hỏi từ form này.';
+    else if(!target)error=candidates.length>1?'Có nhiều câu trùng nội dung câu hỏi cuối. Đọc câu hỏi từ profile và chọn đúng ô.':'Không tìm thấy câu hỏi cuối đã khai báo trên trang Gửi. Kiểm tra nội dung hoặc đọc lại câu hỏi từ profile.';
+    else if(!matchesFinalQuestionLabel(target.label,finalQuestion.label))error='Mã câu hỏi vẫn tồn tại nhưng nội dung đã thay đổi. Đọc lại câu hỏi trước khi điền.';
+    else if(target.kind==='unknown'||target.kind==='file'||finalQuestion.kind&&target.kind!==finalQuestion.kind)error='Loại trường của câu hỏi cuối không khớp hoặc chưa hỗ trợ. Đọc lại câu hỏi từ profile.';
+    if(error){active=false;await emit({type:'block',issue:target?manualIssue(target,'validation',error):{reason:'validation',message:error,questionLabel:finalQuestion.label}});return;}
+    sharedTarget=target;
+  }
+  const manuallyHandled=new Set<string>();
   // Forms can shuffle questions: complete ordinary fields before pausing for
   // an upload, even when the upload card happens to be first on the page.
-  for (const question of questions().sort((a, b) => Number(a.kind === "file") - Number(b.kind === "file"))) {
+  for (const question of pageQuestions.sort((a, b) => Number(a.kind === "file") - Number(b.kind === "file"))) {
     if (!active) return;
     question.element.style.outline = "";
     delete question.element.dataset.hanuBlocking;
+    if(question===sharedTarget && finalQuestion){
+      const rule:FieldRule={key:'sharedFinalQuestion',label:question.label,aliases:[question.label],kind:question.kind as ControlKind};
+      const filled=matchesProfile(question,rule,profile,finalQuestion.value)||await fillQuestion(question,rule,profile,finalQuestion.value);
+      if(!filled||!matchesProfile(question,rule,profile,finalQuestion.value)){
+        if(!active)return;active=false;await emit({type:'block',issue:manualIssue(question,'unsupported',`Không thể điền đáp án chung cho: ${question.label}. Với ô lựa chọn, nhập đúng toàn bộ tên đáp án; với ngày, dùng định dạng form yêu cầu.`)});return;
+      }
+      if(!active)return;
+      await emit({type:'progress',message:`Đã kiểm tra và điền câu hỏi cuối dùng chung: ${question.label}`,filled:question.id});continue;
+    }
     if (question.id === manualSkipQuestionId) {
+      manuallyHandled.add(question.id);
       manualSkipQuestionId = undefined;
       await emit({ type: "progress", message: `Đã giữ nguyên câu bạn vừa xử lý thủ công: ${question.label}`, skipped: question.id });
       continue;
@@ -884,7 +970,9 @@ async function execute(depth = 0): Promise<void> {
       await emit({ type: "progress", message: `Giữ nguyên trường đã khớp hồ sơ: ${question.label}`, skipped: question.id });
       continue;
     }
-    const filled = await fillQuestion(question, rule, profile, value ?? "");
+    const filled = rule.kind==='file'&&document.hidden
+      ?Boolean(await withAttention(`Upload ${rule.label}`,()=>fillQuestion(question,rule,profile,value??'')))
+      :await fillQuestion(question, rule, profile, value ?? "");
     if (!active) return;
     if (!filled) {
       active = false;
@@ -906,6 +994,8 @@ async function execute(depth = 0): Promise<void> {
   }
   if (action === "submit") {
     if (submitAttempted || !submit) return;
+    await withAttention('Gửi form một lần',async()=>{
+    if(!active||!await ensurePageReady())return;
     const permit=await chrome.runtime.sendMessage({type:'REQUEST_SUBMIT',runId:boundRunId,epoch:documentEpoch} satisfies ExtensionMessage);
     if(!permit?.granted){active=false;await emit({type:'block',issue:{reason:'submit_uncertain',message:permit?.error??'Chưa có xác nhận khóa gửi; không bấm Gửi.'}});return;}
     submitAttempted = true;
@@ -921,6 +1011,7 @@ async function execute(depth = 0): Promise<void> {
       active = false;
       await emit({ type: "block", issue: { reason: error ? "validation" : "submit_uncertain", message: error ? `Google Forms báo lỗi: ${error}` : "Đã bấm Gửi nhưng chưa thấy xác nhận. Extension sẽ không tự gửi lại." } });
     }
+    });
     return;
   }
   if (!next) {
@@ -928,9 +1019,16 @@ async function execute(depth = 0): Promise<void> {
     await emit({ type: "failed", message: "Không tìm thấy nút Tiếp hoặc Gửi trên trang hiện tại." });
     return;
   }
-  const before = pageFingerprint();
-  next.click();
-  const changed = await waitForPageChange(before);
+  const changed = await withAttention('Chuyển trang form',async()=>{
+    if(!await ensurePageReady()||!active)return false;
+    const missing=questions().find(q=>q.required&&!manuallyHandled.has(q.id)&&!isFilled(q));
+    if(missing){active=false;await emit({type:'block',issue:manualIssue(missing,'validation',`Câu bắt buộc chưa hoàn tất: ${missing.label}`)});return false;}
+    const before=pageFingerprint();next.click();
+    if(await waitForPageChange(before))return true;
+    if(!active||validationError()||!next.isConnected||next.getAttribute('aria-disabled')==='true')return false;
+    // Retry only Next, never Submit, and only when there is no validation error.
+    return await trustedClick(next)?waitForPageChange(before):false;
+  });
   if (!active) return;
   // Google Forms can retain an old aria-alert in the DOM after the next page
   // renders. A changed page is authoritative; only validate on a failed move.
@@ -950,32 +1048,38 @@ function requestExecute(depth = 0): void {
   if (executionInFlight) return;
   executionInFlight = true;
   void execute(depth).catch(async (error) => {
+    if(!active)return;
     active = false;
     await emit({ type: "failed", message: error instanceof Error ? error.message : String(error) });
   }).finally(() => {
     executionInFlight = false;
+    const start=pendingStart;pendingStart=undefined;start?.();
   });
 }
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+  if(message.type==='PAGE_RUN_STATUS'){sendResponse({runId:boundRunId,active,epoch:documentEpoch});return;}
   if(message.type==='PAGE_ACCOUNT'){sendResponse(pageAccount());return;}
   if (message.type === "SCAN_FORM") {
     sendResponse({ questions: scanCurrentForm() });
     return;
   }
   if (message.type === "HALT_RUN") {
+    runRequestGeneration++;pendingStart=undefined;
     active = false;
+    void releaseAttention();
     cancelManualResume?.();
     sendResponse?.({ ok: true });
     return;
   }
   if (message.type === "RUN_CURRENT_PAGE") {
     cancelManualResume?.();
-    active = true;
-    activeMode = message.mode;
-    manualSkipQuestionId = message.skipQuestionId;
-    if(message.runId!==boundRunId){submitAttempted=false;boundRunId=message.runId;}
-    void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(()=>requestExecute());
+    const generation=++runRequestGeneration;
+    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;boundRunId=message.runId;}requestExecute();};
+    void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(()=>{
+      if(generation!==runRequestGeneration)return;
+      if(executionInFlight){active=false;pendingStart=start;void releaseAttention();}else start();
+    });
     sendResponse?.({ ok: true });
   }
 });
@@ -984,13 +1088,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 // cards). The old content script is then destroyed mid-run. On every fresh
 // document, recover a still-running session from the service worker so page
 // advancement never depends on the user pressing Resume again.
+document.documentElement.dataset.hanuRecovery='claiming:2026-10-13';
 void Promise.resolve(chrome.runtime.sendMessage({ type: "CLAIM_DOCUMENT",epoch:documentEpoch } satisfies ExtensionMessage))
-  .then(()=>chrome.runtime.sendMessage({ type: "GET_RUN_FOR_TAB" } satisfies ExtensionMessage))
-  .then((run: RunState | undefined) => {
-    if (run?.status !== "running" ||run.recoveryRequired ||run.submitAttempted) return;
+  .then(response=>response?.run??chrome.runtime.sendMessage({ type: "GET_RUN_FOR_TAB" } satisfies ExtensionMessage))
+  .then(async (run: RunState | undefined) => {
+    activeFinalQuestion=run?.finalQuestion;
+    document.documentElement.dataset.hanuRecovery=run?`${run.status}:${run.recoveryRequired?'recovery-required':'available'}`:'no-run';
+    // Submit can also replace the document. Recover the acknowledgement with
+    // the existing lock; never execute the form or request another submit.
+    if(run?.submitAttempted){
+      boundRunId=run.runId;submitAttempted=true;active=false;
+      if(completedPage())await emit({type:'completed',message:'Google Forms đã xác nhận nhận phản hồi.'});
+      else if(run.status==='submitting')await emit({type:'block',issue:{reason:'submit_uncertain',message:'Trang sau Gửi chưa xác nhận nhận phản hồi. Giữ khóa gửi để đối chiếu.'}});
+      return;
+    }
+    if (run?.status !== "running" ||run.recoveryRequired) return;
     active = true;
     activeMode = run.mode;
     boundRunId=run.runId;
     requestExecute();
   })
-  .catch(() => undefined);
+  .catch(() => {document.documentElement.dataset.hanuRecovery='failed';});

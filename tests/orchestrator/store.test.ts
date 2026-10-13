@@ -11,6 +11,42 @@ const stores:Store[]=[],dirs:string[]=[];
 afterEach(()=>{for(const store of stores)try{store.close();}catch{}for(const dir of dirs)rmSync(dir,{recursive:true,force:true});stores.length=dirs.length=0;});
 function setup(count=2){const dir=mkdtempSync(join(tmpdir(),'hanu-store-'));dirs.push(dir);const path=join(dir,'db.sqlite');const store=new Store(path);stores.push(store);const members=Array.from({length:count},(_,i)=>`session-${i}`);for(const id of members){const token=store.pair(id,store.pairCode());expect(store.authenticate(id,token)).toBe(true);const s=store.session(id);s.profile=emptyProfile();s.profile.values.fullName=id;s.expectedEmail=`${id}@example.com`;s.synced=true;s.run={runId:'group',sessionId:id,managed:true,formId:'form',tabId:1,mode:'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',eventSeq:0};store.saveSession(s);}store.saveGroup({id:'group',url:'https://docs.google.com/forms/d/e/form/viewform',mode:'live',members,paused:false,createdAt:''});return {store,path,members};}
 describe('durable coordinator state',()=>{
+  it('snapshots one shared final question into every selected run without changing personal profiles',async()=>{
+    const {store,members}=setup(3),c=new Coordinator(store),before=members.map(id=>store.session(id).profile),payloads:any[]=[];
+    for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
+    c.command=async(id,kind,payload)=>{if(kind==='PING')return {capabilities:['sharedFinalQuestion']};payloads.push({id,kind,payload});return {};};
+    const q={label:'Năm nay là năm bao nhiêu?',value:'2026'};await c.start(members,store.group('group').url,'test',q);q.value='changed';
+    for(const id of members)expect(store.session(id).run?.finalQuestion?.value).toBe('2026');
+    expect(members.map(id=>store.session(id).profile)).toEqual(before);expect(payloads).toHaveLength(3);expect(payloads.every(p=>p.payload.finalQuestion.value==='2026')).toBe(true);
+  });
+  it('updates the waiting selected runs, preserves their snapshots against late STATE events and refuses locked runs',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store);for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(id,{} as any);}
+    c.command=async()=>({});const q={label:'Câu hỏi cuối',value:'Đáp án'};
+    expect((await c.setFinalQuestion(members,q)).every(r=>r.ok)).toBe(true);
+    const s=store.session(members[0]);await c.acceptState(s.id,{...s.run!,eventSeq:1,finalQuestion:undefined});expect(store.session(s.id).run?.finalQuestion).toEqual(q);
+    const locked=store.session(members[1]);locked.run!.submitAttempted=true;store.saveSession(locked);await expect(c.setFinalQuestion(members,q)).rejects.toThrow('chưa gửi');
+  });
+  it('requires support in every extension before starting any shared-answer run',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),starts:any[]=[];for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
+    c.command=async(id,kind)=>{if(kind==='START')starts.push(id);return {capabilities:id===members[0]?['sharedFinalQuestion']:[]};};
+    await expect(c.start(members,store.group('group').url,'test',{label:'Câu cuối',value:'2026'})).rejects.toThrow('Reload');expect(starts).toEqual([]);expect(store.sessions().every(s=>s.run?.status==='idle')).toBe(true);
+  });
+  it('reports individual update failures and keeps other profiles unchanged',async()=>{
+    const {store,members}=setup(3),c=new Coordinator(store);for(const id of members){const s=store.session(id);s.run!.status='paused';store.saveSession(s);c.peers.set(id,{} as any);}
+    c.command=async(id)=>{if(id===members[1])throw new Error('offline');return {};};
+    const results=await c.setFinalQuestion(members.slice(0,2),{label:'Câu cuối',value:'A'});expect(results).toEqual([{id:members[0],ok:true},{id:members[1],ok:false,error:'offline'}]);expect(store.session(members[2]).run?.finalQuestion).toBeUndefined();
+  });
+  it('grants renderer requests to different connected profiles concurrently and cancels only the paused member',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),replies:any[]=[];
+    for(const id of members)c.peers.set(id,{send:(json:string)=>replies.push({id,...JSON.parse(json)})} as any);
+    try{
+      await Promise.all(members.map((id,i)=>c.receive(id,{type:'REQUEST',requestId:`request-${i}`,kind:'ATTENTION_ACQUIRE',runId:'group',rendering:'background'})));
+      const a=replies.find(r=>r.id===members[0]),b=replies.find(r=>r.id===members[1]);expect(a).toMatchObject({ok:true,mode:'background'});expect(b).toMatchObject({ok:true,mode:'background'});
+      const run=store.session(members[0]).run!;await c.acceptState(members[0],{...run,status:'paused',eventSeq:1});
+      expect(c.attention.renew(members[0],a.token)).toBe(false);expect(c.attention.renew(members[1],b.token)).toBe(true);
+      await c.receive(members[0],{type:'REQUEST',requestId:'stopped',kind:'ATTENTION_ACQUIRE',runId:'group',rendering:'background'});expect(replies.at(-1)).toMatchObject({ok:false});
+    }finally{c.attention.close();}
+  });
   it('consumes expiring pair codes once and binds credentials to the right profile',()=>{const {store}=setup();const code=store.pairCode();const token=store.pair('third',code);expect(()=>store.pair('fourth',code)).toThrow();expect(store.authenticate('session-0',token)).toBe(false);const expired=store.pairCode();store.db.prepare('UPDATE pairing SET expires=0 WHERE code=?').run(digest(expired));expect(()=>store.pair('expired',expired)).toThrow();});
   it('stores images under the owning session even if their attachment IDs match',()=>{const {store}=setup();store.saveAttachment('session-0','same',Buffer.from('A'),digest('A'));store.saveAttachment('session-1','same',Buffer.from('B'),digest('B'));expect(store.attachment('session-0','same').data.toString()).toBe('A');expect(store.attachment('session-1','same').data.toString()).toBe('B');expect(()=>store.saveAttachment('session-0','bad',Buffer.from('A'),digest('B'))).toThrow();});
   it('commits a send lock once, persists it through restart, and keeps it per nick/form',()=>{const {store,path}=setup();store.acquireSubmit('session-0','group','form');expect(()=>store.acquireSubmit('session-0','group','form')).toThrow();expect(store.blocked('session-1','form')).toBe(false);store.close();stores.splice(stores.indexOf(store),1);const restored=new Store(path);stores.push(restored);expect(restored.blocked('session-0','form')).toBe(true);expect(restored.session('session-0').run?.status).toBe('submit_uncertain');expect(restored.session('session-0').connected).toBe(false);});
@@ -20,5 +56,31 @@ describe('durable coordinator state',()=>{
   it('rejects old-run, old-sequence and other-session events',async()=>{const {store}=setup();const c=new Coordinator(store);const r=store.session('session-0').run!;await c.acceptState('session-0',{...r,runId:'old',eventSeq:10,status:'completed'});await c.acceptState('session-0',{...r,sessionId:'session-1',eventSeq:10,status:'completed'});expect(store.session('session-0').run?.status).toBe('running');await c.acceptState('session-0',{...r,eventSeq:2,status:'paused'});await c.acceptState('session-0',{...r,eventSeq:1,status:'running'});expect(store.session('session-0').run?.status).toBe('paused');});
   it('stops a group only after both distinct-session thresholds are reached',async()=>{const {store}=setup(24);const c=new Coordinator(store);for(let i=0;i<20;i++)await c.failure('session-0','group');for(let i=1;i<5;i++)await c.failure(`session-${i}`,'group');expect(store.group('group').paused).toBe(false);await c.failure('session-5','group');expect(store.group('group').paused).toBe(true);});
   it('expires old failure events and does not treat two profiles as three',async()=>{const {store}=setup(2);const c=new Coordinator(store);await c.failure('session-0','group');await c.failure('session-1','group');expect(store.group('group').paused).toBe(false);c.failures.get('group')!.set('session-0',Date.now()-31000);await c.failure('session-1','group');expect(c.failures.get('group')!.size).toBe(1);});
-  it('does not let an old group stop a newer run or resume a stopped group',async()=>{const {store}=setup();const c=new Coordinator(store);const s=store.session('session-0');s.run!.runId='new';store.saveSession(s);const commands:any[]=[];c.command=async(...args)=>{commands.push(args);return {};};await c.groupControl('group','STOP');expect(commands.map(args=>args[0])).toEqual(['session-1']);await expect(c.groupControl('group','RESUME')).rejects.toThrow('dừng hẳn');await expect(c.control('session-0','PAUSE','group')).rejects.toThrow('lượt cũ');});
+  it('resumes a stopped group without touching members that moved to a newer run',async()=>{const {store}=setup();const c=new Coordinator(store);const s=store.session('session-0');s.run!.runId='new';store.saveSession(s);const commands:any[]=[];c.command=async(...args)=>{commands.push(args);return {};};await c.groupControl('group','STOP');expect(commands.map(args=>args[0])).toEqual(['session-1']);commands.length=0;await c.groupControl('group','RESUME');expect(commands.map(args=>[args[0],args[1]])).toEqual([['session-1','RESUME']]);expect(store.group('group')).toMatchObject({paused:false,stopped:false});await expect(c.control('session-0','PAUSE','group')).rejects.toThrow('lượt cũ');});
+  it('persists an acknowledged Stop, clears its old error and permits a fresh run',async()=>{
+    const {store}=setup(1);const c=new Coordinator(store),s=store.session('session-0');s.error='Old resume error';store.saveSession(s);
+    c.peers.set(s.id,{} as any);const commands:any[]=[];
+    c.command=async(id,kind)=>{commands.push(kind);if(kind==='STOP_PROFILE')return {...store.session(id).run,status:'idle',blockingIssue:undefined,eventSeq:1};return {};};
+    await c.groupControl('group','STOP');expect(store.session(s.id).error).toBeUndefined();expect(store.session(s.id).run?.status).toBe('idle');
+    const next=await c.start([s.id],store.group('group').url,'test');expect(next.id).not.toBe('group');expect(commands).toEqual(['STOP_PROFILE','START']);expect(store.history(s.id).some(r=>r.runId==='group')).toBe(true);
+  });
+  it('resumes one stopped member while leaving the other member halted',async()=>{
+    const {store}=setup();const c=new Coordinator(store);for(const id of ['session-0','session-1']){const s=store.session(id);s.run!.status='idle';store.saveSession(s);}
+    const group=store.group('group');group.paused=true;group.stopped=true;store.saveGroup(group);
+    const commands:any[]=[];c.command=async(id,kind)=>{commands.push([id,kind]);return {...store.session(id).run,status:'running',eventSeq:1};};
+    await c.control('session-0','RESUME');expect(commands).toEqual([['session-0','RESUME']]);expect(store.session('session-0').run?.status).toBe('running');expect(store.session('session-1').run?.status).toBe('idle');
+  });
+  it('keeps a submitted member locked when resuming the stopped group',async()=>{
+    const {store}=setup();store.acquireSubmit('session-0','group','form');const c=new Coordinator(store),commands:any[]=[];c.command=async(...args)=>{commands.push(args);return {};};
+    await c.groupControl('group','STOP');commands.length=0;await c.groupControl('group','RESUME');expect(commands.map(args=>args[0])).toEqual(['session-1']);expect(store.blocked('session-0','form')).toBe(true);
+    await expect(c.control('session-0','RESUME')).rejects.toThrow('khóa gửi');c.peers.set('session-0',{} as any);await expect(c.start(['session-0'],store.group('group').url,'live')).rejects.toThrow('khóa gửi');
+  });
+  it('shows a standalone owner and stops it even when the app has recorded a different failed run',async()=>{
+    const {store}=setup(1);const c=new Coordinator(store),s=store.session('session-0');s.run!.status='failed';store.saveSession(s);c.peers.set(s.id,{} as any);
+    await c.receive(s.id,{type:'EXECUTION',execution:{runId:'standalone',tabId:99,status:'running',managed:false,mode:'test',tabOpen:true,updatedAt:''}});
+    await expect(c.start([s.id],store.group('group').url,'test')).rejects.toThrow('Xem form');
+    const commands:any[]=[];c.command=async(id,kind)=>{commands.push([id,kind]);return {run:{runId:'different-extension-run',status:'idle'},execution:null};};
+    await c.control(s.id,'STOP');expect(commands).toEqual([[s.id,'STOP_PROFILE']]);expect(store.session(s.id).execution).toBeNull();expect(store.session(s.id).run?.status).toBe('idle');
+    await c.start([s.id],store.group('group').url,'test');expect(commands.at(-1)?.[1]).toBe('START');
+  });
 });

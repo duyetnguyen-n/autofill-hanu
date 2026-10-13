@@ -16,7 +16,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS pairing(code TEXT PRIMARY KEY,expires INTEGER);
       CREATE TABLE IF NOT EXISTS attachments(session TEXT,id TEXT,hash TEXT,data BLOB,PRIMARY KEY(session,id));
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at TEXT,session TEXT,run TEXT,kind TEXT,message TEXT);`);
-    for (const s of this.sessions()) { s.connected = false; if (s.run && !['completed','idle','ready_to_submit'].includes(s.run.status)) { s.run.status = s.run.submitAttempted ? 'submit_uncertain' : 'paused'; s.run.recoveryRequired = true; this.saveRun(s.id,s.run); } this.saveSession(s); }
+    for (const s of this.sessions()) { s.connected = false; s.execution=undefined; if (s.run && !['completed','idle','ready_to_submit'].includes(s.run.status)) { s.run.status = s.run.submitAttempted ? 'submit_uncertain' : 'paused'; s.run.recoveryRequired = true; this.saveRun(s.id,s.run); } this.saveSession(s); }
     for(const group of this.groups())if(this.sessions().some(s=>s.run?.runId===group.id&&s.run.recoveryRequired)){group.paused=true;this.saveGroup(group);}
   }
   transaction<T>(fn: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const value = fn(); this.db.exec('COMMIT'); return value; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }

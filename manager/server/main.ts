@@ -1,7 +1,9 @@
+import {AttentionQueue} from './attention';
+import {desktopFocus} from './desktop-focus';
 import { createServer, type IncomingMessage } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join, resolve, extname } from 'node:path';
+import { join, resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -14,7 +16,7 @@ function openManager(url:string){if(process.platform==='darwin')execFile('open',
 
 export async function serve(options:{dir?:string;port?:number;uiDir?:string;launcher?:string;open?:boolean;nativeManifestDir?:string}={}){
   const dir=options.dir??dataDirectory();mkdirSync(dir,{recursive:true,mode:0o700});
-  const store=new Store(join(dir,'hanu.sqlite'));const coordinator=new Coordinator(store);
+  const store=new Store(join(dir,'hanu.sqlite'));const coordinator=new Coordinator(store,new AttentionQueue(desktopFocus()));
   const uiToken=randomBytes(32).toString('hex'),bridgeToken=randomBytes(32).toString('hex');
   const webSockets=new WebSocketServer({noServer:true,maxPayload:1024*1024});const browsers=new Set<WebSocket>();
   let origin='';const cookie=`hanu=${uiToken}`;const authenticate=(req:IncomingMessage)=>req.headers.cookie?.split(';').some(c=>c.trim()===cookie)===true;
@@ -39,7 +41,8 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/state'&&req.method==='GET')return json(state());
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
-        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode));}
+        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion));}
+        if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion));}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
         if(session){const id=session[1],action=session[2];
@@ -48,6 +51,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
           if(req.method==='POST'){
             if(action==='ping')return json(await coordinator.command(id,'PING',{},undefined,5000));
             if(action==='focus')return json(await coordinator.command(id,'FOCUS'));
+            if(action==='scan')return json(await coordinator.command(id,'SCAN_FORM'));
             if(action==='pull')return json(await coordinator.pull(id));
             if(action==='push'){const b=await body(req);return json(await coordinator.push(id,b.force===true));}
             if(action==='use-extension'){const s=store.session(id);if(!s.conflict)throw new Error('Không có xung đột.');await coordinator.importDocument(id,s.conflict);return json(store.session(id));}
@@ -60,7 +64,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         return json({error:'Không tìm thấy API.'},404);
       }
       if(req.method!=='GET')return json({error:'Method không hợp lệ.'},405);
-      const file=resolve(uiDir,'.'+decodeURIComponent(path==='/'?'/index.html':path));if(!file.startsWith(resolve(uiDir)+'/')||!existsSync(file))return json({error:'Không tìm thấy giao diện. Chạy build:manager.'},404);
+      const file=resolve(uiDir,'.'+decodeURIComponent(path==='/'?'/index.html':path));if(!file.startsWith(resolve(uiDir)+sep)||!existsSync(file))return json({error:'Không tìm thấy giao diện. Chạy build:manager.'},404);
       const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2'};res.setHeader('Content-Type',types[extname(file)]??'application/octet-stream');res.end(readFileSync(file));
     }catch(e){failClosed(e);json({error:emergencyError||(e as Error).message},400);}
   });
@@ -88,7 +92,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   const heartbeat=setInterval(()=>{for(const[id,ws]of coordinator.peers){const s=store.session(id);if(Date.now()-Date.parse(s.lastSeen)>15000)ws.terminate();}},5000);
   coordinator.launchUrl=url;
   if(options.open)openManager(url);
-  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
+  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
 }
 if(process.argv.includes('--serve')){
   const dir=dataDirectory();mkdirSync(dir,{recursive:true,mode:0o700});const lock=join(dir,'instance.lock');
