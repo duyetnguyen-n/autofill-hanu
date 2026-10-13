@@ -2,8 +2,11 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 
 export default defineConfig(({ mode }) => {
+  const cloudOrigin=process.env.HANU_CLOUD_ORIGIN??'';
+  const common={outDir:cloudOrigin?'dist-cloud':'dist',define:{__HANU_CLOUD_ORIGIN__:JSON.stringify(cloudOrigin)}};
   if (mode === "background" || mode === "content") {
     return {
+      define:common.define,
       build: {
         emptyOutDir: false,
         lib: {
@@ -12,17 +15,18 @@ export default defineConfig(({ mode }) => {
           name: `Hanu${mode[0].toUpperCase()}${mode.slice(1)}`,
           fileName: () => `${mode}.js`
         },
-        outDir: "dist",
+        outDir: common.outDir,
         rollupOptions: { output: { assetFileNames: "assets/[name]-[hash][extname]" } }
       }
     };
   }
 
   return {
+    define:common.define,
     publicDir: "public",
     build: {
       emptyOutDir: true,
-      outDir: "dist",
+      outDir: common.outDir,
       rollupOptions: { input: [resolve(__dirname, "sidepanel.html"),resolve(__dirname, "connection.html")] }
     }
   };

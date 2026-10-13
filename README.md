@@ -2,6 +2,28 @@
 
 App cục bộ quản lý nhiều Chrome profile, mỗi profile giữ một hồ sơ thí sinh và ảnh riêng. Người dùng tự mở profile, đăng nhập Google, liên kết extension rồi chọn các phiên để chạy Test hoặc Live. Bản này chưa dùng AI.
 
+## Bản online với Supabase
+
+Bản online dùng đăng nhập Google qua Supabase Auth, dữ liệu PostgreSQL riêng
+theo tài khoản và ảnh trong Supabase Storage private. Một Node.js backend quản
+lý kết nối WebSocket và điều phối các extension chạy đồng thời; extension vẫn
+Load unpacked. Bản local giữ SQLite/Native Messaging, dữ liệu không tự upload.
+
+Tạo **project Supabase mới**, bật Google provider, chạy migration và điền
+`.env.cloud` theo [hướng dẫn triển khai](docs/CLOUD.md). `npm run build:cloud`
+tạo `dist-cloud`, `build/cloud-server`, `build/cloud-ui`; `npm run cloud` khởi
+động server. Docker Compose + Caddy có trong `deploy/cloud`.
+
+Chuyển dữ liệu: dừng lượt local -> **Xuất dữ liệu** -> đăng nhập website ->
+**Nhập từ bản local** -> **Liên kết lại** từng profile. Giữ hồ sơ/ảnh/lịch sử và
+khóa gửi, không nhập thành lượt đang chạy. Không cài bản local và online cùng
+điều khiển một Chrome profile. Trước khi phân phối, build lại extension với
+tên miền production; bản trong `dist-cloud` sau kiểm thử có thể trỏ localhost.
+
+Kiểm thử cloud: `npm test`, `npm run test:cloud-ui`, `npm run test:cloud-flow`.
+Các fixture không dùng tài khoản Google hoặc hồ sơ thật. Đăng nhập Google,
+Storage, TLS và hosting thật cần nghiệm thu sau khi cấu hình project/tên miền.
+
 ## Sử dụng gói đóng sẵn
 
 Gói Mac Apple Silicon nằm trong `releases`. Script đóng gói hỗ trợ thêm Mac Intel và Windows x64; hai gói này chưa được hoàn tất vì ổ đĩa hiện tại không đủ dung lượng. Node 24.21.0 được kèm theo; không cần cài Node riêng. Mac cần macOS 13.5 trở lên, Windows cần Windows 10/11 x64. Windows và Mac Intel vẫn cần nghiệm thu trên máy thật.

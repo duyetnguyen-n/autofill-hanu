@@ -1,5 +1,10 @@
 node_modules/
 dist/
+dist-cloud/
+.env
+.env.*
+!.env.*.example
+secrets/
 build/
 .runtime/
 .backups/

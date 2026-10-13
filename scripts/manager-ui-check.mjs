@@ -61,7 +61,7 @@ try{
   restored.error='Nhóm đang dừng; hãy tiếp tục nhóm hoặc tạo lượt mới.';
   app.store.saveGroup({id:'stopped-fixture',url:formUrl,mode:'test',members:[id],paused:true,stopped:true,createdAt:new Date().toISOString()});
   app.store.saveRun(id,restored.run);app.store.saveSession(restored);app.coordinator.changed();
-  await page.getByRole('button',{name:'Profile thử',exact:true}).click();expect(commands.at(-1)).toBe('FOCUS');
+  await page.getByRole('button',{name:'Profile thử',exact:true}).click();await expect.poll(()=>commands.at(-1)).toBe('FOCUS');
   await page.getByLabel('Chọn Profile thử',{exact:true}).check();
   await page.getByLabel('Link Google Form',{exact:true}).fill(formUrl);
   await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeEnabled();
@@ -83,8 +83,8 @@ try{
   await expect(page.getByRole('status',{name:'Lượt đang hoạt động'})).toContainText('1 profile đang chạy');
   await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeDisabled();
   await page.screenshot({path:'test-results/manager-execution-owner.png',fullPage:true});
-  await page.getByRole('button',{name:'Dừng',exact:true}).click();expect(commands.at(-1)).toBe('STOP_PROFILE');
+  await page.getByRole('button',{name:'Dừng',exact:true}).click();await expect.poll(()=>commands.at(-1)).toBe('STOP_PROFILE');
   await expect(page.locator('table')).toContainText('Đã dừng');await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeEnabled();
-  await page.getByRole('button',{name:'Xem form',exact:true}).click();expect(commands.at(-1)).toBe('FOCUS');
+  await page.getByRole('button',{name:'Xem form',exact:true}).click();await expect.poll(()=>commands.at(-1)).toBe('FOCUS');
   console.log('PASS: a standalone owner is visible even when the managed run failed, Start is disabled while held, and row Stop releases it without a run-ID mismatch.');
 }finally{await browser?.close();await app?.close();rmSync(dir,{recursive:true,force:true});}

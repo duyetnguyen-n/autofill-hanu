@@ -1,6 +1,7 @@
 import { CHUNK_BYTES, NATIVE_HOST, PROTOCOL_VERSION, bytesToBase64, sha256, validateProfile, type Command, type ExecutionView } from './protocol';
 import { getProfile, getProfileRevision, getAttachment, saveAttachment, deleteAttachment, saveProfile } from './storage';
 import type { RunState, AttachmentRef } from './shared';
+import { cloudOrigin, websocketConnector, type Connector, type CoordinatorPort } from './coordinator-transport';
 
 interface Identity {sessionId:string;token?:string}
 interface Adapter {
@@ -11,39 +12,58 @@ interface Adapter {
   reconcile():Promise<unknown>;
   execution?():Promise<ExecutionView|null>;
 }
-export function createNativeClient(adapter:Adapter){
-  let port:chrome.runtime.Port|undefined,identity:Identity,connected=false,error='',pairCode:string|undefined,stopped=false;
+export function createNativeClient(adapter:Adapter,options:{origin?:string;connector?:Connector}={}){
+  const origin=options.origin??cloudOrigin(),cloud=!!origin;
+  const identityKey=cloud?`cloudCoordinatorIdentity:${origin}`:'coordinatorIdentity';
+  const journalKey=cloud?`cloudJournal:${origin}`:'nativeJournal';
+  const connector:Connector=options.connector??(cloud?websocketConnector(origin):()=>chrome.runtime.connectNative(NATIVE_HOST));
+  let port:CoordinatorPort|undefined,identity:Identity,connected=false,error='',pairCode:string|undefined,stopped=false;
   let queue=Promise.resolve(),reconnectTimer:ReturnType<typeof setTimeout>|undefined;
   let executionQueue=Promise.resolve();
   let identityLoading:Promise<void>|undefined;
+  let connecting=false,attempt=0,generation=0;
+  const alarmName='hanu-cloud-reconnect';
+  const clearAlarm=()=>{if(cloud&&typeof chrome.alarms?.clear==='function')void chrome.alarms.clear(alarmName);};
+  if(cloud&&chrome.alarms?.onAlarm)chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name===alarmName&&!stopped)void connect();});
   let pairing:{resolve:()=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}|undefined;
   const requests=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
   const send=(m:Record<string,unknown>)=>{if(!port)throw new Error('Cầu nối chưa kết nối.');port.postMessage({...m,protocol:PROTOCOL_VERSION,sessionId:identity.sessionId});};
   function reportExecution(){if(!adapter.execution)return;executionQueue=executionQueue.then(async()=>{if(!connected)return;const execution=await adapter.execution!();if(connected)send({type:'EXECUTION',execution});}).catch(()=>undefined);}
-  async function status(){await ensureIdentity();return {sessionId:identity.sessionId,extensionId:chrome.runtime.id,paired:!!identity.token,connected,error};}
-  async function ensureIdentity(){if(identity)return;identityLoading??=(async()=>{const s=await chrome.storage.local.get('coordinatorIdentity');identity=s.coordinatorIdentity??{sessionId:crypto.randomUUID()};await chrome.storage.local.set({coordinatorIdentity:identity});})();await identityLoading;}
+  async function status(){await ensureIdentity();return {sessionId:identity.sessionId,extensionId:chrome.runtime.id,paired:!!identity.token,connected,error,cloud,origin};}
+  async function ensureIdentity(){if(identity)return;identityLoading??=(async()=>{const s=await chrome.storage.local.get(identityKey);identity=s[identityKey]??{sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});})();await identityLoading;}
   function pairingError(message:string){error=message;if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error(message));pairing=undefined;}pairCode=undefined;}
   function chromeError(message:string){if(/host.*not found|specified native messaging host/i.test(message))return 'Chrome chưa tìm thấy cầu nối. Trong app, nhập đúng ID extension rồi bấm Tạo mã liên kết.';if(/forbidden|access.*denied/i.test(message))return 'ID extension chưa được cấp quyền kết nối. Tạo lại mã trong app bằng ID đang hiển thị ở đây.';if(/exited/i.test(message))return 'Không mở được cầu nối. Hãy mở app quản lý rồi thử lại.';return message;}
-  async function connect(){if(stopped||port||typeof chrome.runtime.connectNative!=='function')return;await ensureIdentity();if(port)return;try{const current=chrome.runtime.connectNative(NATIVE_HOST);port=current;current.onMessage.addListener(m=>{if(port===current)onMessage(m);});current.onDisconnect.addListener(()=>{if(port!==current)return;port=undefined;connected=false;pairingError(chromeError(chrome.runtime.lastError?.message??'Mất kết nối app.'));for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error(error));}requests.clear();void adapter.disconnected().catch(()=>undefined);clearTimeout(reconnectTimer);reconnectTimer=setTimeout(()=>void connect(),3000);});send(pairCode?{type:'PAIR',code:pairCode}:{type:'HELLO',token:identity.token});}catch(e){pairingError((e as Error).message);port=undefined;reconnectTimer=setTimeout(()=>void connect(),3000);}}
-  function onMessage(m:any){
+  function retry(){clearTimeout(reconnectTimer);if(stopped)return;const wait=cloud?[1000,2000,5000,10000,30000][Math.min(attempt++,4)]+Math.floor(Math.random()*500):3000;reconnectTimer=setTimeout(()=>void connect(),wait);if(cloud&&typeof chrome.alarms?.create==='function')void chrome.alarms.create(alarmName,{when:Date.now()+60000});}
+  async function connect(){
+    if(stopped||port||connecting||!cloud&&!options.connector&&typeof chrome.runtime.connectNative!=='function')return;
+    connecting=true;const version=generation;
+    try{await ensureIdentity();const current=await connector();if(stopped||version!==generation){current.disconnect();return;}port=current;
+      current.onMessage.addListener(m=>{if(port===current)onMessage(m,current);});
+      current.onDisconnect.addListener(()=>{if(port!==current)return;port=undefined;connected=false;generation++;pairingError(cloud?(current.error??'Mất kết nối website quản lý.'):chromeError(chrome.runtime.lastError?.message??'Mất kết nối app.'));for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error(error));}requests.clear();void adapter.disconnected().catch(()=>undefined).finally(retry);});
+      send({...pairCode?{type:'PAIR',code:pairCode}:{type:'HELLO',token:identity.token},...(cloud?{transport:'cloud',extensionId:chrome.runtime.id}:{})});
+    }catch(e){pairingError((e as Error).message);port=undefined;retry();}finally{connecting=false;}
+  }
+  function onMessage(m:any,current:CoordinatorPort){
     if(m.type==='EMERGENCY_STOP'){connected=false;pairingError(m.error??'App không lưu được tiến độ. Đã dừng phiên.');void adapter.disconnected().catch(()=>undefined);return;}
-    if(m.type==='PAIRED'){identity.token=m.token;pairCode=undefined;connected=true;error='';void chrome.storage.local.set({coordinatorIdentity:identity}).then(()=>{if(pairing){clearTimeout(pairing.timer);pairing.resolve();pairing=undefined;}return adapter.reconcile();}).catch(e=>pairingError((e as Error).message));return;}
-    if(m.type==='WELCOME'){connected=true;error='';void adapter.reconcile().then(reportExecution);return;}
+    if(m.type==='PAIRED'){identity.token=m.token;if(cloud&&typeof m.sessionId==='string')identity.sessionId=m.sessionId;pairCode=undefined;connected=true;attempt=0;clearAlarm();error='';void chrome.storage.local.set({[identityKey]:identity}).then(()=>{if(pairing){clearTimeout(pairing.timer);pairing.resolve();pairing=undefined;}return adapter.reconcile();}).catch(e=>pairingError((e as Error).message));return;}
+    if(m.type==='WELCOME'){connected=true;attempt=0;clearAlarm();error='';void adapter.reconcile().then(reportExecution).catch(e=>pairingError((e as Error).message));return;}
+    if(m.type==='REVOKED'||m.type==='UNPAIRED'&&cloud){connected=false;stopped=true;generation++;clearAlarm();pairingError('Profile chưa liên kết hoặc đã bị ngắt. Lấy mã mới trên website để liên kết lại.');identity={sessionId:crypto.randomUUID()};void chrome.storage.local.set({[identityKey]:identity});void adapter.disconnected();port=undefined;current.disconnect();return;}
     if(m.type==='UNPAIRED'){connected=false;return;}
     if(m.type==='ERROR'){pairingError(m.error);return;}
     if(m.type==='REPLY'){const p=requests.get(m.requestId);if(p){clearTimeout(p.timer);requests.delete(m.requestId);m.ok?p.resolve(m):p.reject(new Error(m.error));}return;}
     if(m.type!=='COMMAND'||m.protocol!==PROTOCOL_VERSION||m.sessionId!==identity.sessionId||!connected)return;
     // Interrupt a running page immediately even if another command is awaiting a load.
     if(['PAUSE','STOP','STOP_PROFILE'].includes(m.kind))void adapter.disconnected();
-    queue=queue.then(async()=>{try{const result=await execute(m);send({type:'RESULT',commandId:m.commandId,ok:true,result});}catch(e){send({type:'RESULT',commandId:m.commandId,ok:false,error:(e as Error).message});}reportExecution();}).catch(()=>undefined);
+    const version=generation;
+    queue=queue.then(async()=>{if(!connected||port!==current||version!==generation)return;try{const result=await execute(m);if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:true,result});}catch(e){if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:false,error:(e as Error).message});}reportExecution();}).catch(()=>undefined);
   }
   async function execute(c:Command){
     const readOnly=['PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
-    let journal:Record<string,{done:boolean;result?:unknown}>=(await chrome.storage.local.get('nativeJournal')).nativeJournal??{};
+    let journal:Record<string,{done:boolean;result?:unknown}>=(await chrome.storage.local.get(journalKey))[journalKey]??{};
     if(!readOnly&&journal[c.commandId]){if(journal[c.commandId].done)return journal[c.commandId].result;throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}
-    if(!readOnly){journal[c.commandId]={done:false};const keys=Object.keys(journal);for(const k of keys.slice(0,-1000))delete journal[k];await chrome.storage.local.set({nativeJournal:journal});}
+    if(!readOnly){journal[c.commandId]={done:false};const keys=Object.keys(journal);for(const k of keys.slice(0,-1000))delete journal[k];await chrome.storage.local.set({[journalKey]:journal});}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion'],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-13-cloud':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){
@@ -64,18 +84,18 @@ export function createNativeClient(adapter:Adapter){
     }else if(c.kind==='START')result=await adapter.start(c,identity.sessionId);
     else if(c.kind==='RECONCILE')result=await adapter.reconcile();
     else result=await adapter.control(c);
-    if(!readOnly){journal[c.commandId]={done:true,result};await chrome.storage.local.set({nativeJournal:journal});}return result;
+    if(!readOnly){journal[c.commandId]={done:true,result};await chrome.storage.local.set({[journalKey]:journal});}return result;
   }
   async function request(kind:string,run?:RunState,payload:Record<string,unknown>={}):Promise<any>{if(!connected)throw new Error('App mất kết nối; không cấp quyền chạy/gửi.');const requestId=crypto.randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{requests.delete(requestId);reject(new Error('App không xác nhận; giữ khóa gửi để đối chiếu.'));},kind==='ATTENTION_ACQUIRE'?180000:5000);requests.set(requestId,{resolve,reject,timer});send({type:'REQUEST',requestId,kind,runId:run?.runId,formId:run?.formId,...payload});});}
   return {
     status,request,isConnected:()=>connected,
     boot:()=>void connect(),
-    async pair(code:string){await ensureIdentity();if(identity.token){await connect();return status();}if(pairing)throw new Error('Đang liên kết, vui lòng chờ phản hồi.');if(!/^[A-F0-9]{12}$/.test(code.trim().toUpperCase()))throw new Error('Mã liên kết phải gồm 12 ký tự. Sao chép mã mới từ app.');pairCode=code.trim().toUpperCase();error='';stopped=false;const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);const confirmation=new Promise<void>((resolve,reject)=>{pairing={resolve,reject,timer:setTimeout(()=>pairingError('App chưa xác nhận sau 10 giây. Kiểm tra app đang mở và lấy mã mới.'),10000)};});await connect();await confirmation;return status();},
-    async unlink(){await adapter.disconnected();stopped=true;port?.disconnect();identity={sessionId:crypto.randomUUID()};await chrome.storage.local.set({coordinatorIdentity:identity});return status();},
+    async pair(code:string){await ensureIdentity();if(identity.token){await connect();return status();}if(pairing)throw new Error('Đang liên kết, vui lòng chờ phản hồi.');if(!/^[A-F0-9]{12}$/.test(code.trim().toUpperCase()))throw new Error('Mã liên kết phải gồm 12 ký tự. Sao chép mã mới từ app.');pairCode=code.trim().toUpperCase();error='';stopped=false;generation++;const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);const confirmation=new Promise<void>((resolve,reject)=>{pairing={resolve,reject,timer:setTimeout(()=>pairingError('Chưa xác nhận sau 10 giây. Kiểm tra trang quản lý và lấy mã mới.'),10000)};});if(connecting){await new Promise<void>(resolve=>{const timer=setInterval(()=>{if(!connecting){clearInterval(timer);resolve();}},50);});}await connect();await confirmation;return status();},
+    async unlink(){await adapter.disconnected();if(cloud&&connected)await request('UNLINK');stopped=true;connected=false;generation++;clearAlarm();const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);identity={sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});return status();},
     state(run:RunState){if(connected&&run.managed)send({type:'STATE',run});if(connected)reportExecution();},
     profileChanged(){if(connected)send({type:'PROFILE_CHANGED'});},
     failure(run:RunState){if(connected)send({type:'LOAD_FAILURE',runId:run.runId});},
     heartbeat(){if(connected){send({type:'HEARTBEAT'});reportExecution();}}
-    ,dispose(){stopped=true;connected=false;clearTimeout(reconnectTimer);if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error('Đã đóng kết nối.'));pairing=undefined;}const old=port;port=undefined;old?.disconnect();for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error('Đã đóng kết nối.'));}requests.clear();}
+    ,dispose(){stopped=true;connected=false;generation++;clearAlarm();clearTimeout(reconnectTimer);if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error('Đã đóng kết nối.'));pairing=undefined;}const old=port;port=undefined;old?.disconnect();for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error('Đã đóng kết nối.'));}requests.clear();}
   };
 }

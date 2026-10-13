@@ -1,0 +1,66 @@
+import { chromium, expect } from '@playwright/test';
+import { mkdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { httpFixture, users } from '../tests/cloud/fixture';
+
+const app = await httpFixture(resolve('build/cloud-ui'));
+const a = await app.pair(users[0]), b = await app.pair(users[1]);
+const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : 'chromium', headless: true });
+await mkdir('test-results', { recursive: true });
+try {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(app.config.origin);
+  await expect(page.getByRole('heading', { name: 'Đăng nhập để bắt đầu' })).toBeVisible();
+  await page.screenshot({ path: 'test-results/cloud-login.png', fullPage: true });
+  await page.getByRole('button', { name: 'Tiếp tục với Google', exact: true }).click();
+  await expect(page.getByText('an@example.test', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('table')).toContainText('Chrome thử An');
+  await expect(page.locator('table')).not.toContainText('Chrome thử Bình');
+  const runtime = app.app.runtimes.get(users[0])!;
+  runtime.coordinator.peers.set(a.sessionId, { readyState: 1, terminate() {} } as any);
+  let nativeProfile = (await a.store.session(a.sessionId)).profile!, revision = 0;
+  runtime.coordinator.command = async (_id, kind, payload) => {
+    if (kind === 'READ_PROFILE') return { profile: nativeProfile, revision };
+    if (kind === 'COMMIT_PROFILE') { nativeProfile = structuredClone(payload.profile as typeof nativeProfile); return { revision: ++revision }; }
+    return {};
+  };
+  await page.getByRole('button', { name: 'Thêm profile', exact: true }).first().click();
+  await expect(page.getByLabel('ID extension', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Tạo mã liên kết', exact: true }).click();
+  await expect(page.locator('.pair-code code')).toHaveText(/^[A-F0-9]{12}$/);
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await page.getByRole('button', { name: 'Chi tiết', exact: true }).click();
+  await page.getByLabel('Họ và tên', { exact: true }).fill('Tên đang soạn');
+  let releaseUpload!: () => void; const gate = new Promise<void>(resolve => { releaseUpload = resolve; });
+  await page.route('**/api/sessions/*/attachment', async route => { await gate; await route.continue(); });
+  const uploaded = page.waitForResponse(response => response.url().endsWith('/attachment'));
+  await page.locator('input[type=file]').last().setInputFiles({ name: 'cloud-fixture.png', mimeType: 'image/png', buffer: await readFile('tests/upload-fixture.png') });
+  await page.getByLabel('Họ và tên', { exact: true }).fill('Tên chỉnh trong lúc upload');
+  releaseUpload(); expect((await uploaded).status()).toBe(200);
+  await expect(page.getByLabel('Họ và tên', { exact: true })).toHaveValue('Tên chỉnh trong lúc upload');
+  await page.getByRole('button', { name: 'Lưu và đồng bộ', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('Đã lưu và đồng bộ');
+  expect((await a.store.session(a.sessionId)).profile!.values.fullName).toBe('Tên chỉnh trong lúc upload');
+  await page.getByRole('button', { name: 'Đóng chi tiết', exact: true }).first().click();
+  await page.screenshot({ path: 'test-results/cloud-manager.png', fullPage: true });
+  await page.getByRole('checkbox', { name: 'Chọn Chrome thử An', exact: true }).check();
+  await page.getByLabel('Link Google Form', { exact: true }).fill('https://docs.google.com/forms/d/e/private-draft/viewform');
+  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Đăng nhập để bắt đầu' })).toBeVisible();
+  app.setLoginUser(1);
+  await page.getByRole('button', { name: 'Tiếp tục với Google', exact: true }).click();
+  await expect(page.locator('table')).toContainText('Chrome thử Bình');
+  await expect(page.locator('table')).not.toContainText('Chrome thử An');
+  await expect(page.getByLabel('Link Google Form', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('checkbox', { name: 'Chọn Chrome thử Bình', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Bắt đầu Test', exact: true })).toBeDisabled();
+  expect(errors).toEqual([]);
+  const mobile = await context.newPage(); await mobile.setViewportSize({ width: 390, height: 844 });
+  await context.clearCookies(); await mobile.goto(app.config.origin);
+  await expect(mobile.getByRole('button', { name: 'Tiếp tục với Google', exact: true })).toBeVisible();
+  expect(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await mobile.screenshot({ path: 'test-results/cloud-login-mobile.png', fullPage: true });
+  console.log('PASS: cloud login UI, Google redirect/callback fixture, separate accounts, single-code pairing, upload preserves drafts, Save sync, logout/switch clears profile/link/selection, mobile login. Auth fixture only; no real Google login.');
+} finally { await browser.close(); await app.close(); }

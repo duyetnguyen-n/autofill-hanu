@@ -2,6 +2,7 @@ import { attachmentReference, blobToDataUrl, clearAttachments, dataUrlToBlob, ge
 import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState, validateFinalQuestion } from "./shared";
 import { assignPickerFile, PickerUploadResult } from "./picker-upload";
 import { createNativeClient } from './native-client';
+import { cloudOrigin } from './coordinator-transport';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 
 const RUN_PREFIX = "run:";
@@ -414,7 +415,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if(message.type==='NATIVE_STATUS')return sendResponse(await native.status());
       if(message.type==='NATIVE_PAIR')return sendResponse(await native.pair(message.code));
       if(message.type==='NATIVE_UNLINK')return sendResponse(await native.unlink());
-      if(message.type==='NATIVE_OPEN_MANAGER'){const result=await native.request('OPEN_MANAGER');await chrome.tabs.create({url:result.url,active:true});return sendResponse({ok:true});}
+      if(message.type==='NATIVE_OPEN_MANAGER'){const url=cloudOrigin()||(await native.request('OPEN_MANAGER')).url;await chrome.tabs.create({url,active:true});return sendResponse({ok:true});}
       if(message.type==='CLAIM_DOCUMENT'){
         if(sender.tab?.id===undefined||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
         const run=await getRun(sender.tab.id);
@@ -631,4 +632,4 @@ async function grantSubmit(message:Extract<ExtensionMessage,{type:'REQUEST_SUBMI
   return {ok:true,granted:true};
 }
 
-if(typeof chrome.runtime.connectNative==='function'){native.boot();setInterval(()=>native.heartbeat(),5000);chrome.runtime.onStartup?.addListener(()=>void reconcileManaged());}
+if(cloudOrigin()||typeof chrome.runtime.connectNative==='function'){native.boot();setInterval(()=>native.heartbeat(),cloudOrigin()?20000:5000);chrome.runtime.onStartup?.addListener(()=>void reconcileManaged());}

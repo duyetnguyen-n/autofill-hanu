@@ -1,0 +1,15 @@
+node_modules
+.git
+.env
+.env.*
+secrets
+.runtime
+.backups
+.local-data
+dist
+dist-cloud
+build
+releases
+test-results
+playwright-report
+*.sqlite*

@@ -51,7 +51,7 @@ try{
     const code=app.store.pairCode();await panel.locator('#pairCode').fill(code);await panel.locator('#pairProfile').click();
     await wait(()=>app.store.sessions().length===i+1&&app.store.sessions().every(s=>s.synced),25000);
     const session=app.store.sessions().at(-1);assert.equal(session.profile.values.fullName,`THI SINH THU ${i}`);assert.equal(app.store.attachment(session.id,`image-${i}`).data.length,image.length);
-    app.coordinator.edit(session.id,{name:`Profile thử ${i+1}`,expectedEmail:`nick${i}@example.test`});
+    await app.coordinator.edit(session.id,{name:`Profile thử ${i+1}`,expectedEmail:`nick${i}@example.test`});
     const received=[];receivedByProfile.set(i,received);await context.addCookies([{name:'fixtureprofile',value:String(i),url:fixtureUrl}]);
     profileResults.push({context,worker,panel,id:session.id,index:i,received});console.log(`Linked fixture profile ${i+1}/${count}`);
   }

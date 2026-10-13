@@ -2,9 +2,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
 import type { SessionView, GroupView } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
+import type { DataStore } from './data-store';
 
 export const digest = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
-export class Store {
+export class Store implements DataStore {
   db: DatabaseSync;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
@@ -56,6 +57,26 @@ export class Store {
   }
   saveAttachment(session: string,id: string,bytes: Buffer,hash: string) { if (digest(bytes)!==hash) throw new Error('Mã băm ảnh không khớp.'); this.db.prepare('INSERT OR REPLACE INTO attachments VALUES(?,?,?,?)').run(session,id,hash,bytes); }
   attachment(session: string,id: string) { const r=this.db.prepare('SELECT data,hash FROM attachments WHERE session=? AND id=?').get(session,id) as {data:Uint8Array;hash:string}|undefined; if (!r) throw new Error('Chưa đồng bộ ảnh.'); return {data:Buffer.from(r.data),hash:r.hash}; }
+  attachmentInfo(session:string,id:string){const a=this.attachment(session,id);return {size:a.data.length,hash:a.hash};}
   audit(session: string|undefined,run: string|undefined,kind: string,message: string) { this.db.prepare('INSERT INTO audit(at,session,run,kind,message) VALUES(?,?,?,?,?)').run(new Date().toISOString(),session??null,run??null,kind,message); }
   close(){this.db.close();}
+  touch(id:string){const s=this.session(id);s.lastSeen=new Date().toISOString();this.saveSession(s);}
+  connected(id:string,value:boolean){this.transaction(()=>{
+    const s=this.session(id);s.connected=value;
+    if(value)s.lastSeen=new Date().toISOString();
+    else {s.execution=undefined;s.error='Mất kết nối. Mở lại profile và đối chiếu trước khi tiếp tục.';if(s.run&&!['completed','idle','ready_to_submit'].includes(s.run.status)){s.run.status=s.run.submitAttempted?'submit_uncertain':'paused';s.run.recoveryRequired=true;this.saveRun(id,s.run);}}
+    this.saveSession(s);
+  });}
+  beginGroup(group:GroupView,sessions:SessionView[]){this.transaction(()=>{this.saveGroup(group);for(const s of sessions){this.saveRun(s.id,s.run!);this.saveSession(s);}});}
+  acceptProgress(id:string,run:RunState){return this.transaction(()=>{
+    const s=this.session(id);
+    if(!run||!s.run||run.runId!==s.run.runId||run.sessionId!==id||!Number.isSafeInteger(run.eventSeq)||(run.eventSeq??0)<=(s.run.eventSeq??0)||s.run.submitAttempted&&!run.submitAttempted)return false;
+    if(this.group(run.runId!).paused&&run.status==='running')return false;
+    if(s.run.formId&&run.formId!==s.run.formId)return false;
+    s.run={...run,mode:s.run.mode,managed:true,url:s.run.url,expectedEmail:s.run.expectedEmail,profileRevision:s.run.profileRevision,startedAt:s.run.startedAt,profileSnapshot:s.run.profileSnapshot,finalQuestion:s.run.finalQuestion};
+    if(run.submitAttempted&&run.formId)this.db.prepare('INSERT OR IGNORE INTO locks VALUES(?,?,?,?,?)').run(id,run.formId,run.runId!,'local_reserved',new Date().toISOString());
+    if(run.status==='completed'&&run.submitAttempted)this.db.prepare("UPDATE locks SET resolution='received' WHERE session=? AND run=?").run(id,run.runId!);
+    s.error=run.blockingIssue?.message??(run.status==='failed'?run.logs.at(-1)?.message:undefined);
+    this.saveRun(id,s.run);this.saveSession(s);return true;
+  });}
 }

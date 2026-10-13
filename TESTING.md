@@ -85,3 +85,30 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - Typecheck và `test:final-question-ui` qua: một lần bấm đọc tự chọn đúng câu/mã/loại, giữ đáp án đang nhập, không ghép nhầm checkbox ghi email, không phải chọn lại câu, cập nhật hai lượt đang chờ trong một lần áp dụng; vẫn nhập trước và xóa khai báo được. `test:manager-ui` qua, upload vẫn giữ bản nháp và nút Dừng/Chạy lại đúng luồng. Ảnh fixture: `test-results/compact-final-question-manager.png`.
 - Build chỉ cập nhật `build/manager-ui`, không đổi extension hay bộ điều phối; không yêu cầu Reload extension. Màn Edge được refresh và khôi phục link, chế độ, 4 profile đã chọn cùng câu/đáp án người dùng đang nhập.
 - Trên màn quản lý thật, bấm Đọc một lần đã nhận diện câu "Năm nay là năm bao nhiêu?今年是哪一年？ *" và loại text, giữ đáp án 2026. Không bấm Áp dụng/Tiếp tục và không điền/gửi form thật. Ảnh kết quả: `test-results/compact-final-question-ready.png`.
+## Supabase cloud — 13/10/2026
+
+- Thêm Google OAuth/PKCE qua Supabase SSR, cookie HttpOnly, getUser xác minh
+  phía server; không có chế độ bỏ qua auth trong CLI production.
+- `npm run typecheck` và `npm test`: 199 ca trong 29 file qua. 175 ca local vẫn
+  giữ. Ca mới chạy migration/RLS trên PostgreSQL WASM (PGlite), kiểm tra tenant
+  isolation, column grants/token hash, one-use pairing, token revocation, submit
+  transaction, lease fencing, stale events, shared-answer/state race, reconnect
+  ordering và migration profile/ảnh/lịch sử/khóa gửi. Supabase SDK PKCE/cookie/
+  getUser/logout được kiểm thử qua Auth HTTP fixture; không phải Google thật.
+- `test:cloud-ui` qua: login/callback fixture, đổi tài khoản xóa dữ liệu/lựa chọn/
+  link trước, pairing không cần native ID, upload giữ bản nháp, Save sync, logout
+  và login mobile. `test:manager-ui` qua sau refactor async store; assertion đợi
+  command acknowledgement thay vì giả định request HTTP hoàn tất ngay sau click.
+- `test:cloud-flow` qua với 3 profile và cùng script `--profiles=5`: extension
+  online thực, WebSocket thực, PostgreSQL fixture, 4 trang HTTPS Forms fixture.
+  Cửa sổ bắt đầu minimized, không attach/focus form từ harness; dropdown delayed,
+  cam kết, ảnh, câu xác thực chung và navigation đều qua. Test không gửi; Live
+  đúng 1 lần/profile; Resume không gửi lại. Lease peak 3/5; dropdown chồng lấn.
+  Không chạy/gửi form Google hay hồ sơ người dùng thật.
+- Cloud build ra thư mục riêng; không ghi đè dist local. Docker Compose config
+  được validate; Docker image/VPS thật chưa chạy vì Docker daemon hiện chưa mở
+  và chưa có Supabase/domain. Cần nghiệm thu Auth/Storage/TLS production theo
+  docs/CLOUD.md. Không coi fixture là xác nhận dịch vụ bên ngoài đã hoạt động.
+- Ảnh fixture: cloud-login.png, cloud-login-mobile.png, cloud-manager.png,
+  cloud-background-flow-3-manager.png và cloud-background-flow-5-manager.png.
+  Báo cáo full flow trong test-results/cloud-background-flow-3.json / -5.json.

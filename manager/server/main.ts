@@ -11,6 +11,7 @@ import { Store, digest } from './store';
 import { Coordinator } from './coordinator';
 import { dataDirectory, privateWrite, registerNativeHost, ensureNativeLauncher } from './platform';
 import { PROTOCOL_VERSION } from '../../src/protocol';
+import {exportArchive} from './archive';
 
 function openManager(url:string){if(process.platform==='darwin')execFile('open',[url]);else if(process.platform==='win32')execFile('rundll32',['url.dll,FileProtocolHandler',url]);}
 
@@ -34,11 +35,13 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
       if(req.headers.host!==new URL(origin).host)return json({error:'Host không hợp lệ.'},403);
       const path=new URL(req.url??'/',origin).pathname;
       if(path.startsWith('/api/')){
+        if(path==='/api/auth/config'&&req.method==='GET')return json({cloud:false});
         if(req.method!=='GET'&&req.headers.origin!==origin)return json({error:'Origin không hợp lệ.'},403);
         if(path==='/api/auth'&&req.method==='POST'){const data=await body(req);const token=Buffer.from(String(data.token??''));const expected=Buffer.from(uiToken);if(token.length!==expected.length||!timingSafeEqual(token,expected))return json({error:'Mã mở app không hợp lệ.'},401);res.setHeader('Set-Cookie',`${cookie}; HttpOnly; SameSite=Strict; Path=/`);return json({ok:true});}
         if(!authenticate(req))return json({error:'Mở lại app để đăng nhập màn hình quản lý.'},401);
         if(emergencyError&&req.method!=='GET')return json({error:emergencyError},503);
         if(path==='/api/state'&&req.method==='GET')return json(state());
+        if(path==='/api/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="hanu-local-backup.json"');return json(exportArchive(store));}
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
         if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion));}
@@ -46,7 +49,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
         if(session){const id=session[1],action=session[2];
-          if(req.method==='PATCH'&&!action)return json(coordinator.edit(id,await body(req)));
+          if(req.method==='PATCH'&&!action)return json(await coordinator.edit(id,await body(req)));
           if(req.method==='GET'&&action==='history')return json(store.history(id));
           if(req.method==='POST'){
             if(action==='ping')return json(await coordinator.command(id,'PING',{},undefined,5000));
@@ -78,12 +81,12 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
       if(emergencyError){ws.send(JSON.stringify({type:'EMERGENCY_STOP',error:emergencyError}));ws.close(1011,'Storage unavailable');return;}
       let id:string|undefined;const handshakeTimer=setTimeout(()=>ws.close(1008,'Handshake timeout'),10000);
       ws.on('message',async raw=>{try{const m=JSON.parse(raw.toString());if(m.protocol!==PROTOCOL_VERSION)throw new Error('Phiên bản giao thức không khớp.');
-        if(!id){if(!/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId))throw new Error('Mã phiên không hợp lệ.');if(m.type==='PAIR'){const token=store.pair(m.sessionId,m.code);coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'PAIRED',token,sessionId:id}));}
-          else if(m.type==='HELLO'&&store.authenticate(m.sessionId,String(m.token??''))){coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'WELCOME',sessionId:id}));}
+        if(!id){if(!/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId))throw new Error('Mã phiên không hợp lệ.');if(m.type==='PAIR'){const token=store.pair(m.sessionId,m.code);await coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'PAIRED',token,sessionId:id}));}
+          else if(m.type==='HELLO'&&store.authenticate(m.sessionId,String(m.token??''))){await coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'WELCOME',sessionId:id}));}
           else{ws.send(JSON.stringify({type:'UNPAIRED'}));return;}clearTimeout(handshakeTimer);void coordinator.pull(id!).catch(e=>{failClosed(e);try{const s=store.session(id!);s.error=(e as Error).message;store.saveSession(s);coordinator.changed();}catch(storageError){failClosed(storageError);}});
         }else {if(m.sessionId!==id)throw new Error('Mã phiên không khớp kết nối.');if(m.type==='LOAD_FAILURE')await coordinator.failure(id,m.runId);else await coordinator.receive(id,m);}
       }catch(e){failClosed(e);if(ws.readyState===1)ws.send(JSON.stringify({type:'ERROR',error:(e as Error).message}));}});
-      ws.on('close',()=>{clearTimeout(handshakeTimer);if(id)try{coordinator.disconnect(id,ws);}catch(e){failClosed(e);}});
+      ws.on('close',()=>{clearTimeout(handshakeTimer);if(id)void coordinator.disconnect(id,ws).catch(failClosed);});
     });
   });
   await new Promise<void>(resolve=>server.listen(options.port??0,'127.0.0.1',resolve));const address=server.address() as {port:number};origin=`http://127.0.0.1:${address.port}`;
@@ -92,7 +95,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   const heartbeat=setInterval(()=>{for(const[id,ws]of coordinator.peers){const s=store.session(id);if(Date.now()-Date.parse(s.lastSeen)>15000)ws.terminate();}},5000);
   coordinator.launchUrl=url;
   if(options.open)openManager(url);
-  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
+  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();await coordinator.settledConnections();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
 }
 if(process.argv.includes('--serve')){
   const dir=dataDirectory();mkdirSync(dir,{recursive:true,mode:0o700});const lock=join(dir,'instance.lock');
