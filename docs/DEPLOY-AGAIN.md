@@ -74,8 +74,11 @@ Trong Supabase → Authentication → URL Configuration, giữ:
 Trong Google OAuth client, callback vẫn là
 `https://fdqpldiyorkqykmwdybh.supabase.co/auth/v1/callback`.
 Không phải sửa Supabase/Google mỗi lần deploy nếu URL website không đổi.
-Google OAuth đang Testing: chỉ tài khoản trong Test users đăng nhập được;
-cần hoàn tất cấu hình và chuyển Production trước khi mời người dùng rộng rãi.
+Kiểm tra Google Auth Platform → Audience hiển thị **In production** trước khi
+chia sẻ bản chính thức. Google có ngoại lệ với Testing khi ứng dụng chỉ yêu cầu
+quyền định danh cơ bản (email/profile/openid); không áp dụng mô tả “chỉ Test users”
+cho mọi loại OAuth. Nếu thêm quyền nhạy cảm hoặc hạn chế, kiểm tra lại yêu cầu
+verification và giới hạn của Google trước khi triển khai.
 
 ## 4. Khi nào phải gửi lại extension?
 
@@ -117,3 +120,4 @@ Nguồn chính thức:
 [Render manual deploy và rolling deploy](https://render.com/docs/deploys),
 [Render Free spin down](https://render.com/docs/free),
 [Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
+[Google OAuth: trạng thái và ngoại lệ quyền định danh cơ bản](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview).

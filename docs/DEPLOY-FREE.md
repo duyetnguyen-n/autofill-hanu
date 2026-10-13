@@ -32,8 +32,9 @@ Sau lần thiết lập đầu, xem [cách cập nhật và deploy lại](DEPLOY
    - Site URL: `https://URL_THAT.onrender.com`
    - Redirect URLs: `https://URL_THAT.onrender.com/auth/callback`
    Hai callback trên khác nhau: Google trả về Supabase; Supabase trả về website.
-   Khi Google OAuth app còn Testing, thêm người dùng vào Test users; trước khi
-   chia sẻ rộng, chuyển sang Production theo yêu cầu của Google.
+   Khi Google OAuth app còn Testing, kiểm tra yêu cầu Test users theo scopes:
+   quyền định danh cơ bản email/profile/openid có ngoại lệ. Hoàn tất cấu hình
+   và chuyển sang Production cho bản chính thức theo yêu cầu của Google.
 
 ## 2. Deploy Render Web Service
 
