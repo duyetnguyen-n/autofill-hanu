@@ -111,6 +111,23 @@ Mở website → đăng nhập Google → Thêm profile → Tạo mã liên kế
 giải nén extension, vào `chrome://extensions`, bật Developer mode, Load
 unpacked rồi nhập mã trong đúng Chrome profile. Bản online không cần app local.
 
+Nếu không liên kết được, kiểm tra tên và nguồn trong `chrome://extensions`:
+phải là **HSK Google Forms Autofill · Online**, được cài từ `dist-cloud`.
+Bản local trong `dist` dùng app trên máy và cần sao chép ID extension sang app;
+bản Online lấy mã trực tiếp từ website. Tắt bản local khi dùng Online trong
+cùng Chrome profile; không bấm Remove nếu còn dữ liệu cũ cần giữ.
+
+Mỗi Chrome profile nhập một mã riêng, dùng một lần trong 5 phút. Các profile
+có thể hiển thị cùng ID extension khi cài cùng thư mục; mã phiên mới là thứ
+phân biệt các profile. Sau reload, extension giữ mã phiên và tự kết nối lại.
+Server có thể cần tới khoảng 65 giây để thu hồi socket cũ, nên chờ tự nối lại
+thay vì tạo liên kết khác hoặc xóa dữ liệu.
+
+Bản local và Online lưu dữ liệu extension riêng. Hồ sơ local không tự chuyển
+khi cài Online. App local có nút **Xuất dữ liệu**, website có **Nhập từ bản
+local**. Với các hàng được nhập, mở Chi tiết → Liên kết lại và đối chiếu hồ sơ
+trước khi chạy; giữ file xuất riêng vì nó chứa hồ sơ và ảnh cá nhân.
+
 Trước khi gửi rộng: `/healthz` trả `{"ok":true}`, Google login/callback thật
 hoạt động, hai tài khoản không thấy dữ liệu của nhau, upload **ảnh giả** và lưu/
 đồng bộ thành công, extension kết nối lại sau khi Chrome đóng/mở. Không bấm Live

@@ -59,6 +59,27 @@ it('refuses insecure remote coordinator endpoints', () => {
   expect(() => websocketConnector('https://user:pass@remote.example')).toThrow('không hợp lệ');
 });
 
+it('retries a rejected cloud handshake without forgetting the linked profile',async()=>{
+  vi.useFakeTimers();
+  try{
+    const f=fixture(),pairing=f.client.pair('ABCDEF123456');
+    await vi.advanceTimersByTimeAsync(0);
+    const sessionId='linked-profile-aaaaaaaaaaaa';
+    f.ports[0].receive({type:'PAIRED',token:'saved-token',sessionId});await pairing;
+    f.ports[0].closes.forEach((fn:any)=>fn());
+    await vi.advanceTimersByTimeAsync(1500);
+    const rejected=f.ports[1],disconnect=vi.spyOn(rejected.port,'disconnect');
+    rejected.receive({type:'ERROR',error:'Mã phiên đã kết nối ở cửa sổ khác.'});
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(await f.client.status()).toMatchObject({paired:true,connected:false,sessionId});
+    rejected.closes.forEach((fn:any)=>fn());
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(f.ports[2].sent[0]).toMatchObject({type:'HELLO',token:'saved-token',sessionId});
+    f.ports[2].receive({type:'WELCOME'});
+    expect(await f.client.status()).toMatchObject({paired:true,connected:true,sessionId,error:''});
+  }finally{vi.useRealTimers();}
+});
+
 it('schedules a Chrome alarm to recover a suspended worker after network failure',async()=>{
   const f=fixture(),listeners:any[]=[];
   const alarms={create:vi.fn(async(_name:string,_info:{when:number})=>{}),clear:vi.fn(async(_name:string)=>true),onAlarm:{addListener:(fn:any)=>listeners.push(fn)}};

@@ -45,4 +45,4 @@ button.text-button { color: #2457d6; background: transparent; padding: 0; min-he
 .form-audit small { color: #64748b; overflow-wrap: anywhere; }
 .clear-data { justify-self: start; min-height: auto; padding: 2px 0; color: #b42318; background: transparent; text-decoration: underline; font-weight: 600; }
 #mappingControls { margin-top: 10px; display: grid; gap: 7px; font-size: 12px; font-weight: 650; }
- .native-connected{color:#146451;font-size:12px;line-height:1.6;overflow-wrap:anywhere}.native-error{color:#b32b36;font-size:12px;line-height:1.6}.extension-id-row{display:flex;align-items:center;gap:8px}.extension-id-row p{flex:1;min-width:0;font-size:11px;overflow-wrap:anywhere}.extension-id-row code{font-size:10px}
+ .native-connected{color:#146451;font-size:12px;line-height:1.6;overflow-wrap:anywhere}.native-error{color:#b32b36;font-size:12px;line-height:1.6}.extension-id-row{display:flex;align-items:center;gap:8px}.extension-id-row[hidden]{display:none}.extension-id-row p{flex:1;min-width:0;font-size:11px;overflow-wrap:anywhere}.extension-id-row code{font-size:10px}

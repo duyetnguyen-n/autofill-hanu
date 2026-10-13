@@ -49,7 +49,14 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     if(m.type==='WELCOME'){connected=true;attempt=0;clearAlarm();error='';void adapter.reconcile().then(reportExecution).catch(e=>pairingError((e as Error).message));return;}
     if(m.type==='REVOKED'||m.type==='UNPAIRED'&&cloud){connected=false;stopped=true;generation++;clearAlarm();pairingError('Profile chưa liên kết hoặc đã bị ngắt. Lấy mã mới trên website để liên kết lại.');identity={sessionId:crypto.randomUUID()};void chrome.storage.local.set({[identityKey]:identity});void adapter.disconnected();port=undefined;current.disconnect();return;}
     if(m.type==='UNPAIRED'){connected=false;return;}
-    if(m.type==='ERROR'){pairingError(m.error);return;}
+    if(m.type==='ERROR'){
+      pairingError(m.error);
+      // A reloaded worker can reconnect before the server notices its old
+      // socket has gone away. End a rejected cloud handshake so the normal
+      // retry loop runs, retaining the existing profile ID and token.
+      if(cloud&&!connected){current.error=m.error;current.disconnect();}
+      return;
+    }
     if(m.type==='REPLY'){const p=requests.get(m.requestId);if(p){clearTimeout(p.timer);requests.delete(m.requestId);m.ok?p.resolve(m):p.reject(new Error(m.error));}return;}
     if(m.type!=='COMMAND'||m.protocol!==PROTOCOL_VERSION||m.sessionId!==identity.sessionId||!connected)return;
     // Interrupt a running page immediately even if another command is awaiting a load.
