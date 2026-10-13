@@ -4,6 +4,9 @@ Bản local dùng SQLite/Native Messaging vẫn giữ nguyên. Bản online dùn
 Auth, PostgreSQL, Storage và một Node.js server điều phối WebSocket. Extension
 online vẫn Load unpacked, không cần Chrome Web Store hoặc cài native host.
 
+Nếu chưa có VPS/tên miền, xem [phương án URL miễn phí trên Render](DEPLOY-FREE.md).
+Website này cần Node backend thường trực, không chỉ hosting tĩnh.
+
 ## 1. Tạo project Supabase mới
 
 Tạo **project riêng** cho HANU, chọn region gần người dùng. Không chạy migration
@@ -83,6 +86,7 @@ hình công khai tối thiểu; không nhúng secrets vào JavaScript website.
 npm ci
 npm run typecheck
 npm test
+npm run cloud:check
 npm run build:cloud
 npm run cloud
 ```

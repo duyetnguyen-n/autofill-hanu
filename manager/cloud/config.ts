@@ -9,12 +9,14 @@ export interface CloudConfig {
   trustProxy?: boolean;
 }
 export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
-  const required = (key: string) => {
-    const value = env[key]?.trim();
+  const required = (key: string, value = env[key]?.trim()) => {
     if (!value || /YOUR_|REPLACE_|<|>/.test(value)) throw new Error(`Chưa cấu hình ${key}. Xem .env.cloud.example và docs/CLOUD.md.`);
     return value;
   };
-  const url = new URL(required('PUBLIC_ORIGIN'));
+  // Render assigns the service URL before starting the container. Use only
+  // this trusted platform environment value; never derive origin from a request.
+  const platformOrigin = env.RENDER === 'true' ? env.RENDER_EXTERNAL_URL?.trim() : undefined;
+  const url = new URL(required('PUBLIC_ORIGIN', env.PUBLIC_ORIGIN?.trim() || platformOrigin));
   const development = env.HANU_CLOUD_DEV === '1';
   if (url.pathname !== '/' || url.search || url.hash || url.username || url.password || url.protocol !== 'https:' && !(development && url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) throw new Error('PUBLIC_ORIGIN phải là HTTPS origin; HTTP chỉ dùng cho localhost trong chế độ dev.');
   const supabaseUrl = new URL(required('SUPABASE_URL'));

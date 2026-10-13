@@ -14,5 +14,5 @@ COPY --from=builder /app/build/cloud-server ./build/cloud-server
 COPY --from=builder /app/build/cloud-ui ./build/cloud-ui
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/healthz',{headers:{Host:new URL(process.env.PUBLIC_ORIGIN).host}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/healthz',{headers:{Host:new URL(process.env.PUBLIC_ORIGIN||process.env.RENDER_EXTERNAL_URL).host}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node","build/cloud-server/main.mjs","--serve-cloud"]

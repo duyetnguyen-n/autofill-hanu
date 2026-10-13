@@ -1,0 +1,30 @@
+# First deployment / demo. Read docs/DEPLOY-FREE.md before updating a running
+# service: the coordinator lease does not support overlapping rolling deploys.
+services:
+  - type: web
+    name: hanu-coordinator
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./deploy/cloud/Dockerfile
+    dockerContext: .
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    healthCheckPath: /healthz
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 3000
+      - key: HANU_CLOUD_DEV
+        value: 0
+      - key: TRUST_PROXY
+        value: 1
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false

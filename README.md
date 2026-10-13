@@ -4,6 +4,11 @@ App cục bộ quản lý nhiều Chrome profile, mỗi profile giữ một hồ
 
 ## Bản online với Supabase
 
+Chỉ cần một link website để chia sẻ, chưa mua tên miền: xem
+[triển khai miễn phí với Render + Supabase](docs/DEPLOY-FREE.md).
+`npm run cloud:check` kiểm tra cấu hình Supabase mà không sửa dữ liệu;
+`npm run build:cloud-extension` build riêng extension gắn URL website.
+
 Bản online dùng đăng nhập Google qua Supabase Auth, dữ liệu PostgreSQL riêng
 theo tài khoản và ảnh trong Supabase Storage private. Một Node.js backend quản
 lý kết nối WebSocket và điều phối các extension chạy đồng thời; extension vẫn
