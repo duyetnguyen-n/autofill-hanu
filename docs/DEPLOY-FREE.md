@@ -10,6 +10,9 @@ do Render cấp, ví dụ `https://ten-app.onrender.com`. Đây là subdomain mi
 đủ để gửi cho người khác truy cập; không cần mua domain hoặc tự cấu hình DNS.
 Website/API/WSS phải dùng cùng URL này. Extension được build với URL cố định.
 
+Website của dự án: **https://hanu-autofill.onrender.com**.
+Sau lần thiết lập đầu, xem [cách cập nhật và deploy lại](DEPLOY-AGAIN.md).
+
 ## 1. Chuẩn bị Supabase
 
 1. Tạo project riêng cho HANU, ưu tiên region Singapore nếu người dùng ở Việt Nam.
