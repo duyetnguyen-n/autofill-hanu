@@ -37,22 +37,30 @@ Backend hiện có khóa trong database để chỉ **một server điều phố
 Render khởi động bản mới trước khi tắt bản cũ, vì vậy bấm deploy khi bản cũ
 đang chạy có thể báo server khác đang giữ khóa.
 
-Với gói Free đang dùng:
+Quy trình đã thử thành công trên dịch vụ Free này (có gián đoạn):
 
 1. Dừng mọi lượt trong trang quản lý; báo người dùng tạm ngừng sử dụng.
 2. Đóng các trang quản lý và Chrome profile có extension đang kết nối. Tắt
    công cụ tự ping website nếu có.
-3. Chờ Render thực sự spin down: ít nhất 15 phút không có HTTP hoặc WebSocket
-   traffic. Kiểm tra trạng thái/log trong dashboard; **không mở URL website
-   hoặc `/healthz` trong lúc chờ**, vì thao tác đó có thể đánh thức backend.
-4. Chờ thêm 65 giây nếu tiến trình cũ bị dừng đột ngột để khóa database hết hạn.
-5. Mở **Manual Deploy → Deploy latest commit** trong Render. Chờ trạng thái
-   **Live**, kiểm tra Logs nếu Failed.
+3. Mở Render → **Settings → Suspend Web Service**. Nhập đúng câu xác nhận
+   Render hiển thị (hiện là `sudo suspend web service hanu-autofill`), rồi bấm
+   Suspend. Thao tác này tạm dừng dịch vụ, không xóa dịch vụ hoặc dữ liệu Supabase.
+4. Kiểm tra Render hiển thị **Suspended**. Chờ 65 giây để khóa hết hạn nếu
+   tiến trình cũ không nhả khóa khi dừng.
+5. Bấm **Resume service**, rồi ngay lập tức mở **Manual Deploy → Deploy latest
+   commit**. Không mở website hoặc `/healthz` giữa Resume và deploy; các Chrome
+   profile phải tiếp tục đóng để không đánh thức bản cũ qua kết nối tự động.
+6. Chờ **Deploy succeeded / Live**, kiểm tra Logs nếu Failed, rồi mới mở website.
 
-Nếu người khác vẫn gửi traffic thì bản cũ chưa ngủ và quy trình trên chưa đủ.
+Nếu người khác vẫn gửi traffic sau Resume thì bản cũ có thể khởi động lại và
+giữ khóa. Đảm bảo họ tạm ngừng, rồi lặp lại quy trình dừng/cập nhật.
 Không xóa khóa `hanu.server_lease` khi server cũ còn sống. Cần host có thể dừng
 bản cũ trước khi chạy bản mới, hoặc triển khai chuyển giao coordinator, nếu
 muốn cập nhật thường xuyên khi có nhiều người đang dùng.
+
+Nếu không muốn bấm Suspend, có thể chờ dịch vụ thực sự spin down sau ít nhất
+15 phút không nhận HTTP/WebSocket traffic, chờ thêm 65 giây, rồi Manual Deploy.
+Không truy cập website trong lúc chờ; dashboard Render không phải URL website.
 
 `Restart service` dùng lại commit và cấu hình đang chạy; để đưa code hoặc biến
 môi trường mới lên, dùng deploy. Không cần Clear build cache cho mỗi lần cập nhật.

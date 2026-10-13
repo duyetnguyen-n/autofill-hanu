@@ -127,7 +127,9 @@ trên form thật để kiểm thử hosting.
   replicas. Khóa database vẫn bảo vệ chống hai backend cùng cấp quyền gửi.
 - **Redeploy trên Render có thể thất bại khi bản cũ đang chạy**: Render khởi
   động bản mới trước khi tắt bản cũ, còn bản mới không được lấy lease của bản cũ.
-  Giữ Auto Deploy Off. Khi thử bản miễn phí, dừng mọi lượt, đóng trang quản lý và
+  Giữ Auto Deploy Off. Xem [quy trình Suspend → Resume → Manual Deploy đã thử
+  trên dịch vụ này](DEPLOY-AGAIN.md#2-dừng-sử-dụng-trước-khi-deploy).
+  Hoặc khi thử bản miễn phí, dừng mọi lượt, đóng trang quản lý và
   các Chrome profile đã liên kết, đợi bản cũ thực sự spin down (ít nhất 15 phút
   không có traffic), rồi manual deploy; sau server crash lease cần tối đa thêm
   65 giây để hết hạn. Đừng xóa lease thủ công khi server cũ còn sống.
