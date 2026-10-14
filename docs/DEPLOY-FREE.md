@@ -128,7 +128,7 @@ khi cài Online. App local có nút **Xuất dữ liệu**, website có **Nhập
 local**. Với các hàng được nhập, mở Chi tiết → Liên kết lại và đối chiếu hồ sơ
 trước khi chạy; giữ file xuất riêng vì nó chứa hồ sơ và ảnh cá nhân.
 
-Trước khi gửi rộng: `/healthz` trả `{"ok":true}`, Google login/callback thật
+Trước khi gửi rộng: `/readyz` trả `{"ok":true}`, Google login/callback thật
 hoạt động, hai tài khoản không thấy dữ liệu của nhau, upload **ảnh giả** và lưu/
 đồng bộ thành công, extension kết nối lại sau khi Chrome đóng/mở. Không bấm Live
 trên form thật để kiểm thử hosting.
@@ -142,17 +142,12 @@ trên form thật để kiểm thử hosting.
   tuần không hoạt động. Dữ liệu/ảnh của mọi người dùng chung quota project.
 - Backend **chỉ có một coordinator hoạt động**, không bật autoscale/multiple
   replicas. Khóa database vẫn bảo vệ chống hai backend cùng cấp quyền gửi.
-- **Redeploy trên Render có thể thất bại khi bản cũ đang chạy**: Render khởi
-  động bản mới trước khi tắt bản cũ, còn bản mới không được lấy lease của bản cũ.
-  Giữ Auto Deploy Off. Xem [quy trình Suspend → Resume → Manual Deploy đã thử
-  trên dịch vụ này](DEPLOY-AGAIN.md#2-dừng-sử-dụng-trước-khi-deploy).
-  Hoặc khi thử bản miễn phí, dừng mọi lượt, đóng trang quản lý và
-  các Chrome profile đã liên kết, đợi bản cũ thực sự spin down (ít nhất 15 phút
-  không có traffic), rồi manual deploy; sau server crash lease cần tối đa thêm
-  65 giây để hết hạn. Đừng xóa lease thủ công khi server cũ còn sống.
-  Nếu cần cập nhật ổn định/chạy chính thức, dùng một host cho phép dừng tiến
-  trình cũ trước khi khởi động bản mới (ví dụ VPS + Compose trong `CLOUD.md`),
-  hoặc bổ sung cơ chế chuyển giao coordinator trước khi dùng rolling deploy.
+- **Deploy trên Render không cần đóng website hoặc extension**: bản mới tự chờ
+  khóa trong khi Render dừng bản cũ. Xem [cách deploy lại](DEPLOY-AGAIN.md#2-deploy-trực-tiếp-không-cần-đóng-website-hoặc-extension).
+  `/healthz` kiểm tra HTTP cho Render; `/readyz` chỉ trả 200 sau khi coordinator
+  đã lấy khóa và khôi phục trạng thái. Trong khoảng chuyển phiên, API điều khiển
+  trả 503 và client tự thử lại. Lượt đang chạy có thể tạm dừng/cần đối chiếu;
+  không tự gửi lại form. Không xóa lease thủ công hoặc chạy thêm backend cùng DB.
 
 Không cần mua domain kể cả khi chuyển sang hosting trả phí có subdomain. Chi
 phí domain và chi phí giữ backend luôn chạy là hai việc riêng.

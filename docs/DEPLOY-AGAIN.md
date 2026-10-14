@@ -31,36 +31,35 @@ git push origin main
 Không đưa `.env.cloud`, `secrets/`, dữ liệu hồ sơ hay file ZIP riêng tư lên GitHub.
 Repo dùng Public Git Repository trên Render nên push chưa tự deploy.
 
-## 2. Dừng sử dụng trước khi deploy
+## 2. Deploy trực tiếp, không cần đóng website hoặc extension
 
-Backend hiện có khóa trong database để chỉ **một server điều phối** hoạt động.
-Render khởi động bản mới trước khi tắt bản cũ, vì vậy bấm deploy khi bản cũ
-đang chạy có thể báo server khác đang giữ khóa.
+1. Mở Render của **dịch vụ hiện tại** → **Manual Deploy → Deploy latest commit**.
+2. Giữ website và extension mở bình thường. Không cần Suspend/Resume, không cần
+   yêu cầu mọi người tắt kết nối hoặc liên kết lại profile.
+3. Chờ **Deploy succeeded / Live**, rồi kiểm tra `/readyz` như mục 3.
 
-Quy trình đã thử thành công trên dịch vụ Free này (có gián đoạn):
+Backend tự nhận biết môi trường Render qua `RENDER=true`. Nếu server cũ đang
+còn giữ khóa, server mới mở HTTP ở trạng thái chờ, chưa nhận lệnh điều khiển.
+Sau khi Render chuyển lưu lượng và dừng tiến trình cũ, server mới tự thử lấy
+khóa mỗi 2 giây, khôi phục trạng thái rồi nhận kết nối. Khóa vẫn bảo đảm chỉ
+một coordinator hoạt động; không xóa khóa hoặc giành quyền của server đang sống.
 
-1. Dừng mọi lượt trong trang quản lý; báo người dùng tạm ngừng sử dụng.
-2. Đóng các trang quản lý và Chrome profile có extension đang kết nối. Tắt
-   công cụ tự ping website nếu có.
-3. Mở Render → **Settings → Suspend Web Service**. Nhập đúng câu xác nhận
-   Render hiển thị (hiện là `sudo suspend web service hanu-autofill`), rồi bấm
-   Suspend. Thao tác này tạm dừng dịch vụ, không xóa dịch vụ hoặc dữ liệu Supabase.
-4. Kiểm tra Render hiển thị **Suspended**. Chờ 65 giây để khóa hết hạn nếu
-   tiến trình cũ không nhả khóa khi dừng.
-5. Bấm **Resume service**, rồi ngay lập tức mở **Manual Deploy → Deploy latest
-   commit**. Không mở website hoặc `/healthz` giữa Resume và deploy; các Chrome
-   profile phải tiếp tục đóng để không đánh thức bản cũ qua kết nối tự động.
-6. Chờ **Deploy succeeded / Live**, kiểm tra Logs nếu Failed, rồi mới mở website.
+Trong khoảng chuyển phiên, website có thể hiện “Website đang cập nhật” và tự
+thử lại; extension cũng tự nối lại bằng token cũ. Thông thường phải chờ thêm
+khoảng một phút sau khi Render chuyển lưu lượng vì Render giữ tiến trình cũ
+60 giây trước SIGTERM. Nếu tiến trình cũ bị crash, có thể phải chờ khóa hết hạn
+(tối đa 65 giây kể từ lần gia hạn cuối). **Live trên Render chưa có nghĩa là
+coordinator đã sẵn sàng; `/readyz` mới xác nhận việc này.**
 
-Nếu người khác vẫn gửi traffic sau Resume thì bản cũ có thể khởi động lại và
-giữ khóa. Đảm bảo họ tạm ngừng, rồi lặp lại quy trình dừng/cập nhật.
-Không xóa khóa `hanu.server_lease` khi server cũ còn sống. Cần host có thể dừng
-bản cũ trước khi chạy bản mới, hoặc triển khai chuyển giao coordinator, nếu
-muốn cập nhật thường xuyên khi có nhiều người đang dùng.
+Lượt điền đang hoạt động có thể bị tạm dừng hoặc cần xác minh kết quả gửi khi
+mất kết nối. Hệ thống không tự gửi lại form. Nếu có thể, chọn lúc ít lượt đang
+chạy để cập nhật, nhưng không cần yêu cầu mọi người đóng website hay Chrome.
 
-Nếu không muốn bấm Suspend, có thể chờ dịch vụ thực sự spin down sau ít nhất
-15 phút không nhận HTTP/WebSocket traffic, chờ thêm 65 giây, rồi Manual Deploy.
-Không truy cập website trong lúc chờ; dashboard Render không phải URL website.
+Nếu `/readyz` vẫn trả 503 nhiều phút và log ghi đang chờ coordinator, kiểm tra
+có máy khác chạy `npm run cloud` hoặc một backend thứ hai dùng chung Supabase
+không; dừng **backend đó**. Các máy chỉ mở website/extension không giữ khóa
+coordinator. Không xóa `hanu.server_lease` thủ công, không tạo thêm dịch vụ Render
+cho cùng database. Giữ một replica.
 
 `Restart service` dùng lại commit và cấu hình đang chạy; để đưa code hoặc biến
 môi trường mới lên, dùng deploy. Không cần Clear build cache cho mỗi lần cập nhật.
@@ -69,7 +68,9 @@ môi trường mới lên, dùng deploy. Không cần Clear build cache cho mỗ
 
 Sau khi Render báo Live, mở:
 
-- https://hanu-autofill.onrender.com/healthz — phải trả `{"ok":true}`.
+- https://hanu-autofill.onrender.com/readyz — phải trả `{"ok":true}` (HTTP 200).
+- `/healthz` là kiểm tra HTTP cho Render, có thể trả HTTP 200 với
+  `{"ok":true,"coordinator":"waiting"}` trong lúc chờ bàn giao; chưa thể nhận lệnh.
 - https://hanu-autofill.onrender.com — thử đăng nhập Google và kết nối extension.
 
 Trong Supabase → Authentication → URL Configuration, giữ:
@@ -118,8 +119,7 @@ Các thiết lập hiện dùng: `HOST=0.0.0.0`, `PORT=3000`, `HANU_CLOUD_DEV=0`
 `TRUST_PROXY=1`, `PGSSLROOTCERT=/etc/secrets/supabase-ca.crt`.
 Secret File `supabase-ca.crt` chứa CA công khai tải từ Supabase.
 Không đặt `PUBLIC_ORIGIN` trên Render khi dùng URL Render cấp; backend tự đọc
-`RENDER_EXTERNAL_URL`. Sau sửa biến, chọn Save only và deploy sau khi bản cũ
-đã dừng như mục 2. Không tắt xác minh TLS để xử lý lỗi kết nối.
+`RENDER_EXTERNAL_URL`. Sau sửa biến, chọn Save only rồi Manual Deploy như mục 2. Không tắt xác minh TLS để xử lý lỗi kết nối.
 
 Render Free có thể ngủ và restart, nên URL miễn phí phù hợp để thử/chia sẻ;
 nó không bảo đảm backend luôn sẵn sàng đúng giờ đăng ký.

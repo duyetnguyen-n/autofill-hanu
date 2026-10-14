@@ -9,6 +9,8 @@ const env = {
 it('uses the platform HTTPS URL for the first Render deploy and respects an explicit custom origin', () => {
   const render = { ...env, RENDER: 'true', RENDER_EXTERNAL_URL: 'https://fixture.onrender.com' };
   expect(cloudConfig(render).origin).toBe('https://fixture.onrender.com');
+  expect(cloudConfig(render).rollingDeploy).toBe(true);
+  expect(cloudConfig({ ...env, PUBLIC_ORIGIN: 'https://custom.example' }).rollingDeploy).toBe(false);
   expect(cloudConfig({ ...render, PUBLIC_ORIGIN: 'https://custom.example' }).origin).toBe('https://custom.example');
   expect(() => cloudConfig({ ...render, PUBLIC_ORIGIN: 'https://YOUR_DOMAIN' })).toThrow('Chưa cấu hình PUBLIC_ORIGIN');
 });
