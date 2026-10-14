@@ -45,7 +45,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
         if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion));}
-        if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion));}
+        if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion,b.resume===true));}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
         if(session){const id=session[1],action=session[2];

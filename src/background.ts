@@ -294,7 +294,7 @@ async function stopRun(tabId: number): Promise<RunState | undefined> {
   return run;
 }
 
-async function resumeRun(tabId: number): Promise<RunState | undefined> {
+async function resumeRun(tabId: number,automatic=false): Promise<RunState | undefined> {
   const current = await getRun(tabId);
   if (!current) return undefined;
   if (current.submitAttempted) throw new Error("Lượt đã khóa gửi; hãy xác minh kết quả, không chạy lại.");
@@ -302,13 +302,29 @@ async function resumeRun(tabId: number): Promise<RunState | undefined> {
   if(current.managed&&!native.isConnected())throw new Error('App chưa kết nối.');
   if(current.managed)await checkAccount(tabId,current.expectedEmail!);
   await acquireLease(current.runId!,tabId);
-  const run = addLog({ ...current, status: "running", blockingIssue: undefined, updatedAt: now() }, "info", "Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.");
-  await saveRun(run);
+  const run=await writeState(async()=>{
+    const latest=automatic?await getRun(tabId):current;
+    if(!latest||automatic&&(latest.runId!==current.runId||latest.contentEpoch!==current.contentEpoch||latest.status!=='waiting_manual'||latest.submitAttempted||latest.recoveryRequired||interruptedRuns.has(current.runId!)))throw new Error('Lượt đã dừng hoặc thay đổi; không tự tiếp tục.');
+    const next=addLog({...latest,status:'running',blockingIssue:undefined,updatedAt:now()},'info',automatic?'Dữ liệu đã được sửa hợp lệ; đang tự tiếp tục.':'Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.');
+    await writeRunNow(next);return next;
+  });
   // Some controls (notably the Google file picker) do not expose their value
   // back to a content script. The user explicitly resumes after handling it,
   // so advance past this exact card once and let Google Forms validate Next.
   await runOnTab(tabId, run.mode, current.blockingIssue?.reason === "file_upload" ? current.blockingIssue.questionId : undefined);
   return run;
+}
+
+async function autoResumePage(message:Extract<ExtensionMessage,{type:'AUTO_RESUME'}>,sender:chrome.runtime.MessageSender){
+  const tabId=sender.tab?.id;
+  if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
+  const run=await getRun(tabId);
+  if(!run?.runId||message.runId!==run.runId||message.epoch!==run.contentEpoch||run.formId!==canonicalFormId(sender.url??sender.tab?.url??'')||run.status!=='waiting_manual'||run.submitAttempted||run.recoveryRequired||interruptedRuns.has(run.runId)||!['validation','unknown_required','file_upload','unsupported'].includes(run.blockingIssue?.reason??''))throw new Error('Lượt đã dừng, thay đổi hoặc không chờ sửa dữ liệu.');
+  if(run.managed){
+    if(!native.isConnected())throw new Error('App mất kết nối; không tự tiếp tục.');
+    await native.request('AUTO_RESUME',run);
+  }else await resumeRun(tabId,true);
+  return {ok:true,resumed:true};
 }
 
 async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:string;epoch?:string}): Promise<void> {
@@ -402,9 +418,10 @@ let messageQueue=Promise.resolve();
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   // An acquire may wait for another profile; never hold the regular page/Stop
   // queue while waiting, otherwise navigation claims and cancellation deadlock.
-  if(message.type==='PAGE_ATTENTION_ACQUIRE'||message.type==='PAGE_ATTENTION_RELEASE'){
+  if(message.type==='PAGE_ATTENTION_ACQUIRE'||message.type==='PAGE_ATTENTION_RELEASE'||message.type==='AUTO_RESUME'){
     void (async()=>{
       if(sender.tab?.id===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab.url))throw new Error('Trang không hợp lệ.');
+      if(message.type==='AUTO_RESUME')return autoResumePage(message,sender);
       if(message.type==='PAGE_ATTENTION_ACQUIRE')return acquirePageAttention(message,sender);
       await releasePageAttention(sender.tab.id,message.token);return {ok:true};
     })().then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
@@ -615,8 +632,10 @@ async function managedControl(command:Command){
   if(command.kind==='STOP'){interruptedRuns.add(run.runId!);return stopRun(run.tabId);}
   if(command.kind==='PAUSE'){interruptedRuns.add(run.runId!);return pauseRun(run.tabId);}
   if(command.kind==='RESUME'){
+    if(command.payload.automatic&&(run.status!=='waiting_manual'||run.recoveryRequired||interruptedRuns.has(run.runId!)))throw new Error('Lượt đã dừng; không tự tiếp tục.');
     if(run.submitAttempted)throw new Error('Lượt đã khóa gửi.');
     await native.request('CHECK_FORM',run);const tab=await chrome.tabs.get(run.tabId);if(canonicalFormId(tab.url??'')!==run.formId)throw new Error('Tab không còn ở form của lượt.');
+    if(command.payload.automatic)return resumeRun(run.tabId,true);
     interruptedRuns.delete(run.runId!);run.recoveryRequired=false;await saveRun(run);return resumeRun(run.tabId);
   }
   throw new Error('Lệnh không hỗ trợ.');

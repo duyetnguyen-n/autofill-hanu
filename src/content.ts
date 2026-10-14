@@ -17,6 +17,7 @@ let boundRunId:string|undefined;
 let attentionToken:string|undefined;
 let attentionHeld=false;
 let activeFinalQuestion:FinalQuestion|undefined;
+const manualCorrections=new Map<HTMLElement,string>();
 
 async function releaseAttention(){const token=attentionToken;attentionToken=undefined;attentionHeld=false;if(token)await chrome.runtime.sendMessage({type:'PAGE_ATTENTION_RELEASE',token} satisfies ExtensionMessage).catch(()=>{});}
 async function withAttention<T>(purpose:string,work:()=>Promise<T>):Promise<T|undefined>{
@@ -746,41 +747,79 @@ function manualIssue(question: Question, reason: BlockingIssue["reason"], messag
   question.element.style.outline = "3px solid #d93025";
   question.element.style.outlineOffset = "3px";
   question.element.scrollIntoView({ behavior: "smooth", block: "center" });
-  if(reason==='file_upload'||reason==='unsupported'&&['radio','checkbox','dropdown'].includes(question.kind))armAutoResume(question);
+  if(reason==='file_upload'||reason==='unknown_required'||reason==='unsupported'&&['radio','checkbox','dropdown'].includes(question.kind))armAutoResume(question);
   return { reason, message, questionId: question.id, questionLabel: question.label, candidates: suggestedRules(question.label) };
 }
 
-function armAutoResume(question: Question): void {
+function answerFingerprint(question:Question):string{
+  return JSON.stringify(controlsIn(question.element,'input,textarea,select,[role="radio"],[role="checkbox"],[role="combobox"],[role="listbox"],[role="option"]').map(node=>{
+    if(node instanceof HTMLInputElement)return [node.type,node.value,node.checked,node.files?.length];
+    if(node instanceof HTMLTextAreaElement||node instanceof HTMLSelectElement)return node.value;
+    return [node.getAttribute('aria-checked'),node.getAttribute('aria-selected'),node.getAttribute('aria-valuetext'),node.getAttribute('aria-activedescendant')];
+  }));
+}
+
+function questionError(question:Question):string|undefined{
+  const invalid=controlsIn(question.element,'input:not([type="hidden"]),textarea,select,[aria-invalid="true"]').find(node=>
+    visible(node)&&(node.getAttribute('aria-invalid')==='true'||
+      (node instanceof HTMLInputElement||node instanceof HTMLTextAreaElement||node instanceof HTMLSelectElement)&&!node.validity.valid));
+  if(invalid)return invalid instanceof HTMLInputElement||invalid instanceof HTMLTextAreaElement||invalid instanceof HTMLSelectElement?invalid.validationMessage||`Dữ liệu chưa hợp lệ: ${question.label}`:`Dữ liệu chưa hợp lệ: ${question.label}`;
+  return Array.from(question.element.querySelectorAll('[role="alert"]')).find(node=>visible(node)&&node.textContent?.trim())?.textContent?.trim();
+}
+
+function armAutoResume(question: Question,wholePage=false): void {
   cancelManualResume?.();
   question.element.dataset.hanuResumeArmed = "true";
   let resumed = false;
   let cancelled = false;
-  let pending = false;
+  let timer:number|undefined;
+  const initial=new Map(questions().map(q=>[q.element,answerFingerprint(q)]));
+  const correctionPage=()=>`${location.pathname}:${JSON.stringify(questions().map(q=>[q.id,q.label,q.kind]))}`;
+  const generation=runRequestGeneration,runId=boundRunId,page=correctionPage();
+  let edited=false,committed=false;
   const retry = () => {
-    if (pending || cancelled) return;
-    pending = true;
-    window.setTimeout(() => {
-      pending = false;
-      if (cancelled || resumed || active || !question.element.isConnected || !isFilled(question)) return;
+    if(cancelled||resumed)return;
+    window.clearTimeout(timer);
+    timer=window.setTimeout(() => {
+      if (cancelled || resumed || active || submitAttempted || generation!==runRequestGeneration || runId!==boundRunId || page!==correctionPage() || !question.element.isConnected) return;
+      const current=questions();
+      if(!isFilled(question)||questionError(question)||validationError()||hasUnsatisfiedCaptcha())return;
+      if(['text','textarea','date'].includes(question.kind)&&(!edited||!committed))return;
+      if(wholePage&&(!edited||!committed||current.some(q=>q.required&&!isFilled(q))))return;
+      // Preserve only answers changed by the user on this page, never write the
+      // correction back to their saved profile or let a later run inherit it.
+      for(const q of current)if(isFilled(q)&&!questionError(q)&&initial.get(q.element)!==answerFingerprint(q))manualCorrections.set(q.element,answerFingerprint(q));
       resumed = true;
-      active = true;
       cancelManualResume?.();
-      void emit({ type: "progress", message: `Đã nhận thao tác thủ công: ${question.label}` }).then(() => requestExecute());
+      void Promise.resolve(chrome.runtime.sendMessage({type:'AUTO_RESUME',runId,epoch:documentEpoch} satisfies ExtensionMessage)).then(async reply=>{
+        if(generation!==runRequestGeneration||runId!==boundRunId||submitAttempted||reply?.ok===false)return;
+        // Background/manager resumes a scoped run itself. Unmanaged test
+        // harnesses and older unscoped runs can acknowledge without dispatch.
+        if(reply?.resumed)return;
+        if(runId)return;
+        active=true;await emit({type:'progress',message:`Đã nhận thao tác thủ công: ${question.label}`});requestExecute();
+      }).catch(()=>{active=false;});
     }, 180);
   };
-  question.element.addEventListener("input", retry, true);
-  question.element.addEventListener("change", retry, true);
-  question.element.addEventListener("click", retry, true);
+  const edit=(event:Event)=>{
+    if(!(event.target instanceof Element)||!currentTargetContains(event.target))return;
+    edited=true;
+    if(event.type==='input')committed=false;
+    else if(event.type==='change'||event.type==='focusout'||event.type==='click'&&!['text','textarea','date'].includes(question.kind))committed=true;
+    retry();
+  };
+  const target=wholePage?document.body:question.element;
+  const currentTargetContains=(node:Element)=>questions().some(q=>q.element.contains(node));
+  for(const event of ['input','change','click','focusout'])target.addEventListener(event,edit,true);
   // Google Picker commits the upload asynchronously, without a click/change
   // on the original card. Observe the rendered filename/removal control too.
   const observer = new MutationObserver(retry);
-  observer.observe(question.element, { childList: true, subtree: true, attributes: true });
+  observer.observe(target, { childList: true, subtree: true, attributes: true,characterData:true });
   cancelManualResume = () => {
     cancelled = true;
+    window.clearTimeout(timer);
     observer.disconnect();
-    question.element.removeEventListener("input", retry, true);
-    question.element.removeEventListener("change", retry, true);
-    question.element.removeEventListener("click", retry, true);
+    for(const event of ['input','change','click','focusout'])target.removeEventListener(event,edit,true);
     delete question.element.dataset.hanuResumeArmed;
     cancelManualResume = undefined;
   };
@@ -819,9 +858,15 @@ function completedPage(): boolean {
 function validationError(): string | undefined {
   const alert = Array.from(document.querySelectorAll('[role="alert"]')).find((node) => visible(node) && node.textContent?.trim());
   if (alert?.textContent) return alert.textContent.trim();
-  const text = document.body.innerText ?? document.body.textContent ?? "";
-  const match = text.match(/this is a required question|đây là (?:một )?câu hỏi bắt buộc/i);
-  return match?.[0];
+  return questions().map(questionError).find(Boolean);
+}
+
+async function blockForCorrection(message:string,question?:Question):Promise<void>{
+  active=false;
+  const target=question??questions().find(q=>questionError(q)||q.required&&!isFilled(q));
+  const issue=target?manualIssue(target,'validation',message):{reason:'validation' as const,message};
+  if(target&&!submitAttempted)armAutoResume(target,true);
+  await emit({type:'block',issue});
 }
 
 async function waitForPageChange(before: string): Promise<boolean> {
@@ -830,6 +875,7 @@ async function waitForPageChange(before: string): Promise<boolean> {
     await new Promise((resolve) => window.setTimeout(resolve, 250));
     if (!active) return false;
     if (pageFingerprint() !== before) return true;
+    if(validationError())return false;
   }
   return false;
 }
@@ -875,6 +921,10 @@ async function execute(depth = 0): Promise<void> {
     if (!active) return;
     question.element.style.outline = "";
     delete question.element.dataset.hanuBlocking;
+    if(manualCorrections.get(question.element)===answerFingerprint(question)&&isFilled(question)&&!questionError(question)){
+      manuallyHandled.add(question.id);
+      await emit({type:'progress',message:`Giữ nguyên đáp án bạn vừa sửa: ${question.label}`,skipped:question.id});continue;
+    }
     if(question===sharedTarget && finalQuestion){
       const rule:FieldRule={key:'sharedFinalQuestion',label:question.label,aliases:[question.label],kind:question.kind as ControlKind};
       const filled=matchesProfile(question,rule,profile,finalQuestion.value)||await fillQuestion(question,rule,profile,finalQuestion.value);
@@ -986,6 +1036,8 @@ async function execute(depth = 0): Promise<void> {
   if (!active) return;
   const submit = button("submit");
   const next = button("next");
+  const invalid=pageQuestions.find(q=>questionError(q));
+  if(invalid){await blockForCorrection(`Google Forms báo lỗi: ${questionError(invalid)}`,invalid);return;}
   const action = decideNextAction(activeMode, Boolean(submit && !next), false);
   if (action === "ready") {
     active = false;
@@ -1022,7 +1074,7 @@ async function execute(depth = 0): Promise<void> {
   const changed = await withAttention('Chuyển trang form',async()=>{
     if(!await ensurePageReady()||!active)return false;
     const missing=questions().find(q=>q.required&&!manuallyHandled.has(q.id)&&!isFilled(q));
-    if(missing){active=false;await emit({type:'block',issue:manualIssue(missing,'validation',`Câu bắt buộc chưa hoàn tất: ${missing.label}`)});return false;}
+    if(missing){await blockForCorrection(`Câu bắt buộc chưa hoàn tất: ${missing.label}`,missing);return false;}
     const before=pageFingerprint();next.click();
     if(await waitForPageChange(before))return true;
     if(!active||validationError()||!next.isConnected||next.getAttribute('aria-disabled')==='true')return false;
@@ -1034,11 +1086,11 @@ async function execute(depth = 0): Promise<void> {
   // renders. A changed page is authoritative; only validate on a failed move.
   const error = changed ? undefined : validationError();
   if (!changed) {
-    active = false;
-    await emit({ type: "block", issue: { reason: "validation", message: error ? `Google Forms báo lỗi: ${error}` : "Không thể chuyển trang. Hãy kiểm tra câu bắt buộc hoặc điều kiện rẽ nhánh." } });
+    await blockForCorrection(error ? `Google Forms báo lỗi: ${error}` : "Không thể chuyển trang. Hãy kiểm tra câu bắt buộc hoặc điều kiện rẽ nhánh.");
     return;
   }
   await emit({ type: "page_advanced", fingerprint: pageFingerprint() });
+  manualCorrections.clear();
   // Release the per-document lock before running the next page. Google Forms
   // sometimes keeps the document and sometimes replaces it entirely.
   window.setTimeout(() => requestExecute(depth + 1), 0);
@@ -1075,7 +1127,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   if (message.type === "RUN_CURRENT_PAGE") {
     cancelManualResume?.();
     const generation=++runRequestGeneration;
-    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;boundRunId=message.runId;}requestExecute();};
+    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
     void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(()=>{
       if(generation!==runRequestGeneration)return;
       if(executionInFlight){active=false;pendingStart=start;void releaseAttention();}else start();

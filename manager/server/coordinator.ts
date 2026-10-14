@@ -102,6 +102,7 @@ export class Coordinator {
           this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,...result}));return;
         }
         if(message.kind==='OPEN_MANAGER'){this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,url:this.launchUrl}));return;}
+        if(message.kind==='AUTO_RESUME'){const result=await this.control(id,'RESUME',message.runId,true);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CONTROL'){if(s.run?.runId!==message.runId||!['PAUSE','RESUME','STOP'].includes(message.action))throw new Error('Lệnh điều khiển không hợp lệ.');const result=await this.control(id,message.action,message.runId);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CHECK_FORM'){if(s.run?.runId!==message.runId||!(await this.store.group(message.runId)).members.includes(id)||await this.store.blocked(id,message.formId))throw new Error('Form này có khóa gửi chưa được giải quyết.');}
         else if(message.kind==='SUBMIT'){
@@ -149,13 +150,35 @@ export class Coordinator {
     const result=await this.command(id,'COMMIT_PROFILE',{profile:s.profile,baseRevision:current.revision});s.revision=result.revision;s.synced=true;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();return s;
   }
   async edit(id:string,values:Partial<SessionView>){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;}await this.store.saveSession(s);this.changed();return s;}
-  async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion){
+  async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion,resume=false){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):finalQuestion;
     if(!finalQuestion||!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)throw new Error('Chọn profile và nhập câu hỏi cuối.');
     await Promise.all(ids.map(id=>this.runBuffer?.flush(id)));
-    for(const id of ids){const s=await this.store.session(id);if(!this.peers.has(id)||!s.run||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error(`${s.name}: chỉ cập nhật lượt đang chờ và chưa gửi.`);if(finalQuestion.formId&&finalQuestion.formId!==s.run.formId)throw new Error(`${s.name}: câu hỏi đã chọn thuộc form khác.`);}
-    return Promise.all(ids.map(async id=>{const runId=(await this.store.session(id)).run!.runId;try{await this.command(id,'SET_FINAL_QUESTION',{finalQuestion},runId);await this.runBuffer?.flush(id);const s=await this.store.session(id);if(!s.run||s.run.runId!==runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error('Lượt đã thay đổi trong lúc cập nhật.');s.run.finalQuestion=structuredClone(finalQuestion);await this.store.saveRun(id,s.run);await this.store.saveSession(s);this.runBuffer?.refresh(id,s);this.changed();return {id,ok:true};}catch(e){return {id,ok:false,error:(e as Error).message};}}));
+    const runs=new Map<string,string>();
+    // Validate every member before any update, with bounded parallel DB reads.
+    for(let offset=0;offset<ids.length;offset+=4)await Promise.all(ids.slice(offset,offset+4).map(async id=>{
+      const s=await this.store.session(id);
+      if(!this.peers.has(id)||!s.run?.runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error(`${s.name}: chỉ cập nhật lượt đang chờ và chưa gửi.`);
+      if(finalQuestion.formId&&finalQuestion.formId!==s.run.formId)throw new Error(`${s.name}: câu hỏi đã chọn thuộc form khác.`);
+      runs.set(id,s.run.runId);
+    }));
+    return Promise.all(ids.map(async id=>{
+      const runId=runs.get(id)!;let updated=false;
+      try{
+        await this.command(id,'SET_FINAL_QUESTION',{finalQuestion},runId);
+        await this.runBuffer?.flush(id);
+        const s=await this.store.session(id);
+        if(!s.run||s.run.runId!==runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error('Lượt đã thay đổi trong lúc cập nhật.');
+        s.run.finalQuestion=structuredClone(finalQuestion);
+        await this.store.saveRun(id,s.run);await this.store.saveSession(s);
+        this.runBuffer?.refresh(id,s);this.changed();updated=true;
+        // Each member can resume as soon as its own answer is durable. A slow
+        // peer no longer holds up the group or requires a second browser request.
+        if(resume)await this.control(id,'RESUME',runId);
+        return {id,ok:true};
+      }catch(e){return {id,ok:false,error:updated?`Đã cập nhật đáp án nhưng chưa tiếp tục được: ${(e as Error).message}`:(e as Error).message};}
+    }));
   }
   async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion){
     validateFinalQuestion(finalQuestion);
@@ -187,11 +210,12 @@ export class Coordinator {
       }catch(error){await failed(s.id,error).catch(this.unavailable);}
     }));return group;
   }
-  async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string) {
+  async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic=false) {
     if(expectedRunId&&this.runBuffer?.has(id)&&!this.runBuffer.matches(id,expectedRunId))throw new Error('Lệnh thuộc lượt cũ.');
     if(kind!=='RESUME')this.runBuffer?.halt(id);
     await this.runBuffer?.flush(id);
     const s=await this.store.session(id);if(expectedRunId&&s.run?.runId!==expectedRunId)throw new Error('Lệnh thuộc lượt cũ.');
+    if(automatic&&(!expectedRunId||s.run?.status!=='waiting_manual'||s.run.recoveryRequired||!['validation','unknown_required','file_upload','unsupported'].includes(s.run.blockingIssue?.reason??'')))throw new Error('Lượt không chờ sửa dữ liệu; không tự tiếp tục.');
     if(kind!=='RESUME')await this.attention.cancel(id);
     if(kind==='STOP'){
       const result=await this.command(id,'STOP_PROFILE');const current=await this.store.session(id);
@@ -202,6 +226,7 @@ export class Coordinator {
     if(kind==='RESUME'){
       if(s.run.submitAttempted)throw new Error('Lượt đã khóa gửi; hãy xác minh kết quả trước.');
       const group=await this.store.group(s.run.runId);
+      if(automatic&&(group.paused||group.stopped))throw new Error('Nhóm đã dừng; không tự tiếp tục.');
       // Resuming one member leaves the other members halted in their extensions.
       // The group gate must allow this member to report progress and request submit.
       if(group.paused||group.stopped){group.paused=false;group.stopped=false;await this.store.saveGroup(group);this.changed();}
@@ -209,7 +234,7 @@ export class Coordinator {
       this.runBuffer?.groupGate(group);this.runBuffer?.refresh(id,s,true);
     }
     let result:any;
-    try{result=await this.command(id,kind,{},s.run.runId);}catch(error){this.runBuffer?.halt(id);throw error;}
+    try{result=await this.command(id,kind,automatic?{automatic:true}:{},s.run.runId);}catch(error){this.runBuffer?.halt(id);throw error;}
     // Persist the acknowledged state even when its separate STATE message is late.
     if(result?.runId===s.run.runId)await this.acceptState(id,result);
     if(kind==='RESUME'){

@@ -16,7 +16,8 @@ try{
     if(kind==='RESUME')return {...app.store.session(id).run,status:'running',eventSeq:1};return {};
   };
   browser=await chromium.launch({channel:process.platform==='win32'?'msedge':'chromium',headless:true});
-  const page=await browser.newPage({viewport:{width:1440,height:1100}});await page.goto(app.url);
+  const page=await browser.newPage({viewport:{width:1440,height:1100}}),requests=[];
+  page.on('request',request=>{if(request.method()==='POST')requests.push(new URL(request.url()).pathname);});await page.goto(app.url);
   await page.getByLabel('Chọn các profile đang hiển thị',{exact:true}).check();await page.getByLabel('Link Google Form',{exact:true}).fill(form);
   await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeEnabled();
   await page.getByRole('textbox',{name:/^Đáp án chung/}).fill('Đáp án B');
@@ -36,6 +37,7 @@ try{
   await page.getByLabel('Đáp án chung',{exact:true}).selectOption('Đáp án A');await page.getByRole('button',{name:'Áp dụng và tiếp tục các profile đã chọn',exact:true}).click();
   await expect(page.getByText('Đã áp dụng đáp án chung và tiếp tục các profile đã chọn.',{exact:true})).toBeVisible();
   expect(payloads.filter(p=>p.kind==='SET_FINAL_QUESTION')).toHaveLength(2);expect(payloads.filter(p=>p.kind==='RESUME')).toHaveLength(2);
+  expect(requests.filter(path=>path==='/api/final-question')).toHaveLength(1);expect(requests.filter(path=>path.endsWith('/resume'))).toHaveLength(0);
   for(const id of ids)expect(app.store.session(id).run.finalQuestion.value).toBe('Đáp án A');
   await page.getByLabel('Link Google Form',{exact:true}).fill(form.replace('final-ui','another-form'));await expect(page.getByRole('textbox',{name:'Đáp án chung',exact:true})).toHaveValue('');
   await expect(page.locator('.final-question-preview')).not.toContainText('Câu hỏi cuối *');

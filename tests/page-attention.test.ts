@@ -16,6 +16,33 @@ async function fixture(){
 }
 it('restores a minimized window, selects the form, and acquires/releases the shared attention lease without a controller popup',async()=>{const f=await fixture();expect(await f.ask(f.acquire)).toMatchObject({ok:true,token:'lease'});expect(f.update).toHaveBeenCalledWith(1,{state:'normal',focused:false});expect(f.update).toHaveBeenCalledWith(1,{focused:true});expect(chrome.tabs.update).toHaveBeenCalledWith(7,{active:true});expect(chrome.windows.create).not.toHaveBeenCalled();await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});expect(native.request).toHaveBeenCalledWith('ATTENTION_RELEASE',expect.objectContaining({runId:'run'}),{token:'lease'});});
 it('rejects old-run, old-document and subframe requests before focusing',async()=>{const f=await fixture();for(const m of [{...f.acquire,runId:'old'},{...f.acquire,epoch:'old'}])expect(await f.ask(m)).toMatchObject({ok:false});expect(await f.ask(f.acquire,{...f.sender,frameId:1})).toMatchObject({ok:false});expect(f.update).not.toHaveBeenCalled();});
+it('requests automatic Resume for the exact managed run after a correction',async()=>{
+ const f=await fixture();f.data['run:7'].status='waiting_manual';f.data['run:7'].blockingIssue={reason:'validation',message:'Sai định dạng'};
+ expect(await f.ask({type:'AUTO_RESUME',runId:'run',epoch:'document'})).toEqual({ok:true,resumed:true});
+ expect(native.request).toHaveBeenCalledWith('AUTO_RESUME',expect.objectContaining({runId:'run',status:'waiting_manual'}));
+});
+it.each(['paused','idle','completed','submit_uncertain'] as const)('rejects automatic Resume when the local run is %s',async status=>{
+ const f=await fixture();f.data['run:7'].status=status;f.data['run:7'].blockingIssue={reason:'validation',message:'Sai định dạng'};
+ expect(await f.ask({type:'AUTO_RESUME',runId:'run',epoch:'document'})).toMatchObject({ok:false});expect(native.request).not.toHaveBeenCalled();
+});
+it('rejects stale documents, wrong forms, subframes, recovery and submit locks before auto Resume',async()=>{
+ const f=await fixture();f.data['run:7'].status='waiting_manual';f.data['run:7'].blockingIssue={reason:'validation',message:'Sai định dạng'};
+ const msg={type:'AUTO_RESUME' as const,runId:'run',epoch:'document'};
+ for(const extra of [{runId:'old'},{epoch:'old'}])expect(await f.ask({...msg,...extra})).toMatchObject({ok:false});
+ expect(await f.ask(msg,{...f.sender,frameId:1})).toMatchObject({ok:false});
+ expect(await f.ask(msg,{...f.sender,url:f.sender.url.replace('attention-fixture','other')})).toMatchObject({ok:false});
+ f.data['run:7'].recoveryRequired=true;expect(await f.ask(msg)).toMatchObject({ok:false});f.data['run:7'].recoveryRequired=false;
+ f.data['run:7'].submitAttempted=true;expect(await f.ask(msg)).toMatchObject({ok:false});expect(native.request).not.toHaveBeenCalled();
+});
+it('does not restart a run paused while an automatic Resume command is checking the form',async()=>{
+ const f=await fixture();f.data['run:7'].status='waiting_manual';f.data['run:7'].blockingIssue={reason:'validation',message:'Sai định dạng'};f.data.managedRun=structuredClone(f.data['run:7']);
+ let release!:()=>void;native.request.mockImplementation(async(kind:string)=>{if(kind==='CHECK_FORM')await new Promise<void>(resolve=>release=resolve);return {};});
+ vi.mocked(chrome.tabs.sendMessage).mockImplementation(async(_id,m:any)=>m.type==='PAGE_ACCOUNT'?{email:'fixture@example.test'}:{ok:true});
+ f.data['run:7'].expectedEmail='fixture@example.test';f.data.managedRun.expectedEmail='fixture@example.test';
+ const resumed=adapter.control({kind:'RESUME',runId:'run',payload:{automatic:true}});
+ await vi.waitFor(()=>expect(release).toBeTypeOf('function'));f.data['run:7'].status='paused';release();
+ await expect(resumed).rejects.toThrow('không tự tiếp tục');expect(f.data['run:7'].status).toBe('paused');expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(7,expect.objectContaining({type:'RUN_CURRENT_PAGE'}));
+});
 it('does not focus a run stopped while its request is waiting in the shared queue',async()=>{const f=await fixture();let grant!:(v:any)=>void;native.request.mockImplementationOnce(()=>new Promise(r=>grant=r));const pending=f.ask(f.acquire);await vi.waitFor(()=>expect(grant).toBeTypeOf('function'));f.data['run:7'].status='idle';grant({token:'lease'});expect(await pending).toMatchObject({ok:false});expect(f.update).not.toHaveBeenCalled();expect(native.request).toHaveBeenCalledWith('ATTENTION_RELEASE',expect.anything(),{token:'lease'});});
 it('a fresh document releases its predecessor’s lease before claiming the run',async()=>{const f=await fixture();await f.ask(f.acquire);expect(await f.ask({type:'CLAIM_DOCUMENT',epoch:'new'})).toMatchObject({ok:true,run:{contentEpoch:'new'}});expect(native.request).toHaveBeenCalledWith('ATTENTION_RELEASE',expect.anything(),{token:'lease'});});
 it('keeps rendering enabled through trusted input, then resets and detaches on release',async()=>{

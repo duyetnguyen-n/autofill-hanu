@@ -463,7 +463,7 @@ describe("compiled content-script behavior", () => {
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) }));
   });
 
-  it("waits for Resume after the user supplies a missing nationality", async () => {
+  it("continues automatically after the user supplies a missing nationality", async () => {
     document.body.innerHTML = `
       <div role="listitem" data-item-id="nationality-question">
         <div role="heading">QUỐC TỊCH | 国籍 *</div>
@@ -501,8 +501,7 @@ describe("compiled content-script behavior", () => {
 
     nationality.click();
     await new Promise((resolve) => window.setTimeout(resolve, 520));
-    expect(nextClicks).toBe(0);
-    listeners[0]({type:'RUN_CURRENT_PAGE',mode:'test'});
+    expect(nextClicks).toBe(1);
     await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'ready_to_submit'})})),{timeout:2000});
 
     expect(nextClicks).toBe(1);

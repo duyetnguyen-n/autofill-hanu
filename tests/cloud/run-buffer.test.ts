@@ -62,6 +62,45 @@ it('rejects stale, foreign and changed-form progress and preserves the server sn
   expect(x.buffer.overlay([foreign])[0].run?.runId).toBe('new-run');
 });
 
+it('opens the cloud run gate only after a scoped automatic Resume and refuses a paused group',async()=>{
+  const x=await setup();
+  await x.c.receive(x.id,{type:'STATE',run:{...x.progress,status:'waiting_manual',blockingIssue:{reason:'validation',message:'Sai định dạng'}}});await x.buffer.flush(x.id);
+  expect(x.buffer.allowed(x.id,x.run.runId!)).toBe(false);
+  const commands:any[]=[];x.c.command=async(id,kind,payload,runId)=>{commands.push({id,kind,payload,runId});return {...x.progress,eventSeq:2,status:'running'};};
+  await x.c.receive(x.id,{type:'REQUEST',requestId:'corrected',kind:'AUTO_RESUME',runId:x.run.runId});
+  expect(x.messages.find(m=>m.requestId==='corrected').ok).toBe(true);expect(commands).toEqual([{id:x.id,kind:'RESUME',payload:{automatic:true},runId:x.run.runId}]);expect(x.buffer.allowed(x.id,x.run.runId!)).toBe(true);
+  await x.c.receive(x.id,{type:'STATE',run:{...x.progress,eventSeq:3,status:'waiting_manual',blockingIssue:{reason:'validation',message:'Sai định dạng'}}});await x.buffer.flush(x.id);
+  const g=await x.store.group(x.run.runId!);g.paused=true;await x.store.saveGroup(g);x.buffer.groupGate(g);commands.length=0;
+  await x.c.receive(x.id,{type:'REQUEST',requestId:'paused',kind:'AUTO_RESUME',runId:x.run.runId});
+  expect(x.messages.find(m=>m.requestId==='paused').ok).toBe(false);expect(commands).toEqual([]);expect(x.buffer.allowed(x.id,x.run.runId!)).toBe(false);expect((await x.store.group(g.id)).paused).toBe(true);
+},20000);
+
+it('persists a shared answer before resuming through the cloud buffer and preserves Test mode', async () => {
+  const x=await setup(),q={label:'Câu cuối',value:'2026',formId:'fixture-fast'},commands:string[]=[];
+  // A real Test run must keep its mode when applying and continuing the answer.
+  const session=await x.store.session(x.id);session.run!.mode='test';await x.store.saveSession(session);x.buffer.refresh(x.id,session);
+  await x.c.receive(x.id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:2,status:'waiting_manual'}});
+  await x.buffer.flush(x.id);
+  x.c.command=async(id,kind)=>{
+    commands.push(kind);
+    if(kind==='SET_FINAL_QUESTION'){
+      // Simulate RESULT overtaking the extension's separate waiting STATE.
+      await x.c.receive(id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:3,status:'waiting_manual',finalQuestion:q}});
+    }
+    if(kind==='RESUME'){
+      expect((await x.store.session(id)).run?.finalQuestion).toEqual(q);
+      expect((await x.store.history(id))[0].finalQuestion).toEqual(q);
+      expect(x.buffer.allowed(id,x.run.runId!)).toBe(true);
+      return {...x.progress,mode:'test',eventSeq:4,status:'ready_to_submit',finalQuestion:q};
+    }
+    return {};
+  };
+  expect(await x.c.setFinalQuestion([x.id],q,true)).toEqual([{id:x.id,ok:true}]);
+  await x.buffer.flush(x.id);
+  expect(commands).toEqual(['SET_FINAL_QUESTION','RESUME']);
+  expect((await x.store.session(x.id)).run).toMatchObject({mode:'test',status:'ready_to_submit',submitAttempted:false,eventSeq:4,finalQuestion:q});
+},20000);
+
 it('flushes the latest form before granting submit, durably rejects duplicates and survives recovery', async () => {
   const x = await setup();
   await x.c.receive(x.id,{type:'STATE',run:{...x.progress,eventSeq:2,submitAttempted:true,status:'submitting'}});

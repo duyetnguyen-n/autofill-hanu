@@ -26,6 +26,9 @@ khóa gửi, không nhập thành lượt đang chạy. Không cài bản local 
 tên miền production; bản trong `dist-cloud` sau kiểm thử có thể trỏ localhost.
 
 Kiểm thử cloud: `npm test`, `npm run test:cloud-ui`, `npm run test:cloud-flow`.
+Kiểm thử tải 10 người / 50–100 profile: `npm run test:cloud-load`, xem
+[hướng dẫn kiểm thử tải](docs/CLOUD-LOAD-TEST.md) cho local, Docker giới hạn
+CPU/RAM và staging riêng. Bài test không gửi Google Forms thật.
 Các fixture không dùng tài khoản Google hoặc hồ sơ thật. Đăng nhập Google,
 Storage, TLS và hosting thật cần nghiệm thu sau khi cấu hình project/tên miền.
 

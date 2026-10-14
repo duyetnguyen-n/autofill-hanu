@@ -1,1 +1,1 @@
-{"extends":"./tsconfig.json","compilerOptions":{"jsx":"react-jsx","types":["node","chrome","react","react-dom"],"lib":["ES2022","DOM"]},"include":["manager","src/shared.ts","src/protocol.ts","src/rules.ts","tests/orchestrator","scripts/check-cloud.ts"]}
+{"extends":"./tsconfig.json","compilerOptions":{"jsx":"react-jsx","types":["node","chrome","react","react-dom"],"lib":["ES2022","DOM"]},"include":["manager","src/shared.ts","src/protocol.ts","src/rules.ts","tests/orchestrator","scripts/check-cloud.ts","scripts/cloud-load-*.ts"]}

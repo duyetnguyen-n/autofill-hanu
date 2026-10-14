@@ -1,4 +1,4 @@
-import {afterEach,describe,it,expect} from 'vitest';
+import {afterEach,describe,it,expect,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -11,6 +11,18 @@ const stores:Store[]=[],dirs:string[]=[];
 afterEach(()=>{for(const store of stores)try{store.close();}catch{}for(const dir of dirs)rmSync(dir,{recursive:true,force:true});stores.length=dirs.length=0;});
 function setup(count=2){const dir=mkdtempSync(join(tmpdir(),'hanu-store-'));dirs.push(dir);const path=join(dir,'db.sqlite');const store=new Store(path);stores.push(store);const members=Array.from({length:count},(_,i)=>`session-${i}`);for(const id of members){const token=store.pair(id,store.pairCode());expect(store.authenticate(id,token)).toBe(true);const s=store.session(id);s.profile=emptyProfile();s.profile.values.fullName=id;s.expectedEmail=`${id}@example.com`;s.synced=true;s.run={runId:'group',sessionId:id,managed:true,formId:'form',tabId:1,mode:'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',eventSeq:0};store.saveSession(s);}store.saveGroup({id:'group',url:'https://docs.google.com/forms/d/e/form/viewform',mode:'live',members,paused:false,createdAt:''});return {store,path,members};}
 describe('durable coordinator state',()=>{
+  it('automatically resumes only an unsubmitted correction wait without unpausing a stopped group',async()=>{
+    const {store,members}=setup(1),c=new Coordinator(store),commands=vi.fn(async()=>({})),id=members[0];c.command=commands;
+    const s=store.session(id);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'validation',message:'Sai định dạng'};store.saveSession(s);
+    await c.control(id,'RESUME','group',true);expect(commands).toHaveBeenCalledWith(id,'RESUME',{automatic:true},'group');commands.mockClear();
+    const g=store.group('group');g.paused=true;g.stopped=true;store.saveGroup(g);
+    await expect(c.control(id,'RESUME','group',true)).rejects.toThrow('Nhóm đã dừng');expect(commands).not.toHaveBeenCalled();expect(store.group('group')).toMatchObject({paused:true,stopped:true});
+  });
+  it.each(['paused','idle','completed','submit_uncertain'] as const)('does not automatically resume a coordinator run in %s',async status=>{
+    const {store,members}=setup(1),c=new Coordinator(store),commands=vi.fn(async()=>({})),id=members[0];c.command=commands;
+    const s=store.session(id);s.run!.status=status;s.run!.blockingIssue={reason:'validation',message:'Sai định dạng'};store.saveSession(s);
+    await expect(c.control(id,'RESUME','group',true)).rejects.toThrow('không tự tiếp tục');expect(commands).not.toHaveBeenCalled();
+  });
   it('snapshots one shared final question into every selected run without changing personal profiles',async()=>{
     const {store,members}=setup(3),c=new Coordinator(store),before=members.map(id=>store.session(id).profile),payloads:any[]=[];
     for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
@@ -30,6 +42,58 @@ describe('durable coordinator state',()=>{
     const {store,members}=setup(2),c=new Coordinator(store),starts:any[]=[];for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
     c.command=async(id,kind)=>{if(kind==='START')starts.push(id);return {capabilities:id===members[0]?['sharedFinalQuestion']:[]};};
     await expect(c.start(members,store.group('group').url,'test',{label:'Câu cuối',value:'2026'})).rejects.toThrow('Reload');expect(starts).toEqual([]);expect(store.sessions().every(s=>s.run?.status==='idle')).toBe(true);
+  });
+  it('resumes a persisted answer without waiting for a slower profile acknowledgement',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[],q={label:'Câu cuối',value:'A'};
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.mode='test';store.saveSession(s);c.peers.set(id,{} as any);}
+    let release!:()=>void;const slow=new Promise<void>(resolve=>{release=resolve;});
+    c.command=async(id,kind)=>{
+      if(kind==='SET_FINAL_QUESTION'&&id===members[1])await slow;
+      if(kind==='RESUME'){
+        expect(store.session(id).run?.finalQuestion).toEqual(q);
+        expect(store.history(id)[0].finalQuestion).toEqual(q);
+        resumed.push(id);return {...store.session(id).run,status:'running',eventSeq:1};
+      }
+      return {};
+    };
+    const applying=c.setFinalQuestion(members,q,true);
+    try{await vi.waitFor(()=>expect(resumed).toEqual([members[0]]));}
+    finally{release();}
+    expect(await applying).toEqual(members.map(id=>({id,ok:true})));
+    for(const id of members)expect(store.session(id).run).toMatchObject({mode:'test',status:'running',submitAttempted:false,finalQuestion:q});
+  });
+  it('does not resume a failed update while letting other selected profiles continue',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[];
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(id,{} as any);}
+    c.command=async(id,kind)=>{if(kind==='SET_FINAL_QUESTION'&&id===members[1])throw new Error('offline');if(kind==='RESUME')resumed.push(id);return {};};
+    expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:members[0],ok:true},{id:members[1],ok:false,error:'offline'}]);
+    expect(resumed).toEqual([members[0]]);expect(store.session(members[1]).run?.finalQuestion).toBeUndefined();
+  });
+  it('validates all selected profiles before applying or resuming any answer',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),commands=vi.fn(async()=>({}));c.command=commands;
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.submitAttempted=id===members[1];store.saveSession(s);c.peers.set(id,{} as any);}
+    await expect(c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).rejects.toThrow('chưa gửi');expect(commands).not.toHaveBeenCalled();
+  });
+  it('does not resume when the answer cannot be persisted',async()=>{
+    const {store,members}=setup(1),c=new Coordinator(store),commands:string[]=[];
+    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    c.command=async(_id,kind)=>{commands.push(kind);return {};};
+    const save=vi.spyOn(store,'saveSession').mockImplementation(()=>{throw new Error('disk unavailable');});
+    try{expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:s.id,ok:false,error:'disk unavailable'}]);expect(commands).toEqual(['SET_FINAL_QUESTION']);}
+    finally{save.mockRestore();}
+  });
+  it('refuses to update or resume a replacement run after the initial checks',async()=>{
+    const {store,members}=setup(1),c=new Coordinator(store),commands:string[]=[];
+    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    c.command=async(id,kind,_payload,runId)=>{commands.push(kind);expect(runId).toBe('group');const changed=store.session(id);changed.run!.runId='replacement';store.saveSession(changed);return {};};
+    const results=await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true);
+    expect(results[0]).toMatchObject({ok:false,error:'Lượt đã thay đổi trong lúc cập nhật.'});expect(commands).toEqual(['SET_FINAL_QUESTION']);expect(store.session(s.id).run?.finalQuestion).toBeUndefined();
+  });
+  it('reports an acknowledged answer separately from a failed resume',async()=>{
+    const {store,members}=setup(1),c=new Coordinator(store);
+    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    c.command=async(_id,kind)=>{if(kind==='RESUME')throw new Error('offline');return {};};
+    expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:s.id,ok:false,error:'Đã cập nhật đáp án nhưng chưa tiếp tục được: offline'}]);expect(store.session(s.id).run?.finalQuestion?.value).toBe('A');
   });
   it('reports individual update failures and keeps other profiles unchanged',async()=>{
     const {store,members}=setup(3),c=new Coordinator(store);for(const id of members){const s=store.session(id);s.run!.status='paused';store.saveSession(s);c.peers.set(id,{} as any);}

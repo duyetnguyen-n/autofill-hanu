@@ -124,6 +124,7 @@ export type ExtensionMessage =
   | { type: "NATIVE_OPEN_MANAGER" }
   | { type: "CLAIM_DOCUMENT"; epoch: string }
   | { type: "REQUEST_SUBMIT"; runId?: string; epoch?: string }
+  | { type: "AUTO_RESUME"; runId?: string; epoch: string }
   | { type: "PAGE_ACCOUNT" }
   | { type: "PAGE_RUN_STATUS" }
   | { type: "PAGE_ATTENTION_ACQUIRE"; runId?:string; epoch:string; purpose:string }
