@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { Coordinator } from '../server/coordinator';
 import { AttentionQueue } from '../server/attention';
+import { RunBuffer } from '../server/run-buffer';
 import { PROTOCOL_VERSION } from '../../src/protocol';
 import { CloudRepository, CloudError, MAX_ATTACHMENT_BYTES, type PostgresStore } from './postgres-store';
 import { supabaseAuth, type WebAuth, type WebUser } from './auth';
@@ -19,6 +20,8 @@ import {importArchive} from './import-archive';
 interface Runtime {
   store: PostgresStore; coordinator: Coordinator; browsers: Set<WebSocket>;
   dirty: boolean; broadcasting: boolean; touched: number;
+  snapshot?: Promise<{ sessions: Awaited<ReturnType<PostgresStore['sessions']>>; groups: Awaited<ReturnType<PostgresStore['groups']>> }>;
+  broadcastTimer?: ReturnType<typeof setTimeout>;
 }
 interface Ticket { user: WebUser; expires: number }
 class RateLimit {
@@ -70,10 +73,12 @@ export async function serveCloud(options: {
   await repository.claimLease();
   try { await repository.recover(); } catch (error) { await repository.releaseLease(); throw error; }
 
-  const state = async (runtime: Runtime) => ({
-    sessions: await runtime.store.sessions(), groups: await runtime.store.groups(),owner:runtime.store.owner,
-    allowedExtensionIds: [], platform: { os: 'cloud', arch: '' }, cloud: true, emergencyError
-  });
+  const state = async (runtime: Runtime) => {
+    runtime.snapshot ??= Promise.all([runtime.store.sessions(), runtime.store.groups()]).then(([sessions, groups]) => ({sessions,groups}));
+    const saved = await runtime.snapshot;
+    return {sessions: runtime.coordinator.runBuffer!.overlay(saved.sessions),groups:saved.groups,owner:runtime.store.owner,
+      allowedExtensionIds: [], platform: { os: 'cloud', arch: '' }, cloud: true, emergencyError};
+  };
   function failClosed(error: unknown) {
     if (closing || emergencyError) return;
     emergencyError = 'Bộ điều phối không lưu hoặc xác nhận được tiến độ. Đã ngừng cấp lệnh; kết nối lại và đối chiếu trước khi tiếp tục.';
@@ -107,12 +112,17 @@ export async function serveCloud(options: {
   function runtime(owner: string) {
     let result = runtimes.get(owner);
     if (!result) {
-      const store = repository.store(owner), coordinator = new Coordinator(store, new AttentionQueue(), true);
+      const store = repository.store(owner), coordinator = new Coordinator(store, new AttentionQueue(), true, new RunBuffer(store));
       result = { store, coordinator, browsers: new Set(), dirty: false, broadcasting: false, touched: Date.now() };
       coordinator.launchUrl = config.origin;
       coordinator.unavailable=error=>{if(!(error instanceof CloudError)||error.status===503)failClosed(error);};
+      coordinator.progressUnavailable=failClosed;
       const current = result;
-      coordinator.changed = () => { void broadcast(current); };
+      coordinator.changed = () => { current.snapshot=undefined;void broadcast(current); };
+      coordinator.progressChanged = () => {
+        // Live overlays need no SQL. Bound UI work independently of form speed.
+        if(!current.broadcastTimer)current.broadcastTimer=setTimeout(()=>{current.broadcastTimer=undefined;void broadcast(current);},100);
+      };
       runtimes.set(owner, result);
     }
     result.touched = Date.now();
@@ -209,6 +219,7 @@ export async function serveCloud(options: {
               // Closing the socket halts the client, revocation prevents HELLO.
               const peer = coordinator.peers.get(id);
               peer?.send(JSON.stringify({ type: 'REVOKED' })); peer?.close(1008, 'Unlinked');
+              coordinator.runBuffer?.halt(id);await coordinator.runBuffer?.flush(id);coordinator.runBuffer?.forget(id);
               await repository.revoke(user.id, id); coordinator.changed(); return json(res, { ok: true });
             }
             if (action === 'attachment') {
@@ -315,7 +326,10 @@ export async function serveCloud(options: {
           // A CONTROL request may await a command RESULT. Let RESULT bypass the
           // profile queue to avoid deadlocking its own acknowledgement.
           let result = false;
-          try { result = authenticated && path === '/extensions' && JSON.parse(raw.toString()).type === 'RESULT'; } catch {}
+          try {
+            const message=JSON.parse(raw.toString());
+            result=authenticated&&path==='/extensions'&&(message.type==='RESULT'||message.type==='REQUEST'&&String(message.kind).startsWith('ATTENTION_'));
+          } catch {}
           if (result) void handle(); else chain = chain.then(handle);
         });
         ws.on('error', () => ws.terminate());
@@ -345,7 +359,7 @@ export async function serveCloud(options: {
   }, 20000);
   return { server, repository, runtimes, async close() {
     closing = true; clearInterval(heartbeat); clearInterval(leaseTimer);
-    for (const current of runtimes.values()) current.coordinator.attention.close();
+    for (const current of runtimes.values()) {clearTimeout(current.broadcastTimer);current.coordinator.attention.close();}
     await Promise.all([...sockets.clients].map(ws => new Promise<void>(resolve => { ws.once('close', () => resolve()); ws.terminate(); })));
     // close callbacks schedule persistence; finish it before releasing the lease.
     for (const current of runtimes.values()) for (const [id, ws] of [...current.coordinator.peers]) await current.coordinator.disconnect(id, ws).catch(() => {});

@@ -19,7 +19,7 @@ export interface DataStore {
   beginGroup(group: GroupView, sessions: SessionView[]): Result<void>;
   acceptProgress(id: string, run: RunState): Result<boolean>;
   blocked(session: string, form: string): Result<boolean>;
-  acquireSubmit(session: string, run: string, form: string): Result<void>;
+  acquireSubmit(session: string, run: string, form: string, progress?: RunState): Result<void>;
   resolve(session: string, run: string, result: 'received' | 'not_received'): Result<void>;
   saveAttachment(session: string, id: string, bytes: Buffer, hash: string): Result<void>;
   attachment(session: string, id: string): Result<{ data: Buffer; hash: string }>;

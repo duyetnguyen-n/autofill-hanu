@@ -4,6 +4,7 @@ import type { DataStore } from '../server/data-store';
 import type { GroupView, SessionView } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import { canonicalFormId } from '../../src/protocol';
+import { validCloudProgress } from './progress';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export class CloudError extends Error {
@@ -48,11 +49,11 @@ export class PostgresStore implements DataStore {
     const result = await db.query(`SELECT data,version FROM hanu.sessions WHERE owner=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.owner, id]);
     return this.decode(result.rows[0]);
   }
-  private async write(s: SessionView, db: SqlConnection = this.pool) {
+  private async write(s: SessionView, db: SqlConnection = this.pool, locked?: { data: SessionView; version: number }) {
     const version = this.versions.get(s);
     if (version === undefined) throw new CloudError('Đọc lại hồ sơ trước khi lưu.', 409);
     const original=this.baselines.get(s)!;
-    const row=(await db.query('SELECT data,version FROM hanu.sessions WHERE owner=$1 AND id=$2 FOR UPDATE',[this.owner,s.id])).rows[0];
+    const row=locked??(await db.query('SELECT data,version FROM hanu.sessions WHERE owner=$1 AND id=$2 FOR UPDATE',[this.owner,s.id])).rows[0];
     if(!row)throw new CloudError('Không tìm thấy profile.',404);
     const current=row.data as SessionView;
     const fields=[...new Set([...Object.keys(original),...Object.keys(s)])] as (keyof SessionView)[];
@@ -87,7 +88,8 @@ export class PostgresStore implements DataStore {
   }
   session(id: string) { return this.read(id); }
   async saveSession(s: SessionView) {
-    await transaction(this.pool, async db => { await this.write(s, db); if (s.run?.runId) await this.writeRun(s.id, s.run, db); });
+    const runChanged = JSON.stringify(s.run) !== JSON.stringify(this.baselines.get(s)?.run);
+    await transaction(this.pool, async db => { await this.write(s, db); if (runChanged && s.run?.runId) await this.writeRun(s.id, s.run, db); });
   }
   async touch(id: string) {
     // Heartbeats do not bump the profile version or overwrite concurrent edits.
@@ -139,18 +141,32 @@ export class PostgresStore implements DataStore {
     await transaction(this.pool, async db => {
       await this.assertLease(db);
       // Lock in a stable order to avoid deadlocks between overlapping starts.
-      for (const requested of [...sessions].sort((a, b) => a.id.localeCompare(b.id))) {
-        const current = await this.read(requested.id, db, true);
+      const ids = sessions.map(s => s.id);
+      const rows = (await db.query('SELECT id,data,version FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE', [this.owner, ids])).rows;
+      const locked = new Map(rows.map(row => [row.id, this.decode(row)]));
+      const form = canonicalFormId(g.url);
+      const blocked = form ? new Set((await db.query("SELECT session FROM hanu.locks WHERE owner=$1 AND session=ANY($2::text[]) AND form=$3 AND resolution!='not_received'", [this.owner, ids, form])).rows.map(row => row.session)) : new Set();
+      for (const requested of sessions) {
+        const current = locked.get(requested.id);
+        if (!current) throw new CloudError('Không tìm thấy profile.', 404);
         if (this.versions.get(current) !== this.versions.get(requested) || !current.connected || !current.synced || current.execution || current.conflict || current.run && !['idle', 'completed', 'ready_to_submit', 'failed', 'submit_uncertain'].includes(current.run.status)) throw new CloudError('Profile vừa thay đổi hoặc đang có lượt chạy. Đọc lại trạng thái.', 409);
-        const form = canonicalFormId(g.url);
-        if (form && (await db.query("SELECT 1 FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3 AND resolution!='not_received'", [this.owner, current.id, form])).rowCount) throw new CloudError('Form đã có khóa gửi. Xác minh trước khi chạy lại.', 409);
+        if (blocked.has(current.id)) throw new CloudError('Form đã có khóa gửi. Xác minh trước khi chạy lại.', 409);
+        requested.lastSeen = current.lastSeen;
       }
       await db.query('INSERT INTO hanu.groups(owner,id,data) VALUES($1,$2,$3)', [this.owner, g.id, JSON.stringify(g)]);
-      for (const s of sessions) { await this.writeRun(s.id, s.run!, db); await this.write(s, db); }
+      await db.query(`INSERT INTO hanu.runs(owner,session,id,data,seq)
+        SELECT $1,p.session,p.id,p.data,p.seq FROM jsonb_to_recordset($2::jsonb) AS p(session text,id text,data jsonb,seq integer)
+        ON CONFLICT(owner,session,id) DO UPDATE SET data=EXCLUDED.data,seq=EXCLUDED.seq WHERE hanu.runs.seq<=EXCLUDED.seq`,
+        [this.owner, JSON.stringify(sessions.map(s => ({ session:s.id,id:s.run!.runId,data:s.run,seq:s.run!.eventSeq??0 })))]);
+      const updated = (await db.query(`UPDATE hanu.sessions s SET data=p.data,version=s.version+1
+        FROM jsonb_to_recordset($2::jsonb) AS p(id text,data jsonb) WHERE s.owner=$1 AND s.id=p.id RETURNING s.id,s.version`,
+        [this.owner, JSON.stringify(sessions.map(s => ({id:s.id,data:s})))])).rows;
+      const versions = new Map(updated.map(row => [row.id,row.version]));
+      for (const s of sessions) { this.versions.set(s,versions.get(s.id));this.baselines.set(s,structuredClone(s)); }
     });
   }
   async acceptProgress(id: string, run: RunState) {
-    if (!run || !Array.isArray(run.logs) || run.logs.length>2000 || run.logs.some(log=>!log||typeof log.message!=='string'||typeof log.at!=='string'||!['info','warning','error','success'].includes(log.level)) || !Number.isSafeInteger(run.eventSeq) || run.eventSeq!<0 || run.eventSeq!>2147483647 || typeof run.formId!=='string' || run.formId.length>300 || typeof run.submitAttempted!=='boolean' || !['idle','running','paused','waiting_manual','ready_to_submit','submitting','completed','submit_uncertain','failed'].includes(run.status) || run.blockingIssue&&typeof run.blockingIssue.message!=='string') return false;
+    if (!validCloudProgress(run)) return false;
     return transaction(this.pool, async db => {
       const s = await this.read(id, db, true);
       if (!s.run || !s.connected && run.status==='running' || run.runId !== s.run.runId || run.sessionId !== id || run.eventSeq! <= (s.run.eventSeq ?? 0) || s.run.submitAttempted && !run.submitAttempted) return false;
@@ -169,13 +185,26 @@ export class PostgresStore implements DataStore {
     await this.read(session);
     return !!(await this.pool.query("SELECT 1 FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3 AND resolution!='not_received'", [this.owner, session, form])).rowCount;
   }
-  async acquireSubmit(session: string, run: string, form: string) {
+  async acquireSubmit(session: string, run: string, form: string, progress?: RunState) {
     if (!form || typeof form !== 'string') throw new CloudError('Form thiếu định danh.');
     await transaction(this.pool, async db => {
       await this.assertLease(db);
       // Both the group gate and profile are locked until the grant is committed.
       const g = (await db.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2 FOR SHARE', [this.owner, run])).rows[0]?.data as GroupView | undefined;
       const s = await this.read(session, db, true);
+      const locked = { data: structuredClone(s), version: this.versions.get(s)! };
+      if (progress) {
+        const current = s.run;
+        if (!validCloudProgress(progress) || !current || current.runId !== run || progress.runId !== run || progress.sessionId !== session ||
+          current.submitAttempted && !progress.submitAttempted || progress.formId !== form ||
+          current.formId && current.formId !== form || g && canonicalFormId(g.url) && canonicalFormId(g.url) !== form) throw new CloudError('Tiến độ/form không khớp lượt gửi.', 409);
+        if (progress.eventSeq! > (current.eventSeq ?? 0)) {
+          s.run = { ...progress, mode:current.mode,managed:true,
+            url:current.url,expectedEmail:current.expectedEmail,profileRevision:current.profileRevision,startedAt:current.startedAt,
+            profileSnapshot:current.profileSnapshot,finalQuestion:current.finalQuestion };
+          s.error = progress.blockingIssue?.message;
+        }
+      }
       const locks = (await db.query('SELECT run,resolution FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3', [this.owner, session, form])).rows;
       const old = locks.find(l => l.run === run);
       if (!g || g.mode!=='live' || g.paused || !g.members.includes(session) || !s.run || s.run.runId !== run || s.run.formId !== form || s.run.mode !== 'live' || !['running', 'submitting'].includes(s.run.status) || old && old.resolution !== 'local_reserved' || locks.some(l => l.resolution !== 'not_received' && (l.run !== run || l.resolution !== 'local_reserved'))) throw new CloudError('Quyền gửi đã bị khóa hoặc lượt không hoạt động.', 409);
@@ -183,7 +212,7 @@ export class PostgresStore implements DataStore {
       s.run.submitAttempted = true;
       s.run.status = 'submitting';
       await this.writeRun(session, s.run, db);
-      await this.write(s, db);
+      await this.write(s, db, locked);
       await db.query("INSERT INTO hanu.audit(owner,session,run,kind,message) VALUES($1,$2,$3,'submit_lock','Đã khóa quyền gửi.')", [this.owner, session, run]);
     });
   }

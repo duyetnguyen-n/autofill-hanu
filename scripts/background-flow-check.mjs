@@ -47,7 +47,10 @@ if(cloud){
   const {httpFixture,users}=await import('../tests/cloud/fixture.ts');
   cloudFixture=await httpFixture(resolve('build/cloud-ui'));await cloudFixture.api('state');
   const runtime=cloudFixture.app.runtimes.get(users[0]);
-  app={store:runtime.store,coordinator:runtime.coordinator,origin:cloudFixture.config.origin,url:cloudFixture.config.origin,close:()=>cloudFixture.close()};
+  // Cloud progress is intentionally buffered until registration ends. Observe
+  // the dashboard's live overlay rather than a stale DB checkpoint. This test
+  // polls at 50 ms; use the internal view to avoid the HTTP API's rate limit.
+  app={store:{sessions:async()=>runtime.coordinator.runBuffer.overlay(await runtime.store.sessions())},coordinator:runtime.coordinator,origin:cloudFixture.config.origin,url:cloudFixture.config.origin,close:()=>cloudFixture.close()};
   process.env.PUBLIC_ORIGIN=app.origin;process.env.HANU_CLOUD_DEV='1';await import('./build-cloud.mjs');
 }
 const extension=join(dir,'extension'),data=join(dir,'app');await cp(cloud?'dist-cloud':'dist',extension,{recursive:true});await mkdir(data,{recursive:true});
@@ -76,6 +79,15 @@ const testMs=Date.now()-start;
 console.log(`PASS: ${count} initially minimized profiles complete delayed required controls, rAF dropdown + 1.8s menu, upload and full document navigation without viewing any form; Test submits zero.`);
 const manager=await chromium.launch({channel:process.platform==='win32'?'msedge':'chromium',headless:true});try{const page=await manager.newPage({viewport:{width:1440,height:1050}});if(cloud)await page.context().addCookies([{name:'test-account',value:'account-a',url:app.origin,httpOnly:true,sameSite:'Lax'}]);await page.goto(app.url);await page.getByText('Xong Test',{exact:false}).first().waitFor();await page.screenshot({path:`test-results/${output}-manager.png`,fullPage:true});}finally{await manager.close();}
 for(const p of profiles)await app.coordinator.control(p.id,'STOP');steps.clear();const live=await app.coordinator.start(profiles.map(p=>p.id),fixtureUrl,'live',sharedQuestion);await complete('completed');for(const p of profiles){assert.equal(submissions.get(p.index),1);await assert.rejects(()=>app.coordinator.control(p.id,'RESUME'));assert.equal(submissions.get(p.index),1);}
+if(cloud){
+  await Promise.all(profiles.map(p=>app.coordinator.runBuffer.flush(p.id)));
+  for(const p of profiles){
+    const persisted=await app.coordinator.store.session(p.id);
+    assert.equal(persisted.run.status,'completed');assert.equal(persisted.run.submitAttempted,true);
+    assert.equal((await app.coordinator.store.history(p.id))[0].status,'completed');
+    assert.equal(await app.coordinator.store.blocked(p.id,'background-fixture'),true);
+  }
+}
 const report={scope:cloud?'Isolated headed Chromium windows; production cloud extension with real WebSocket, PostgreSQL (PGlite), coordinator and renderer leases.':'Isolated headed Chromium windows; production content/background with a fixture-only native pipe shim; actual coordinator and renderer leases. Page rendering is kept active by the extension under test, not the harness. No Playwright attachment/focus emulation or throttling-suppression flags on form browsers.',execution:serial?'serial':'parallel',sharedFinalQuestion:sharedFinal,profiles:count,testMs,totalMs:Date.now()-start,leasePeak,menuPeak,testRun:group.id,liveRun:live.id,testStoppedBeforeSend:true,liveSubmissions:[...submissions.values()],invalidNext:observations.filter(o=>o.kind==='invalid-next').length,observations,focusEvents};await writeFile(`test-results/${output}.json`,JSON.stringify(report,null,2));await rm(`test-results/${output}-error.json`,{force:true});console.log(`PASS: ${serial?'Serial':'Parallel'} Test ${testMs} ms; ${leasePeak} simultaneous leases, ${menuPeak} overlapping dropdowns. Live exactly once/profile; Resume cannot submit twice.`);
 }catch(e){const diagnostics=[];for(const p of profiles)try{diagnostics.push(await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;if(!r||r.tabId<0)return;return {window:await chrome.windows.get((await chrome.tabs.get(r.tabId)).windowId),page:await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>({width:innerWidth,height:innerHeight,hidden:document.hidden,focused:document.hasFocus(),cards:[...document.querySelectorAll('[role=listitem]')].map(e=>({text:e.textContent,width:e.getBoundingClientRect().width,controls:e.querySelectorAll('input,[role=radio],[role=listbox]').length}))})})};})()`));}catch{}await writeFile('test-results/background-flow-error.json',JSON.stringify({error:String(e),sessions:app?await app.store.sessions():undefined,observations,focusEvents,diagnostics},null,2));throw e;}finally{
 stopping=true;clearInterval(sampler);for(const p of profiles){clearInterval(p.poller);for(const port of p.ports.values())port.ws.terminate();try{await p.cdp?.send('Browser.close');}catch{}p.cdp?.close();if(!p.child.killed)p.child.kill();}if(app)await app.close();if(fixtureServer)await new Promise(r=>fixtureServer.close(r));await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100}).catch(()=>{});
