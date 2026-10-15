@@ -1,5 +1,12 @@
 # Kiểm thử HANU Coordinator 1.3.1 (2026-10-12)
 
+## Bản 1.3.4 — chuyển trang Google chậm (2026-10-16)
+
+- Đối chiếu lượt production `e8a4ca92-e061-49c5-9f74-ae82f71261df` từ trang quản lý mở trên Cốc Cốc: một profile báo không chuyển trang sau khi điền họ tên / loại giấy tờ, nhưng Chrome thực tế đã tới trang CCCD trống. Trang mới nhận trạng thái `waiting_manual` do lượt đã bị dừng trước khi Google trả trang.
+- Tăng hạn chờ phản hồi đầu tiên của nút Tiếp lên 60 giây, vẫn nhận thay đổi DOM ngay và ngắt ngay khi có lỗi nhập liệu hoặc lệnh Dừng. Chỉ thử thao tác chuột dự phòng sau hạn này, tối đa thêm 7 giây; không áp dụng lại thao tác Gửi. Không thay đổi nội dung hồ sơ hoặc quyền chạy.
+- Ca hồi quy phản hồi chậm 22 giây thất bại trên bản cũ, qua sau sửa và không có click dự phòng hoặc trạng thái dừng nhầm. Kiểm tra thêm Dừng ở giây thứ 5 vẫn có hiệu lực khi trang mới xuất hiện muộn. Toàn bộ **307 ca / 39 file qua**, typecheck qua.
+- Nhật ký kiểm thử lặp thực tế từ Cốc Cốc lưu riêng trong `test-results/coccoc-repeat-production-20261016.json`; chỉ ghi metadata kết quả, không chứa hồ sơ/ảnh.
+
 ## Bản 1.3.3 — hai Chrome profile chạy đồng thời (2026-10-16)
 
 - Tái hiện trên form Google mẫu `1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ`, production Render, hai Chrome profile đang dùng. Cùng lượt `2562daae-9111-449e-8be5-02cc77d50ec0`: một profile tới câu xác thực, profile còn lại báo câu bắt buộc ngay trang đầu. Hồ sơ thứ hai để trống `recordGoogleEmail`; checkbox email độc lập không được nhận diện là bắt buộc. Bản nháp đã tích email có thể che lỗi trong lần thử lại.

@@ -922,8 +922,12 @@ async function blockForCorrection(message:string,question?:Question):Promise<voi
   await emit({type:'block',issue});
 }
 
-async function waitForPageChange(before: string): Promise<boolean> {
-  return waitForCondition(()=>pageFingerprint()!==before,7000,250,()=>Boolean(validationError()));
+async function waitForPageChange(before: string,timeout=60_000): Promise<boolean> {
+  // Google can take tens of seconds to answer Next while another profile is
+  // uploading. Parking after 7s makes the new document inherit waiting_manual
+  // even though navigation succeeded. DOM changes still wake immediately;
+  // validation and Stop interrupt this wait, without another Next click.
+  return waitForCondition(()=>pageFingerprint()!==before,timeout,250,()=>Boolean(validationError()));
 }
 
 async function execute(depth = 0): Promise<void> {
@@ -1178,14 +1182,14 @@ async function execute(depth = 0): Promise<void> {
     if(await waitForPageChange(before))return true;
     if(!active||validationError()||!next.isConnected||next.getAttribute('aria-disabled')==='true')return false;
     // Retry only Next, never Submit, and only when there is no validation error.
-    return await trustedClick(next)?waitForPageChange(before):false;
+    return await trustedClick(next)?waitForPageChange(before,7_000):false;
   });
   if (!active) return;
   // Google Forms can retain an old aria-alert in the DOM after the next page
   // renders. A changed page is authoritative; only validate on a failed move.
   const error = changed ? undefined : validationError();
   if (!changed) {
-    await blockForCorrection(error ? `Google Forms báo lỗi: ${error}` : "Không thể chuyển trang. Hãy kiểm tra câu bắt buộc hoặc điều kiện rẽ nhánh.");
+    await blockForCorrection(error ? `Google Forms báo lỗi: ${error}` : "Google chưa chuyển trang sau khi bấm Tiếp. Kiểm tra kết nối rồi bấm Tiếp tục.");
     return;
   }
   await emit({ type: "page_advanced", fingerprint: pageFingerprint() });
