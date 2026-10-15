@@ -600,7 +600,8 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   const picker = uploadPicker()!;
   const requestId = crypto.randomUUID();
   let assigned = false;
-  for (let attempt = 0; attempt < 40 && active; attempt += 1) {
+  const pickerReadyDeadline = Date.now() + 20000;
+  for (let attempt = 0; attempt < 80 && active && Date.now() < pickerReadyDeadline; attempt += 1) {
     if (!picker.isConnected || !visible(picker)) break;
     const result = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId } satisfies ExtensionMessage)
       .catch(error => ({ state: "error", error: error instanceof Error ? error.message : String(error) })) as PickerUploadResult | { ok: false; error: string };
@@ -614,17 +615,27 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   }
   if (!active) return false;
   if (!assigned) {
-    question.element.dataset.hanuUploadError = "Chưa tìm được ô upload trong Picker. Hãy chọn ảnh thủ công rồi bấm Tiếp tục.";
+    question.element.dataset.hanuUploadError = "Google Picker chưa khởi tạo ổn định để nhận ảnh. Hãy kiểm tra hộp tải tệp rồi bấm Tiếp tục.";
     return false;
   }
-  await emit({ type: "progress", message: `Đang tải ${reference.name} lên Google; chờ form xác nhận nhận ảnh.` });
+  await emit({ type: "progress", message: `Đã chuyển ${reference.name} vào Picker; đang chờ Google xử lý và xác nhận ảnh trên form.` });
   // Assignment is not completion. Wait for the exact filename and the Forms
   // removal action, and for Picker to close. A slow/failed upload must block
   // Next/Submit instead of allowing a second upload or submission.
   let closedAt: number | undefined;
-  for (let attempt = 0; attempt < 480 && active; attempt += 1) {
+  const uploadDeadline = Date.now() + 120000;
+  for (let attempt = 0; attempt < 480 && active && Date.now() < uploadDeadline; attempt += 1) {
     const closed = !picker.isConnected || !visible(picker);
     if (uploadedFileMatches(question, reference.name) && closed) return true;
+    if (!closed && attempt % 2 === 0) {
+      const status = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId, checkOnly: true } satisfies ExtensionMessage)
+        .catch(error => ({ state: "error", error: error instanceof Error ? error.message : String(error) })) as PickerUploadResult | { ok: false; error: string };
+      if (!active) return false;
+      if (status && (("state" in status && status.state === "error") || ("ok" in status && status.ok === false))) {
+        question.element.dataset.hanuUploadError = (status as { error: string }).error;
+        return false;
+      }
+    }
     // Picker can close one render before Forms inserts the committed chip.
     // Allow that final update, without issuing another upload request.
     if (closed) closedAt ??= Date.now();

@@ -111,8 +111,24 @@ it("a stalled upload times out without repeating the upload or navigating", asyn
   const fixture = await setup();
   await vi.advanceTimersByTimeAsync(121000);
   expect(fixture.next).not.toHaveBeenCalled();
-  expect(fixture.sendMessage.mock.calls.filter(([message]) => message.type === "UPLOAD_STORED_FILE")).toHaveLength(1);
+  expect(fixture.sendMessage.mock.calls.filter(([message]) => message.type === "UPLOAD_STORED_FILE" && !message.checkOnly)).toHaveLength(1);
   expect(fixture.sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "block" }) }));
+});
+
+it("reports a Google upload error immediately without reuploading or advancing", async () => {
+  const fixture = await setup();
+  fixture.sendMessage.mockImplementation(async message => {
+    fixture.sent.push(message);
+    if (message.type === "UPLOAD_STORED_FILE" && message.checkOnly) return { state: "error", error: "Google Picker: Không thể tải tệp lên." };
+    return undefined;
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(fixture.next).not.toHaveBeenCalled();
+  expect(fixture.submit).not.toHaveBeenCalled();
+  expect(fixture.sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({
+    type: "block", issue: expect.objectContaining({ reason: "file_upload", message: "Google Picker: Không thể tải tệp lên." })
+  }) }));
+  expect(fixture.sendMessage.mock.calls.filter(([message]) => message.type === "UPLOAD_STORED_FILE" && !message.checkOnly)).toHaveLength(1);
 });
 
 it("does not skip a required upload card whose button mounts after page navigation", async () => {

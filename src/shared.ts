@@ -136,7 +136,7 @@ export type ExtensionMessage =
   | { type: "SAVE_PROFILE"; profile: Profile }
   | { type: "SAVE_ATTACHMENT"; attachmentKey: string; name: string; mimeType: string; dataUrl: string }
   | { type: "GET_ATTACHMENT"; attachmentId: string }
-  | { type: "UPLOAD_STORED_FILE"; attachmentId: string; pickerUrl: string; requestId: string }
+  | { type: "UPLOAD_STORED_FILE"; attachmentId: string; pickerUrl: string; requestId: string; checkOnly?: boolean }
   | { type: "CLEAR_ALL_DATA" }
   | { type: "START_RUN"; tabId: number; mode: RunMode }
   | { type: "PAUSE_RUN"; tabId: number }

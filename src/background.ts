@@ -225,21 +225,31 @@ async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLO
   const profile = activeRun?.profileSnapshot ?? await getProfile();
   const reference = Object.values(profile.attachments).find(item => item?.id === message.attachmentId);
   if (!reference) throw new Error("Tệp không còn nằm trong hồ sơ đã lưu. Hãy chọn lại ảnh trong extension.");
+  const currentForm = (sender.url ?? sender.tab?.url)?.match(/\/d\/e\/([^/]+)/)?.[1];
+  const assertActive = async () => {
+    const current = await getRun(tabId);
+    if (current?.status !== "running" || current.formId !== currentForm) throw new Error("Phiên đã dừng hoặc không còn ở form ban đầu.");
+  };
+  const inject = async (payload: Parameters<typeof assignPickerFile>[0]): Promise<PickerUploadResult> => {
+    const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: assignPickerFile, args: [payload] });
+    const matching = results.map(item => item.result as PickerUploadResult | undefined)
+      .filter((item): item is PickerUploadResult => Boolean(item && item.state !== "ignored"));
+    return matching.find(item => item.state === "error")
+      ?? matching.find(item => item.state === "assigned")
+      ?? matching.find(item => item.state === "ready") ?? { state: "waiting" };
+  };
+  await assertActive();
+  if (message.checkOnly) return inject({ pickerUrl: message.pickerUrl, requestId: message.requestId, checkOnly: true });
+  // Startup polling sends only readiness metadata. Avoid reading, encoding and
+  // copying a potentially large stored photo into every frame on each poll.
+  const prepared = await inject({ pickerUrl: message.pickerUrl, requestId: message.requestId, prepareOnly: true });
+  if (prepared.state !== "ready") return prepared;
+  await assertActive();
   const blob = await getAttachment(reference.id);
   if (!blob) throw new Error("Không đọc được tệp đã lưu. Hãy chọn lại ảnh trong extension.");
   const dataUrl = await blobToDataUrl(blob);
-  const current = await getRun(tabId);
-  const currentForm = (sender.url ?? sender.tab?.url)?.match(/\/d\/e\/([^/]+)/)?.[1];
-  if (current?.status !== "running" || current.formId !== currentForm) throw new Error("Phiên đã dừng hoặc không còn ở form ban đầu.");
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    func: assignPickerFile,
-    args: [{ dataUrl, name: reference.name, type: reference.type, pickerUrl: message.pickerUrl, requestId: message.requestId }]
-  });
-  const matching = results.map(item => item.result as PickerUploadResult | undefined)
-    .filter((item): item is PickerUploadResult => Boolean(item && item.state !== "ignored"));
-  return matching.find(item => item.state === "error")
-    ?? matching.find(item => item.state === "assigned") ?? { state: "waiting" };
+  await assertActive();
+  return inject({ dataUrl, name: reference.name, type: reference.type, pickerUrl: message.pickerUrl, requestId: message.requestId });
 }
 
 async function startRun(tabId: number, mode: RunMode): Promise<RunState> {

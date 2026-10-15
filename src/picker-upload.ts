@@ -6,13 +6,25 @@ export interface PickerFile {
   requestId: string;
 }
 
+export interface PickerUploadCheck {
+  pickerUrl: string;
+  requestId: string;
+  checkOnly: true;
+}
+
+export interface PickerUploadPreparation {
+  pickerUrl: string;
+  requestId: string;
+  prepareOnly: true;
+}
+
 export type PickerUploadResult =
-  | { state: "ignored" | "waiting" | "assigned" }
+  | { state: "ignored" | "waiting" | "ready" | "assigned" }
   | { state: "error"; error: string };
 
 // Chrome serializes this function for executeScript. Keep it self-contained:
 // no references to imports or variables from the extension's service worker.
-export function assignPickerFile(payload: PickerFile): PickerUploadResult {
+export function assignPickerFile(payload: PickerFile | PickerUploadCheck | PickerUploadPreparation): PickerUploadResult {
   const url = new URL(location.href);
   const expected = new URL(payload.pickerUrl);
   if (url.origin !== "https://docs.google.com" || !/^\/picker(?:\/|$)/.test(url.pathname)
@@ -21,9 +33,12 @@ export function assignPickerFile(payload: PickerFile): PickerUploadResult {
     || url.searchParams.get("rpctoken") !== expected.searchParams.get("rpctoken")) return { state: "ignored" };
 
   const previous = document.documentElement.dataset.hanuPickerUpload;
-  if (previous) return previous === payload.requestId
-    ? { state: "assigned" }
-    : { state: "error", error: "Picker đang xử lý một tệp khác. Hãy hoàn tất hoặc đóng hộp chọn tệp rồi chạy lại." };
+  if (previous) {
+    if (previous !== payload.requestId) return { state: "error", error: "Picker đang xử lý một tệp khác. Hãy hoàn tất hoặc đóng hộp chọn tệp rồi chạy lại." };
+    const error = document.documentElement.dataset.hanuPickerError;
+    return error ? { state: "error", error } : { state: "assigned" };
+  }
+  if ("checkOnly" in payload) return { state: "waiting" };
 
   const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]'))
     .filter(input => !input.disabled);
@@ -31,6 +46,21 @@ export function assignPickerFile(payload: PickerFile): PickerUploadResult {
   if (inputs.length !== 1) return { state: "error", error: "Picker có nhiều ô chọn tệp; hãy chọn ảnh thủ công để tránh gắn nhầm." };
   const input = inputs[0];
   if (input.files?.length) return { state: "error", error: "Picker đã có tệp đang chọn. Hãy hoàn tất thao tác đó trước." };
+
+  // Picker replaces its initial input during startup. Its accessibility
+  // announcement was observed after that replacement in live A/B tests.
+  // Use that signal plus input stability to avoid a fixed five-second wait.
+  // Unknown locales/layouts retain the conservative startup fallback.
+  const now = performance.now();
+  const trackedInput = input as HTMLInputElement & { __hanuPickerObservedAt?: number };
+  const observedAt = trackedInput.__hanuPickerObservedAt;
+  if (observedAt === undefined) trackedInput.__hanuPickerObservedAt = now;
+  const announced = Array.from(document.querySelectorAll('[aria-live], [role="status"]')).some(element =>
+    /Đã mở bộ chọn|(?:insert file|file|insert).*picker.*opened|opened.*(?:insert file|file|insert).*picker/i.test(element.textContent ?? ""));
+  const stableFor = announced ? 250 : 1000;
+  if (document.readyState !== "complete" || (!announced && now < 5000)
+    || observedAt === undefined || now - observedAt < stableFor) return { state: "waiting" };
+  if ("prepareOnly" in payload) return { state: "ready" };
 
   try {
     const comma = payload.dataUrl.indexOf(",");
@@ -54,6 +84,33 @@ export function assignPickerFile(payload: PickerFile): PickerUploadResult {
     // Mark before dispatch: upload can replace/remove the input immediately.
     // Polling/retried messages must never upload the same file twice.
     document.documentElement.dataset.hanuPickerUpload = payload.requestId;
+    delete document.documentElement.dataset.hanuPickerError;
+    // Picker resets its file input after accepting a selection. On failure it
+    // can return to the empty landing screen and show a short-lived snackbar.
+    // Keep that original error even if it disappears before the next poll.
+    const liveSelector = '[role="alert"], [role="alertdialog"], [role="status"], [aria-live="assertive"], [aria-live="polite"]';
+    const failure = /lỗi|thất bại|không (?:thể |được )?(?:tải|đọc|hỗ trợ|cho phép)|vượt quá|hết dung lượng|error|failed|failure|unable|cannot|can't|unsupported|not supported|exceed|quota|storage.*full|network|try again|thử lại/i;
+    const existing = new Set(Array.from(document.querySelectorAll(liveSelector)).map(el => el.textContent?.trim()));
+    const capture = (node: Node) => {
+      const element = node instanceof Element ? node : node.parentElement;
+      if (!element) return;
+      const candidates = [element.closest(liveSelector), ...Array.from(element.querySelectorAll(liveSelector))];
+      for (const candidate of candidates) {
+        const text = candidate?.textContent?.replace(/\s+/g, " ").trim();
+        if (text && !existing.has(text) && failure.test(text)) {
+          document.documentElement.dataset.hanuPickerError = `Google Picker: ${text.slice(0, 600)}`;
+        }
+      }
+    };
+    const observer = new MutationObserver(records => {
+      if (document.documentElement.dataset.hanuPickerUpload !== payload.requestId) { observer.disconnect(); return; }
+      for (const record of records) {
+        capture(record.target);
+        for (const node of Array.from(record.addedNodes)) capture(node);
+      }
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    window.setTimeout(() => observer.disconnect(), 125000);
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return { state: "assigned" };

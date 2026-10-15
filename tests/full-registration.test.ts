@@ -82,6 +82,7 @@ it('fills every registration page from blank, waits for upload, clears, and repe
     sent.push(message);
     if(message.type==='GET_PROFILE')return profile;
     if(message.type==='UPLOAD_STORED_FILE'){
+      if(message.checkOnly)return {state:'assigned'};
       uploadRequests++;
       window.setTimeout(()=>{
         uploaded=true; document.querySelector('iframe')!.remove();

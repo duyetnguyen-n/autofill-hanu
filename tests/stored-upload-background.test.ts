@@ -17,7 +17,7 @@ async function setup() {
   profile.attachments.identityDocument = { id: "saved", name: "saved.png", type: "image/png", size: 3, updatedAt: "" };
   vi.mocked(getProfile).mockResolvedValue(profile);
   vi.mocked(getAttachment).mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
-  const executeScript = vi.fn(async () => [{ frameId: 0, result: { state: "ignored" } }, { frameId: 1, result: { state: "assigned" } }]);
+  const executeScript = vi.fn(async (request: { args: Array<{ prepareOnly?: boolean }> }) => [{ frameId: 0, result: { state: "ignored" } }, { frameId: 1, result: { state: request.args[0].prepareOnly ? "ready" : "assigned" } }]);
   vi.stubGlobal("chrome", {
     action: { onClicked: { addListener: vi.fn() } },
     tabs: { onUpdated: { addListener: vi.fn() }, onRemoved: { addListener: vi.fn() } },
@@ -41,6 +41,34 @@ it("passes locally stored bytes to the matched Picker without any filesystem pat
   }));
 });
 
+it("polls Picker errors without reading or sending the stored image again", async () => {
+  const fixture = await setup();
+  expect(await fixture.ask({ ...fixture.command, checkOnly: true })).toEqual({ state: "assigned" });
+  expect(getAttachment).not.toHaveBeenCalled();
+  expect(fixture.executeScript).toHaveBeenCalledWith(expect.objectContaining({
+    args: [{ pickerUrl: fixture.command.pickerUrl, requestId: fixture.command.requestId, checkOnly: true }]
+  }));
+});
+
+it("checks startup readiness without reading or copying photo bytes into frames", async () => {
+  const fixture = await setup();
+  fixture.executeScript.mockResolvedValue([{ frameId: 1, result: { state: 'waiting' } }]);
+  expect(await fixture.ask()).toEqual({ state: 'waiting' });
+  expect(await fixture.ask()).toEqual({ state: 'waiting' });
+  expect(getAttachment).not.toHaveBeenCalled();
+  expect(fixture.executeScript).toHaveBeenCalledWith(expect.objectContaining({
+    args: [{ pickerUrl: fixture.command.pickerUrl, requestId: fixture.command.requestId, prepareOnly: true }]
+  }));
+});
+
+it("a repeated assigned request never reads or transmits the image again", async () => {
+  const fixture = await setup();
+  fixture.executeScript.mockResolvedValue([{ frameId: 1, result: { state: 'assigned' } }]);
+  expect(await fixture.ask()).toEqual({ state: 'assigned' });
+  expect(getAttachment).not.toHaveBeenCalled();
+  expect(fixture.executeScript).toHaveBeenCalledTimes(1);
+});
+
 it("does not send saved files into an unrelated website or a child frame's request", async () => {
   const fixture = await setup();
   expect(await fixture.ask(fixture.command, { ...fixture.sender, url: "https://example.com" })).toEqual(expect.objectContaining({ ok: false }));
@@ -62,7 +90,8 @@ it("rechecks cancellation after reading the file, before injecting the upload", 
     return new Blob(["image"]);
   });
   expect(await fixture.ask()).toEqual(expect.objectContaining({ ok: false }));
-  expect(fixture.executeScript).not.toHaveBeenCalled();
+  expect(fixture.executeScript).toHaveBeenCalledTimes(1);
+  expect(fixture.executeScript.mock.calls[0][0].args[0]).toHaveProperty('prepareOnly', true);
 });
 
 it("refuses uploading after the tab moved to a different form", async () => {
