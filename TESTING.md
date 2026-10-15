@@ -1,5 +1,13 @@
 # Kiểm thử HANU Coordinator 1.3.1 (2026-10-12)
 
+## Bản 1.3.3 — hai Chrome profile chạy đồng thời (2026-10-16)
+
+- Tái hiện trên form Google mẫu `1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ`, production Render, hai Chrome profile đang dùng. Cùng lượt `2562daae-9111-449e-8be5-02cc77d50ec0`: một profile tới câu xác thực, profile còn lại báo câu bắt buộc ngay trang đầu. Hồ sơ thứ hai để trống `recordGoogleEmail`; checkbox email độc lập không được nhận diện là bắt buộc. Bản nháp đã tích email có thể che lỗi trong lần thử lại.
+- Sửa nhận diện checkbox ghi email của Google, tự ghi khi hồ sơ chưa chọn. Giữ lựa chọn từ chối rõ ràng và dừng với đúng câu cần xử lý; tích thủ công sẽ kích hoạt tự tiếp tục. Chỉ áp dụng mặc định này cho ô email tài khoản Google, không áp dụng cho các ô cam kết khác. Hiển thị cùng lựa chọn mặc định trong extension và trang quản lý.
+- Nạp bản 1.3.3 vào cả hai Chrome profile, xóa câu trả lời của hai bản nháp trên form mẫu (giữ nguyên hồ sơ và ảnh đã lưu), chọn cả hai và bấm Bắt đầu Test một lần. Cùng lượt `19679215-8d6b-47de-87b8-e9f1a3819e4e`, cùng thời điểm bắt đầu: **2/2 tự tích email, tự điền, Google xác nhận upload ảnh và tới câu xác thực cuối**, không thao tác tay trong lúc chạy. Không trả lời câu xác thực, `submitAttempted=false` ở cả hai.
+- `npm test -- --maxWorkers=4`: **305 ca / 39 file qua**. `npm run typecheck` và `npm run build:cloud` qua. Ca hồi quy mới thất bại trước bản sửa với cả giá trị email trống và thiếu; kiểm tra thêm từ chối, tích thủ công tự tiếp tục, không tự đồng ý ô cam kết khác.
+- Bằng chứng metadata không chứa hồ sơ/ảnh: `test-results/parallel-profiles-production-20261016.json`. Gói cập nhật: `releases/hanu-autofill-online-1.3.3-20261016.zip`.
+
 ## Sửa deploy thiếu migration quản lý người dùng - 15/10/2026
 
 - Kiểm tra project thật xác nhận thiếu `hanu.accounts`. Đã chạy migration

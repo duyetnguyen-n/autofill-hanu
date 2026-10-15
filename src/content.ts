@@ -170,8 +170,16 @@ function inferKind(element: HTMLElement): ControlKind | "unknown" {
   return "unknown";
 }
 
+function isAccountEmailLabel(label:string):boolean {
+  return /^record .+ as the email to be included with my response$/i.test(label)
+    || /^luu lai .+ duoi dang email de them vao cau tra loi cua toi$/.test(normalize(label));
+}
+
 function isRequired(element: HTMLElement, label: string): boolean {
-  if (element.querySelector('[aria-label*="Required" i], [data-required="true"]')) return true;
+  // Google's verified-email checkbox sits outside the question cards; its
+  // required heading is a sibling, not part of the checkbox's accessible name.
+  if (element.matches('[role="checkbox"]') && isAccountEmailLabel(label)) return true;
+  if (element.matches('[aria-required="true"], [data-required="true"]') || element.querySelector('[aria-required="true"], [aria-label*="Required" i], [data-required="true"]')) return true;
   return /(^|\s)\*($|\s)|required question|câu hỏi bắt buộc/i.test(label) || /required question|câu hỏi bắt buộc/i.test(element.innerText);
 }
 
@@ -286,8 +294,7 @@ function suggestedRules(label: string): string[] {
 function findRule(question: Question, profile: Profile): FieldRule | undefined {
   const mapped = profile.mappings[mappingKey(formId(), question.id)];
   if (mapped) return getRule(mapped);
-  if (question.kind === "checkbox" && (/^record .+ as the email to be included with my response$/i.test(question.label)
-    || /^luu lai .+ duoi dang email de them vao cau tra loi cua toi$/.test(normalize(question.label)))) return getRule("recordGoogleEmail");
+  if (question.kind === "checkbox" && isAccountEmailLabel(question.label)) return getRule("recordGoogleEmail");
   return HSK_RULES.find((rule) => hasExactAlias(question.label, rule.aliases));
 }
 
@@ -978,8 +985,18 @@ async function execute(depth = 0): Promise<void> {
       return;
     }
     const rule = findRule(question, profile);
-    const value = rule ? profile.values[rule.key] : customValue(question, profile);
+    const savedValue = rule ? profile.values[rule.key] : customValue(question, profile);
+    const accountEmail = rule?.key === 'recordGoogleEmail' && isAccountEmailLabel(question.label) && question.required;
+    // Blank legacy profiles have no preference. The required Google account
+    // email uses the authenticated account, never the candidate's contact email.
+    // Preserve an explicit refusal and let the user resolve it on the form.
+    const value = accountEmail && !savedValue?.trim() ? 'true' : savedValue;
     const wasFilled = isFilled(question);
+
+    if(accountEmail && /^(false|0|khong|no)$/i.test(normalize(value??''))){
+      await blockForCorrection('Form bắt buộc ghi email tài khoản Google nhưng hồ sơ đang chọn Không. Hãy tích ô ghi email trên form để tiếp tục.',question);
+      return;
+    }
 
     // A prefilled value is only authoritative when this profile does not have a
     // value for that question. When it does, correct a wrong default/old answer

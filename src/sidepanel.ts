@@ -54,6 +54,7 @@ function booleanField(ruleKey: string, label: string, value: string): HTMLElemen
   const select = document.createElement("select");
   select.dataset.profileKey = ruleKey;
   select.innerHTML = '<option value="">Chưa chọn</option><option value="true">Có / đồng ý</option><option value="false">Không</option>';
+  if(ruleKey==='recordGoogleEmail')select.options[0].text='Tự ghi khi form bắt buộc';
   select.value = value;
   wrapper.append(title, select);
   return wrapper;
