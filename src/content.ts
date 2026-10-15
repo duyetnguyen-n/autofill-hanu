@@ -80,7 +80,8 @@ function pageFingerprint(): string {
   const labels = findQuestionRoots().map(questionLabel).join("|");
   const navigation = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'))
     .filter(visible)
-    .map((node) => (node.innerText ?? node.textContent ?? "").trim())
+    .map((node) => normalize(node.innerText ?? node.textContent ?? ""))
+    .filter(text => /^(next|tiep(?:\s.*)?|trang tiep(?:\s.*)?|submit|gui|nop)$/.test(text))
     .join("|");
   return `${location.pathname}:${labels.slice(0, 700)}:${navigation}`;
 }
@@ -1065,7 +1066,10 @@ async function execute(depth = 0): Promise<void> {
     if(!['text','date','textarea'].includes(q.kind)||q===sharedTarget||isVerificationQuestion(q)||q.id===manualSkipQuestionId)return false;
     const rule=findRule(q,profile),value=rule&&profile.values[rule.key];
     const input=q.element.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea');
-    return Boolean(rule&&compatible(rule,q.kind)&&value?.trim()&&input&&!input.disabled&&!input.readOnly&&!questionError(q));
+    // A blank required input is invalid until it is filled. That is expected,
+    // and must not exclude it from the overlap plan. Validate the new value
+    // after assignment and again after the upload has committed.
+    return Boolean(rule&&compatible(rule,q.kind)&&value?.trim()&&input&&!input.disabled&&!input.readOnly);
   }):[];
   if(overlapFile&&textTail.length){
     for(const question of pageQuestions.filter(q=>q!==overlapFile&&!textTail.includes(q))){

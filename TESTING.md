@@ -123,3 +123,14 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - Ảnh fixture: cloud-login.png, cloud-login-mobile.png, cloud-manager.png,
   cloud-background-flow-3-manager.png và cloud-background-flow-5-manager.png.
   Báo cáo full flow trong test-results/cloud-background-flow-3.json / -5.json.
+
+## Upload và điền chồng lấn trên Render — 15/10/2026
+
+- Kiểm thử bằng UI tại https://hanu-autofill.onrender.com/ với 4 Chrome profile đang kết nối và mẫu Google Form thử do người dùng cung cấp. Chỉ Test, để trống câu xác thực, không Gửi.
+- Sau khi người dùng deploy/reload: cả 4 tới câu xác thực trong 24–27 giây, không thử lại upload. Phát hiện điều kiện kiểm tra lỗi đã loại ô bắt buộc còn trống khỏi nhóm điền trong lúc upload. Sửa điều kiện này; vẫn kiểm tra giá trị sau điền và sau Google xác nhận ảnh. Thu hẹp fingerprint chuyển trang về nút Tiếp/Gửi để nút upload thay đổi không gây nhận nhầm trang mới.
+- Build lại extension và reload 4 bản đang dùng từ releases/dist-cloud. Hai lượt tiếp theo đều 4/4 tới câu xác thực, không thử lại upload. Mỗi lượt đặt lại ảnh và các ô văn bản tại trang ảnh của 3 profile; profile thứ tư giữ ảnh đã có. Dropdown và thông tin các trang khác vẫn có dữ liệu bản nháp. Không coi đây là thử nghiệm bản nháp trống hoàn toàn hoặc đối chứng tốc độ.
+- Lượt thứ hai: ND 18 giây, DN 20 giây, The pinned effigy 18 giây; profile giữ ảnh 10 giây. Thời gian Google nhận ảnh lần lượt 8087/7877/7855 ms, chuẩn bị Picker 5216/5284/5250 ms.
+- Lượt thứ ba: ND 19 giây, DN 17 giây, The pinned effigy 18 giây; profile giữ ảnh 10 giây. Thời gian Google nhận ảnh 8193/7918/7947 ms, chuẩn bị Picker 5358/5337/5372 ms. Nhật ký xác nhận mở Picker trước, điền Email/Ngày sinh/Số điện thoại trong khi chờ upload, chỉ bấm Tiếp sau Google xác nhận ảnh.
+- Khoảng chờ sàn 5 giây cho Picker vẫn giữ nguyên; thay đổi này không loại bỏ nó và không tăng nó. Hai lượt qua không chứng minh không thể lỗi hoặc đảm bảo tốc độ khi tranh suất/Google quá tải. Chưa nghiệm thu 24 profile. Bảng quản lý đôi lúc cập nhật trạng thái chậm; số thời gian cuối và nhật ký được đọc sau khi cập nhật.
+- Typecheck qua; Vitest 263 ca/37 file qua với --maxWorkers=2. Có hồi quy cho ô required trống, thay đổi giá trị sau upload và nút upload xuất hiện trong khi chờ chuyển trang. Không chạy Live trên Google.
+- content.js SHA-256: 6a87c336f5a64375da98d4f2257cf9eae6899964899c42917c475b2bf9dd03b8. Gói: releases/hanu-autofill-online-overlap-upload-20261015.zip. Ảnh màn quản lý: test-results/overlap-upload-retest-20261015.png. Source sửa trong workspace; chưa commit/push/deploy lại Render trong lượt kiểm thử này.

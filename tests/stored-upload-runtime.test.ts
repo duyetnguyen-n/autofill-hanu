@@ -87,7 +87,7 @@ it("finishes dropdowns before opening Picker and fills text while upload is stil
   const edits:string[]=[];
   const fixture=await setup({state:'assigned'},false,0,{
     values:{gender:'Nam',email:'correct@gmail.com'},uploadDelay:1500,
-    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="text" id="email" value="old@gmail.com"></div>'+
+    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="email" required id="email"></div>'+
       '<div role="listitem"><div role="heading">GIỚI TÍNH *</div><select id="gender"><option>Chọn</option><option>Nam</option></select></div>',
     onMount:()=>{
       document.querySelector('#gender')!.addEventListener('change',()=>{expect(document.querySelector('iframe')).toBeNull();edits.push('dropdown');});
@@ -107,7 +107,7 @@ it("finishes dropdowns before opening Picker and fills text while upload is stil
 it("rechecks overlapped text after upload commits and blocks a value changed by a rerender", async () => {
   const fixture=await setup({state:'assigned'},false,0,{
     values:{email:'correct@gmail.com'},
-    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="text" id="email"></div>'
+    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="text" required id="email"></div>'
   });
   expect((document.querySelector('#email') as HTMLInputElement).value,JSON.stringify(fixture.sent)).toBe('correct@gmail.com');
   fixture.commit();
