@@ -47,19 +47,16 @@ export function assignPickerFile(payload: PickerFile | PickerUploadCheck | Picke
   const input = inputs[0];
   if (input.files?.length) return { state: "error", error: "Picker đã có tệp đang chọn. Hãy hoàn tất thao tác đó trước." };
 
-  // Picker replaces its initial input during startup. Its accessibility
-  // announcement was observed after that replacement in live A/B tests.
-  // Use that signal plus input stability to avoid a fixed five-second wait.
-  // Unknown locales/layouts retain the conservative startup fallback.
+  // Picker can announce that it is open before its upload controller is
+  // listening. Assigning then clears the input without starting an upload.
+  // Keep a minimum startup window even when the announcement is present,
+  // and require the current input to remain stable after replacement.
   const now = performance.now();
   const trackedInput = input as HTMLInputElement & { __hanuPickerObservedAt?: number };
   const observedAt = trackedInput.__hanuPickerObservedAt;
   if (observedAt === undefined) trackedInput.__hanuPickerObservedAt = now;
-  const announced = Array.from(document.querySelectorAll('[aria-live], [role="status"]')).some(element =>
-    /Đã mở bộ chọn|(?:insert file|file|insert).*picker.*opened|opened.*(?:insert file|file|insert).*picker/i.test(element.textContent ?? ""));
-  const stableFor = announced ? 250 : 1000;
-  if (document.readyState !== "complete" || (!announced && now < 5000)
-    || observedAt === undefined || now - observedAt < stableFor) return { state: "waiting" };
+  if (document.readyState !== "complete" || now < 5000
+    || observedAt === undefined || now - observedAt < 1000) return { state: "waiting" };
   if ("prepareOnly" in payload) return { state: "ready" };
 
   try {

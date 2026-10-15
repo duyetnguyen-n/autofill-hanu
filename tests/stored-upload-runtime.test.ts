@@ -10,7 +10,8 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function setup(result = { state: "assigned" }, uploaded = false, mountDelay = 0) {
+async function setup(result = { state: "assigned" }, uploaded = false, mountDelay = 0,
+  extra: {html?:string;values?:Record<string,string>;onMount?:()=>void;uploadDelay?:number} = {}) {
   vi.useFakeTimers();
   document.body.innerHTML = `<div role="listitem" data-item-id="file">
     <div role="heading">ẢNH MẶT TRƯỚC GTTT CỦA THÍ SINH | 身份证件图 *</div>
@@ -34,12 +35,18 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
     });
   }
   const profile = emptyProfile();
+  Object.assign(profile.values,extra.values);
+  if(extra.html)document.querySelector('#next')!.insertAdjacentHTML('beforebegin',extra.html);
+  extra.onMount?.();
   profile.attachments.identityDocument = { id: "stored-image", name: "saved.png", type: "image/png", size: 3, updatedAt: "" };
   const sent: ExtensionMessage[] = [];
   const sendMessage = vi.fn(async (message: ExtensionMessage) => {
     sent.push(message);
     if (message.type === "GET_PROFILE") return profile;
-    if (message.type === "UPLOAD_STORED_FILE") return result;
+    if (message.type === "UPLOAD_STORED_FILE") {
+      if(extra.uploadDelay&&!message.checkOnly)await new Promise(resolve=>window.setTimeout(resolve,extra.uploadDelay));
+      return result;
+    }
     return undefined;
   });
   vi.stubGlobal("chrome", { runtime: { sendMessage, onMessage: { addListener: (fn: typeof listener) => { listener = fn; } } } });
@@ -74,6 +81,40 @@ it("HALT during upload never advances even if the upload subsequently completes"
   fixture.commit();
   await vi.advanceTimersByTimeAsync(2000);
   expect(fixture.next).not.toHaveBeenCalled();
+});
+
+it("finishes dropdowns before opening Picker and fills text while upload is still pending", async () => {
+  const edits:string[]=[];
+  const fixture=await setup({state:'assigned'},false,0,{
+    values:{gender:'Nam',email:'correct@gmail.com'},uploadDelay:1500,
+    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="text" id="email" value="old@gmail.com"></div>'+
+      '<div role="listitem"><div role="heading">GIỚI TÍNH *</div><select id="gender"><option>Chọn</option><option>Nam</option></select></div>',
+    onMount:()=>{
+      document.querySelector('#gender')!.addEventListener('change',()=>{expect(document.querySelector('iframe')).toBeNull();edits.push('dropdown');});
+      document.querySelector('#email')!.addEventListener('change',()=>{expect(document.querySelector('iframe')).not.toBeNull();edits.push('text');});
+    }
+  });
+  expect(edits,JSON.stringify(fixture.sent)).toEqual(['dropdown','text']);
+  expect((document.querySelector('#email') as HTMLInputElement).value,JSON.stringify(fixture.sent)).toBe('correct@gmail.com');
+  expect(fixture.next).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1600);
+  expect(fixture.next).not.toHaveBeenCalled();
+  fixture.commit();await vi.advanceTimersByTimeAsync(1000);
+  expect(fixture.next).toHaveBeenCalledTimes(1);
+  expect(fixture.submit).not.toHaveBeenCalled();
+});
+
+it("rechecks overlapped text after upload commits and blocks a value changed by a rerender", async () => {
+  const fixture=await setup({state:'assigned'},false,0,{
+    values:{email:'correct@gmail.com'},
+    html:'<div role="listitem"><div role="heading">EMAIL *</div><input type="text" id="email"></div>'
+  });
+  expect((document.querySelector('#email') as HTMLInputElement).value,JSON.stringify(fixture.sent)).toBe('correct@gmail.com');
+  fixture.commit();
+  (document.querySelector('#email') as HTMLInputElement).value='stale@gmail.com';
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(fixture.next).not.toHaveBeenCalled();
+  expect(fixture.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'block',issue:expect.objectContaining({reason:'validation'})})}));
 });
 
 it("blocks on a rejected stored upload instead of falling through to Next", async () => {
@@ -143,3 +184,5 @@ it("does not skip a required upload card whose button mounts after page navigati
   expect(fixture.next).toHaveBeenCalledTimes(1);
   expect(fixture.submit).not.toHaveBeenCalled();
 });
+
+

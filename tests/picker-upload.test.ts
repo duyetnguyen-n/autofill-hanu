@@ -78,13 +78,17 @@ it("does not start an upload during Picker startup even when its input already e
   expect(changed).toHaveBeenCalledTimes(1);
 });
 
-it("uses the opened-picker announcement to upload before five seconds once the replacement input is stable", () => {
+it("does not treat the opened-picker announcement as upload-controller readiness", () => {
   const input = document.querySelector('input')!;
   (input as HTMLInputElement & { __hanuPickerObservedAt?: number }).__hanuPickerObservedAt = 1200;
   vi.mocked(performance.now).mockReturnValue(1500);
   const announcement=document.createElement('div');announcement.setAttribute('aria-live','polite');
   announcement.textContent='Đã mở bộ chọn Chèn tệp.';document.body.append(announcement);
   const changed=vi.fn();input.addEventListener('change',changed);
+  expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(changed).not.toHaveBeenCalled();
+  vi.mocked(performance.now).mockReturnValue(5000);
   expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toEqual({state:'ready'});
   expect(input.files).toHaveLength(0);
   expect(document.documentElement.dataset.hanuPickerUpload).toBeUndefined();
@@ -97,11 +101,11 @@ it("still waits for a newly replaced input even after the opened-picker announce
   const input=document.querySelector('input')!;
   delete (input as HTMLInputElement & { __hanuPickerObservedAt?: number }).__hanuPickerObservedAt;
   document.body.insertAdjacentHTML('beforeend','<div role="status">Đã mở bộ chọn Chèn tệp.</div>');
-  vi.mocked(performance.now).mockReturnValue(1500);
+  vi.mocked(performance.now).mockReturnValue(6000);
   expect(assignPickerFile(payload)).toEqual({state:'waiting'});
-  vi.mocked(performance.now).mockReturnValue(1700);
+  vi.mocked(performance.now).mockReturnValue(6500);
   expect(assignPickerFile(payload)).toEqual({state:'waiting'});
-  vi.mocked(performance.now).mockReturnValue(1800);
+  vi.mocked(performance.now).mockReturnValue(7000);
   expect(assignPickerFile(payload)).toEqual({state:'assigned'});
 });
 

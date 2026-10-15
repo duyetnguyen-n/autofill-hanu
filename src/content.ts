@@ -381,13 +381,29 @@ async function clickIfNeeded(element: Element): Promise<boolean> {
 }
 
 async function waitFor(predicate: () => boolean, attempts = 12): Promise<boolean> {
-  const deadline=Date.now()+attempts*50;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (predicate()) return true;
-    if (!active||Date.now()>=deadline) return false;
-    await new Promise((resolve) => window.setTimeout(resolve, 50));
-  }
-  return predicate();
+  return waitForCondition(predicate,attempts*50,50);
+}
+
+function waitForCondition(predicate:()=>boolean,timeout:number,poll:number,stop?:()=>boolean):Promise<boolean>{
+  return new Promise((resolve,reject)=>{
+    let done=false;
+    const finish=(value:boolean,error?:unknown)=>{
+      if(done)return;done=true;observer.disconnect();window.clearInterval(interval);window.clearTimeout(deadline);
+      error?reject(error):resolve(value);
+    };
+    const check=()=>{try{
+      if(!active){finish(false);return;}
+      if(predicate()){finish(true);return;}
+      if(stop?.())finish(false);
+    }catch(error){finish(false,error);}};
+    const observer=new MutationObserver(check);
+    observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});
+    // DOM changes wake immediately. Polling covers property/layout changes
+    // which do not produce mutations; the deadline is only a failure bound.
+    const interval=window.setInterval(check,poll);
+    const deadline=window.setTimeout(()=>finish(false),timeout);
+    check();
+  });
 }
 
 async function activateDropdown(trigger: HTMLElement): Promise<void> {
@@ -585,6 +601,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   await waitFor(() => Boolean(findOpener()), 200);
   const opener = findOpener();
   if (!opener) return false;
+  const uploadStartedAt=performance.now();
   opener.scrollIntoView?.({ block: "center", behavior: "auto" });
   await emit({ type: "progress", message: `Đang mở hộp upload cho ảnh đã lưu: ${reference.name}` });
   if (!active) return false;
@@ -618,6 +635,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
     question.element.dataset.hanuUploadError = "Google Picker chưa khởi tạo ổn định để nhận ảnh. Hãy kiểm tra hộp tải tệp rồi bấm Tiếp tục.";
     return false;
   }
+  const assignedAt=performance.now();
   await emit({ type: "progress", message: `Đã chuyển ${reference.name} vào Picker; đang chờ Google xử lý và xác nhận ảnh trên form.` });
   // Assignment is not completion. Wait for the exact filename and the Forms
   // removal action, and for Picker to close. A slow/failed upload must block
@@ -626,7 +644,10 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   const uploadDeadline = Date.now() + 120000;
   for (let attempt = 0; attempt < 480 && active && Date.now() < uploadDeadline; attempt += 1) {
     const closed = !picker.isConnected || !visible(picker);
-    if (uploadedFileMatches(question, reference.name) && closed) return true;
+    if (uploadedFileMatches(question, reference.name) && closed) {
+      await emit({type:'progress',message:`Google đã xác nhận ảnh: ${Math.round(performance.now()-uploadStartedAt)} ms (chuẩn bị Picker ${Math.round(assignedAt-uploadStartedAt)} ms).`});
+      return active;
+    }
     if (!closed && attempt % 2 === 0) {
       const status = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId, checkOnly: true } satisfies ExtensionMessage)
         .catch(error => ({ state: "error", error: error instanceof Error ? error.message : String(error) })) as PickerUploadResult | { ok: false; error: string };
@@ -881,14 +902,7 @@ async function blockForCorrection(message:string,question?:Question):Promise<voi
 }
 
 async function waitForPageChange(before: string): Promise<boolean> {
-  const deadline=Date.now()+7000;
-  for (let attempt = 0; attempt < 28&&Date.now()<deadline; attempt += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    if (!active) return false;
-    if (pageFingerprint() !== before) return true;
-    if(validationError())return false;
-  }
-  return false;
+  return waitForCondition(()=>pageFingerprint()!==before,7000,250,()=>Boolean(validationError()));
 }
 
 async function execute(depth = 0): Promise<void> {
@@ -926,15 +940,13 @@ async function execute(depth = 0): Promise<void> {
     sharedTarget=target;
   }
   const manuallyHandled=new Set<string>();
-  // Forms can shuffle questions: complete ordinary fields before pausing for
-  // an upload, even when the upload card happens to be first on the page.
-  for (const question of pageQuestions.sort((a, b) => Number(a.kind === "file") - Number(b.kind === "file"))) {
+  const processQuestion = async (question: Question): Promise<void> => {
     if (!active) return;
     question.element.style.outline = "";
     delete question.element.dataset.hanuBlocking;
     if(manualCorrections.get(question.element)===answerFingerprint(question)&&isFilled(question)&&!questionError(question)){
       manuallyHandled.add(question.id);
-      await emit({type:'progress',message:`Giữ nguyên đáp án bạn vừa sửa: ${question.label}`,skipped:question.id});continue;
+      await emit({type:'progress',message:`Giữ nguyên đáp án bạn vừa sửa: ${question.label}`,skipped:question.id});return;
     }
     if(question===sharedTarget && finalQuestion){
       const rule:FieldRule={key:'sharedFinalQuestion',label:question.label,aliases:[question.label],kind:question.kind as ControlKind};
@@ -943,13 +955,13 @@ async function execute(depth = 0): Promise<void> {
         if(!active)return;active=false;await emit({type:'block',issue:manualIssue(question,'unsupported',`Không thể điền đáp án chung cho: ${question.label}. Với ô lựa chọn, nhập đúng toàn bộ tên đáp án; với ngày, dùng định dạng form yêu cầu.`)});return;
       }
       if(!active)return;
-      await emit({type:'progress',message:`Đã kiểm tra và điền câu hỏi cuối dùng chung: ${question.label}`,filled:question.id});continue;
+      await emit({type:'progress',message:`Đã kiểm tra và điền câu hỏi cuối dùng chung: ${question.label}`,filled:question.id});return;
     }
     if (question.id === manualSkipQuestionId) {
       manuallyHandled.add(question.id);
       manualSkipQuestionId = undefined;
       await emit({ type: "progress", message: `Đã giữ nguyên câu bạn vừa xử lý thủ công: ${question.label}`, skipped: question.id });
-      continue;
+      return;
     }
     const rule = findRule(question, profile);
     const value = rule ? profile.values[rule.key] : customValue(question, profile);
@@ -960,11 +972,11 @@ async function execute(depth = 0): Promise<void> {
     // instead of silently preserving it.
     if (wasFilled && isVerificationQuestion(question)) {
       await emit({ type: "progress", message: `Giữ nguyên câu xác thực đã tự trả lời: ${question.label}`, skipped: question.id });
-      continue;
+      return;
     }
     if (wasFilled && (rule ? !profileHasValue(rule, value, profile) : !value?.trim())) {
       await emit({ type: "progress", message: `Giữ nguyên trường đã có dữ liệu vì hồ sơ không có giá trị thay thế: ${question.label}`, skipped: question.id });
-      continue;
+      return;
     }
     if (isVerificationQuestion(question)) {
       active = false;
@@ -978,7 +990,7 @@ async function execute(depth = 0): Promise<void> {
         return;
       }
       await emit({ type: "progress", message: `Bỏ qua câu tùy chọn chưa có dữ liệu: ${question.label}`, skipped: question.id });
-      continue;
+      return;
     }
     if (!rule) {
       if (wasFilled) {
@@ -987,7 +999,7 @@ async function execute(depth = 0): Promise<void> {
           const customRule: FieldRule = { key: "custom", label: question.label, aliases: [question.label], kind: question.kind };
           if (await fillQuestion(question, customRule, profile, value ?? "")) {
             await emit({ type: "progress", message: `Đã thay thế giá trị sẵn có: ${question.label}`, filled: question.id });
-            continue;
+            return;
           }
         }
       }
@@ -1003,7 +1015,7 @@ async function execute(depth = 0): Promise<void> {
         return;
       }
       await emit({ type: "progress", message: `Đã điền trường tùy chỉnh: ${question.label}`, filled: question.id });
-      continue;
+      return;
     }
     if (!compatible(rule, question.kind) && !(rule.key.includes("Commitment") && question.kind === "radio")) {
       if (question.required) {
@@ -1011,7 +1023,7 @@ async function execute(depth = 0): Promise<void> {
         await emit({ type: "block", issue: manualIssue(question, "unsupported", `Loại trường không khớp cho ${rule.label}. Hãy tự điền hoặc chỉnh ánh xạ.`) });
         return;
       }
-      continue;
+      return;
     }
     if (rule.kind === "file" && !profile.attachments[rule.attachmentKey ?? ""]) {
       active = false;
@@ -1025,11 +1037,11 @@ async function execute(depth = 0): Promise<void> {
         return;
       }
       await emit({ type: "progress", message: `Hồ sơ chưa có dữ liệu tùy chọn: ${rule.label}`, skipped: question.id });
-      continue;
+      return;
     }
     if (wasFilled && matchesProfile(question, rule, profile, value ?? "")) {
       await emit({ type: "progress", message: `Giữ nguyên trường đã khớp hồ sơ: ${question.label}`, skipped: question.id });
-      continue;
+      return;
     }
     const filled = rule.kind==='file'&&document.hidden
       ?Boolean(await withAttention(`Upload ${rule.label}`,()=>fillQuestion(question,rule,profile,value??'')))
@@ -1042,13 +1054,55 @@ async function execute(depth = 0): Promise<void> {
       return;
     }
     await emit({ type: "progress", message: wasFilled ? `Đã thay thế giá trị sẵn có: ${rule.label}` : `Đã điền: ${rule.label}`, filled: question.id });
+  };
+
+  // Only native value setters may overlap the Picker modal. All menu, radio,
+  // checkbox, custom and unknown questions run before any upload starts.
+  const files=pageQuestions.filter(q=>q.kind==='file');
+  const fileRule=files.length===1?findRule(files[0],profile):undefined;
+  const overlapFile=fileRule?.attachmentKey&&profile.attachments[fileRule.attachmentKey]?files[0]:undefined;
+  const textTail=overlapFile?pageQuestions.filter(q=>{
+    if(!['text','date','textarea'].includes(q.kind)||q===sharedTarget||isVerificationQuestion(q)||q.id===manualSkipQuestionId)return false;
+    const rule=findRule(q,profile),value=rule&&profile.values[rule.key];
+    const input=q.element.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea');
+    return Boolean(rule&&compatible(rule,q.kind)&&value?.trim()&&input&&!input.disabled&&!input.readOnly&&!questionError(q));
+  }):[];
+  if(overlapFile&&textTail.length){
+    for(const question of pageQuestions.filter(q=>q!==overlapFile&&!textTail.includes(q))){
+      if(!active)return;
+      await processQuestion(question);
+    }
+    if(!active)return;
+    // Observe rejection immediately, and join the upload even if a text setter
+    // fails or Stop arrives. A later run must never inherit outstanding work.
+    let uploadSettled=false;
+    const uploadWork=processQuestion(overlapFile).then(()=>undefined,error=>({error})).finally(()=>{uploadSettled=true;});
+    let joined=false;
+    try{
+      await waitFor(()=>uploadSettled||Boolean(uploadPicker()),200);
+      for(const question of textTail){if(!active)break;await processQuestion(question);}
+      const outcome=await uploadWork;joined=true;
+      if(outcome)throw outcome.error;
+    }finally{if(!joined){active=false;await uploadWork;}}
+  }else{
+    for(const question of [...pageQuestions].sort((a,b)=>Number(a.kind==='file')-Number(b.kind==='file'))){
+      if(!active)return;
+      await processQuestion(question);
+    }
   }
+
 
   if (!active) return;
   const submit = button("submit");
   const next = button("next");
   const invalid=pageQuestions.find(q=>questionError(q));
   if(invalid){await blockForCorrection(`Google Forms báo lỗi: ${questionError(invalid)}`,invalid);return;}
+  const mismatched=pageQuestions.find(q=>{
+    if(!['text','date','textarea'].includes(q.kind)||manuallyHandled.has(q.id)||isVerificationQuestion(q))return false;
+    const rule=findRule(q,profile),value=rule&&profile.values[rule.key];
+    return Boolean(rule&&compatible(rule,q.kind)&&profileHasValue(rule,value,profile)&&!matchesProfile(q,rule,profile,value??''));
+  });
+  if(mismatched){await blockForCorrection(`Giá trị đã thay đổi sau khi điền: ${mismatched.label}`,mismatched);return;}
   const action = decideNextAction(activeMode, Boolean(submit && !next), false);
   if (action === "ready") {
     active = false;

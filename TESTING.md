@@ -1,5 +1,16 @@
 # Kiểm thử HANU Coordinator 1.3.1 (2026-10-12)
 
+## Kiểm tra lại Google Picker trên Render — 15/10/2026
+
+- Tái hiện từ màn quản lý `https://hanu-autofill.onrender.com/`: extension báo đã chuyển ảnh nhưng Picker vẫn ở màn trống, chưa có tệp được xác nhận trên form.
+- Bỏ đường tắt coi thông báo “Đã mở bộ chọn” là sẵn sàng upload. Chờ tối thiểu 5 giây từ khi tài liệu Picker bắt đầu và input hiện tại ổn định 1 giây. Giữ kiểm tra tên tệp, nút xóa tệp và Picker đóng trước khi đi tiếp; không tự upload lại khi chưa rõ kết quả.
+- Build Online với đúng production origin, cập nhật `background.js` trong thư mục Chrome đang nạp `releases/dist-cloud`, Reload cả 4 profile; giữ nguyên manifest, liên kết, hồ sơ và ảnh đã lưu.
+- Test trực tiếp: DN chạy riêng thành công; sau đó ND và The pinned effigy.contact trong nhóm 3 profile upload thành công, đi qua phần thanh toán, dừng ở câu xác thực cuối. Không trả lời câu xác thực và không bấm Gửi.
+- The pinned effigy: lần đầu Picker chưa sẵn sàng trong hạn chờ; chạy riêng lại thấy Google nhận đúng tên tệp và hiện tiến trình upload, sau đó báo “Lỗi không mong muốn” / “Không tải lên được”. Thử PNG 1×1 qua nút Duyệt qua của Google thành công, gỡ tệp thử khỏi bản nháp rồi tạo lượt Test mới với đúng ảnh đã lưu: upload thành công, tới câu xác thực cuối trong 20 giây.
+- Kết quả cuối **4/4 profile đã qua upload**, đều dừng ở câu xác thực, 0 lượt đang tự chạy, 0 đã gửi. Đây là 1 profile chạy riêng + nhóm 3 + thử lại profile lỗi; không phải 4 profile thành công cùng một lượt không cần thử lại. Lỗi Google gián đoạn vẫn có thể xảy ra. Không đổi hồ sơ hoặc ảnh đã lưu. Bằng chứng: `test-results/render-upload-retest-20261015.png`.
+- `node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run --maxWorkers=2`: **260/260 ca, 37 file qua**; `npm run typecheck` qua. Chạy toàn bộ với số worker mặc định có các timeout thay đổi giữa các lần ở PGlite và full-registration; không coi các lần đó là đạt.
+- Gói extension cập nhật: `releases/hanu-autofill-online-stable-upload-20261015.zip`. Không cần deploy server để áp dụng sửa ở extension; các gói ZIP cũ chưa có sửa này.
+
 ## Bổ sung kiểm thử Windows ngày 2026-10-13
 
 - Bản sửa khóa thực thi và nhận biết trạng thái: **120 ca trong 20 file qua**, typecheck qua. Kiểm tra khóa không có chủ, chủ đã kết thúc, tab độc lập đã đóng, bỏ lỡ sự kiện đóng tab sau worker restart, app/extension khác mã lượt, tạo tab thất bại, hai lệnh bắt đầu đồng thời, đóng tab lượt cũ không ghi đè lượt mới, giữ nguyên khóa gửi Live khi Dừng profile. Lỗi khởi tạo managed không chuyển lại thành Tạm dừng khi kết nối lại.
