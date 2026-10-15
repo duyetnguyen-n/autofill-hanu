@@ -86,5 +86,5 @@ export async function httpFixture(uiDir?: string) {
   const api = async (path: string, owner = 0, data?: unknown, method = data === undefined ? 'GET' : 'POST') => fetch(`${config.origin}/api/${path}`, {
     method, headers: { Cookie: `test-account=account-${owner ? 'b' : 'a'}`, Origin: config.origin, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data)
   });
-  return { ...fixture, app, config, api, authorized, setLoginUser(index: number) { loginUser = index; }, async close() { await app.close(); await fixture.close(); } };
+  return { ...fixture, app, config, auth, api, authorized, setLoginUser(index: number) { loginUser = index; }, async close() { await app.close(); await fixture.close(); } };
 }

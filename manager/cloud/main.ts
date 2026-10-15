@@ -9,7 +9,8 @@ import { Coordinator } from '../server/coordinator';
 import { AttentionQueue } from '../server/attention';
 import { RunBuffer } from '../server/run-buffer';
 import { PROTOCOL_VERSION } from '../../src/protocol';
-import { CloudRepository, CloudError, MAX_ATTACHMENT_BYTES, type PostgresStore } from './postgres-store';
+import { CloudRepository, CloudError, LeaseBusyError, MAX_ATTACHMENT_BYTES, type PostgresStore } from './postgres-store';
+import { checkCloudDatabase } from './readiness';
 import { supabaseAuth, type WebAuth, type WebUser } from './auth';
 import { cloudConfig, databasePool, type CloudConfig } from './config';
 import { supabaseObjects } from './storage';
@@ -66,12 +67,44 @@ export async function serveCloud(options: {
   const rate = new RateLimit();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let emergencyError = '', closing = false;
+  let ready = false, ownsLease = false;
+  let activation: Promise<void> | undefined, renewal: Promise<void> | undefined;
+  let leaseTimer: ReturnType<typeof setInterval> | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const updating = 'Website đang cập nhật. Đang chờ server cũ dừng; kết nối sẽ tự thử lại, không cần liên kết lại extension.';
   function clientIp(req:IncomingMessage){
     const forwarded=config.trustProxy?String(req.headers['x-forwarded-for']??'').split(',').at(-1)?.trim():undefined;
     return forwarded&&isIP(forwarded)?forwarded:req.socket.remoteAddress??'unknown';
   }
-  await repository.claimLease();
-  try { await repository.recover(); } catch (error) { await repository.releaseLease(); throw error; }
+  function activate() {
+    const attempt = (async () => {
+      await repository.claimLease();
+      ownsLease = true;
+      leaseTimer ??= setInterval(() => {
+        if (closing || emergencyError || renewal) return;
+        renewal = repository.renewLease().catch(failClosed).finally(() => { renewal = undefined; });
+      }, 20000);
+      // Recovery mutates sessions, so it must never run in the waiting instance.
+      await repository.recover();
+      if (emergencyError) throw new CloudError(emergencyError, 503);
+      ready = !closing;
+    })();
+    activation = attempt;
+    return attempt.finally(() => { activation = undefined; });
+  }
+  try { await activate(); }
+  catch (error) {
+    if (config.rollingDeploy && error instanceof LeaseBusyError) {
+      // This is HTTP availability, not coordinator readiness. Render must route
+      // traffic before it sends SIGTERM to the old instance. Validate dependencies
+      // without touching live sessions, then serve explicit 503s until we own the lease.
+      await checkCloudDatabase(repository.pool);
+      console.log('HANU Cloud waiting for the previous coordinator; HTTP available, commands disabled.');
+    } else {
+      clearInterval(leaseTimer); await renewal;
+      if (ownsLease) await repository.releaseLease();
+      throw error;
+    }
+  }
 
   const state = async (runtime: Runtime) => {
     runtime.snapshot ??= Promise.all([runtime.store.sessions(), runtime.store.groups()]).then(([sessions, groups]) => ({sessions,groups}));
@@ -139,7 +172,10 @@ export async function serveCloud(options: {
     try {
       if (req.headers.host !== new URL(config.origin).host) throw new CloudError('Host không hợp lệ.', 403);
       const url = new URL(req.url ?? '/', config.origin), path = url.pathname;
-      if (path === '/healthz' && req.method === 'GET') return json(res, { ok: !emergencyError }, emergencyError ? 503 : 200);
+      if (path === '/healthz' && req.method === 'GET') return json(res,
+        { ok: !emergencyError && !closing, ...(!ready ? { coordinator: 'waiting' } : {}) }, emergencyError || closing ? 503 : 200);
+      if (path === '/readyz' && req.method === 'GET') return json(res,
+        ready && !emergencyError && !closing ? { ok: true } : { ok: false, error: emergencyError || updating }, ready && !emergencyError && !closing ? 200 : 503);
       if (path === '/api/auth/config' && req.method === 'GET') return json(res, { cloud: true });
       if (path === '/auth/callback' && req.method === 'GET') {
         const requestAuth = auth.request(req, res);
@@ -166,6 +202,7 @@ export async function serveCloud(options: {
           return json(res, { ok: true });
         }
         if (emergencyError) throw new CloudError(emergencyError, 503);
+        if (!ready || closing) { res.setHeader('Retry-After', '2'); throw new CloudError(updating, 503); }
         rate.check(`api:${user.id}`, 300, 60000);
         const current = runtime(user.id), { store, coordinator } = current;
         if(path==='/api/import'&&req.method==='POST'){
@@ -253,7 +290,7 @@ export async function serveCloud(options: {
   server.on('upgrade', (req, socket, head) => {
     try {
       const path = req.url;
-      if (emergencyError || req.headers.host !== new URL(config.origin).host) throw new CloudError('Unavailable', 503);
+      if (!ready || closing || emergencyError || req.headers.host !== new URL(config.origin).host) throw new CloudError('Unavailable', 503);
       if (path === '/events') {
         if (req.headers.origin !== config.origin) throw new CloudError('Origin', 403);
       } else if (path === '/extensions') {
@@ -345,27 +382,36 @@ export async function serveCloud(options: {
   });
   server.requestTimeout = 30000; server.headersTimeout = 15000;
   try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? config.port, options.host ?? config.host, resolve); }); }
-  catch (error) { await repository.releaseLease(); throw error; }
+  catch (error) { clearInterval(leaseTimer); await renewal; if (ownsLease) await repository.releaseLease(); throw error; }
+  function retryActivation() {
+    retryTimer = setTimeout(() => {
+      if (closing || emergencyError || ready) return;
+      void activate().then(() => {
+        if (ready) console.log('HANU Cloud coordinator ready; extension connections may resume.');
+      }).catch(error => {
+        // Only contention is retryable. Database/recovery errors must fail closed.
+        if (!(error instanceof LeaseBusyError)) failClosed(error);
+      }).finally(() => { if (!closing && !emergencyError && !ready) retryActivation(); });
+    }, 2000);
+  }
+  if (!ready) retryActivation();
   const heartbeat = setInterval(() => {
     for (const [ws, seen] of lastSeen) if (Date.now() - seen > 65000 && !browserUsers.has(ws)) ws.terminate();
     for (const [key, ticket] of tickets) if (ticket.expires < Date.now()) tickets.delete(key);
     for (const [owner, current] of runtimes) if (!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.attention.close(); runtimes.delete(owner); }
   }, 5000);
-  let renewing = false;
-  const leaseTimer = setInterval(() => {
-    if (renewing || emergencyError) return;
-    renewing = true;
-    void repository.renewLease().catch(failClosed).finally(() => { renewing = false; });
-  }, 20000);
   return { server, repository, runtimes, async close() {
-    closing = true; clearInterval(heartbeat); clearInterval(leaseTimer);
+    closing = true; ready = false; clearInterval(heartbeat); clearInterval(leaseTimer); clearTimeout(retryTimer);
+    // An in-flight claim/recovery must finish before release, or a closing
+    // waiting instance could acquire a lease after its cleanup had completed.
+    await activation?.catch(() => {}); clearInterval(leaseTimer); await renewal;
     for (const current of runtimes.values()) {clearTimeout(current.broadcastTimer);current.coordinator.attention.close();}
     await Promise.all([...sockets.clients].map(ws => new Promise<void>(resolve => { ws.once('close', () => resolve()); ws.terminate(); })));
     // close callbacks schedule persistence; finish it before releasing the lease.
     for (const current of runtimes.values()) for (const [id, ws] of [...current.coordinator.peers]) await current.coordinator.disconnect(id, ws).catch(() => {});
     await Promise.all([...runtimes.values()].map(current=>current.coordinator.settledConnections()));
     await new Promise<void>(resolve => server.close(() => resolve())); sockets.close();
-    await repository.releaseLease();
+    if (ownsLease) await repository.releaseLease();
   } };
 }
 

@@ -118,7 +118,7 @@ Caddy cấp HTTPS và chuyển tiếp WebSocket. Backend không publish cổng r
 Internet. Compose bật TRUST_PROXY chỉ vì app nằm sau Caddy trên network riêng;
 khi chạy trực tiếp giữ TRUST_PROXY=0 để không tin header IP do client gửi.
 Không bật access log chứa cookie hoặc payload; log backend không
-in thông tin hồ sơ, token hay ảnh. Kiểm tra `/healthz`, đăng nhập Google thật,
+in thông tin hồ sơ, token hay ảnh. Kiểm tra `/readyz`, đăng nhập Google thật,
 thêm hai tài khoản để xác minh tách dữ liệu trước khi chia sẻ rộng.
 
 **V1 chỉ chạy một backend replica.** Lease trong database ngăn hai coordinator
@@ -126,6 +126,12 @@ cùng cấp quyền chạy/gửi. Sau server crash phải chờ tối đa 65 gi�
 hạn. Khởi động lại sẽ đánh dấu disconnected/paused hoặc submit_uncertain;
 không tự Resume. PostgreSQL bị lỗi hoặc mất lease sẽ ngừng cấp lệnh. Khi phục
 hồi, restart backend và đối chiếu trước khi tiếp tục.
+
+Trên Render (`RENDER=true`), bản thay thế có thể phục vụ HTTP trong lúc chờ lease
+để Render hoàn tất rolling deploy. `/healthz` trả 200 ở trạng thái chờ, nhưng
+`/readyz` và API điều khiển trả 503; WebSocket cũng bị từ chối cho tới khi có
+lease và recovery hoàn tất. Các client tự nối lại, không cần đóng Chrome.
+Ngoài Render, khởi động thêm backend khi lease đang bận vẫn bị từ chối ngay.
 
 ## 6. Phân phối extension
 

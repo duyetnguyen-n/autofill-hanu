@@ -10,6 +10,9 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export class CloudError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
+export class LeaseBusyError extends CloudError {
+  constructor() { super('Một server quản lý khác đang hoạt động. Chờ tối đa 65 giây sau khi server cũ dừng.', 503); }
+}
 export interface SqlConnection {
   query(sql: string, values?: any[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
@@ -261,7 +264,7 @@ export class CloudRepository {
   store(owner: string) { return new PostgresStore(this.pool, owner, this.objects, this.instance); }
   async claimLease() {
     const result = await this.pool.query("INSERT INTO hanu.server_lease(id,instance,expires_at) VALUES(true,$1,now()+interval '65 seconds') ON CONFLICT(id) DO UPDATE SET instance=EXCLUDED.instance,expires_at=EXCLUDED.expires_at WHERE hanu.server_lease.expires_at<now() OR hanu.server_lease.instance=EXCLUDED.instance RETURNING instance", [this.instance]);
-    if (!result.rowCount) throw new CloudError('Một server quản lý khác đang hoạt động. Chờ tối đa 65 giây sau khi server cũ dừng.', 503);
+    if (!result.rowCount) throw new LeaseBusyError();
   }
   async renewLease() {
     const result = await this.pool.query("UPDATE hanu.server_lease SET expires_at=now()+interval '65 seconds' WHERE id=true AND instance=$1 AND expires_at>now()", [this.instance]);

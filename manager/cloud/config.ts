@@ -7,6 +7,8 @@ export interface CloudConfig {
   supabaseUrl: string; publishableKey: string; secretKey: string;
   databaseUrl: string; databaseCa?: string;
   trustProxy?: boolean;
+  // Render starts a replacement before terminating the existing instance.
+  rollingDeploy?: boolean;
 }
 export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
   const required = (key: string, value = env[key]?.trim()) => {
@@ -26,7 +28,8 @@ export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
   return { origin: url.origin, host: env.HOST ?? '127.0.0.1', port, development,
     supabaseUrl: supabaseUrl.origin, publishableKey: required('SUPABASE_PUBLISHABLE_KEY'),
     secretKey: required('SUPABASE_SECRET_KEY'), databaseUrl: required('DATABASE_URL'),
-    databaseCa: env.PGSSLROOTCERT ? readFileSync(env.PGSSLROOTCERT, 'utf8') : undefined,trustProxy:env.TRUST_PROXY==='1' };
+    databaseCa: env.PGSSLROOTCERT ? readFileSync(env.PGSSLROOTCERT, 'utf8') : undefined,trustProxy:env.TRUST_PROXY==='1',
+    rollingDeploy: env.RENDER === 'true' };
 }
 export function databasePool(config: CloudConfig) {
   const url = new URL(config.databaseUrl);
