@@ -1,6 +1,6 @@
 {
   "name": "hanu-hsk-autofill",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -32,6 +32,7 @@
     "test:navigation": "node scripts/run-node24.mjs scripts/navigation-check.mjs",
     "test:background-flow": "node scripts/run-node24.mjs scripts/background-flow-check.mjs",
     "test:cloud-flow": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=3 --final-question",
+    "test:cloud-controls": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=3 --controls",
     "test:cloud-load": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/cloud-load-test.ts",
     "cloud:load-server": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/cloud-load-server.ts",
     "bench:fixture": "node scripts/run-node24.mjs scripts/benchmark.mjs"

@@ -11,6 +11,11 @@ rồi deploy backend/UI theo các bước dưới. Không cần build hoặc Rel
 cho đợt sửa này. Migration này đã được áp dụng vào Supabase đang cấu hình trong
 workspace ngày 15/10/2026; không cần chạy lại ở project đó.
 
+**v1.3.2 — điều khiển extension và tự tiếp tục (16/10/2026):** deploy backend
+rồi build `npm run build:cloud-extension`, chép đè đúng thư mục extension đang
+nạp và Reload trong từng Chrome profile. Không Remove extension hoặc xóa dữ liệu.
+Bản này cần cập nhật extension vì sửa cả background, content và nút điều khiển.
+
 Website: https://hanu-autofill.onrender.com
 
 [Render của dịch vụ](https://dashboard.render.com/web/srv-db74o9qd0e5s73b25jng/deploys)

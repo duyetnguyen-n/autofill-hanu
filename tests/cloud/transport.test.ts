@@ -124,3 +124,25 @@ it('unlinks offline profiles, invalidates pending relink codes and preserves dat
   expect(await a.store.history(a.sessionId)).toEqual([run]);
   expect(await a.store.blocked(a.sessionId, 'retained-form')).toBe(true);
 });
+
+it('starts from the linked extension through the same quota and Live gates as the manager', async () => {
+  const f = await setup(), a = await connectExtension(f);
+  const coordinator = f.app.runtimes.get(users[0])!.coordinator;
+  await coordinator.edit(a.sessionId, { expectedEmail: 'an@example.test' });
+  await f.pool.query('UPDATE hanu.accounts SET live_enabled=false,max_concurrent=1 WHERE user_id=$1', [users[0]]);
+  const send = (requestId: string, mode: string, extra = {}) => a.ws.send(JSON.stringify({ protocol: 1, sessionId: a.sessionId, type: 'REQUEST', requestId, kind: 'START', url: 'https://docs.google.com/forms/d/e/extension-start/viewform', mode, ...extra }));
+  send('live-denied', 'live');
+  await expect.poll(() => a.messages.find(m => m.requestId === 'live-denied')).toMatchObject({ ok: false, error: expect.stringContaining('Live') });
+  expect((await f.repository.store(users[0]).session(a.sessionId)).run).toBeUndefined();
+  send('bad-url', 'test', { url: 'https://example.test/' });
+  await expect.poll(() => a.messages.find(m => m.requestId === 'bad-url')).toMatchObject({ ok: false });
+  send('start-test', 'test');
+  await expect.poll(() => a.messages.find(m => m.requestId === 'start-test')).toMatchObject({ ok: true, run: { mode: 'test', status: 'running', sessionId: a.sessionId } });
+  expect(a.messages.filter(m => m.type === 'COMMAND' && m.kind === 'START')).toHaveLength(1);
+  const other = await connectExtension(f);
+  await coordinator.edit(other.sessionId, { expectedEmail: 'an@example.test' });
+  other.ws.send(JSON.stringify({ protocol: 1, sessionId: other.sessionId, type: 'REQUEST', requestId: 'over-quota', kind: 'START', url: 'https://docs.google.com/forms/d/e/extension-start/viewform', mode: 'test' }));
+  await expect.poll(() => other.messages.find(m => m.requestId === 'over-quota')).toMatchObject({ ok: false, error: expect.stringContaining('đồng thời') });
+  expect(other.messages.filter(m => m.type === 'COMMAND' && m.kind === 'START')).toHaveLength(0);
+  expect((await f.pool.query('SELECT * FROM hanu.locks')).rows).toEqual([]);
+});

@@ -397,7 +397,7 @@ export async function serveCloud(options: {
       sockets.handleUpgrade(req, socket, head, ws => {
         lastSeen.set(ws, Date.now());
         let owner: string | undefined, id: string | undefined, current: Runtime | undefined;
-        let chain = Promise.resolve(), authenticated = false;
+        let chain = Promise.resolve(), authenticated = false, waitingForExtension = false;
         let expiry: ReturnType<typeof setTimeout> | undefined;
         const handshake = setTimeout(() => ws.close(1008, 'Handshake timeout'), 10000);
         const onMessage = async (raw: string) => {
@@ -447,8 +447,15 @@ export async function serveCloud(options: {
             await repository.revoke(owner!,id!);
             ws.send(JSON.stringify({type:'REPLY',requestId:m.requestId,ok:true}));ws.close(1008,'Unlinked');current!.coordinator.changed();return;
           }
-          if (m.type === 'LOAD_FAILURE') await current!.coordinator.failure(id!, m.runId);
-          else await current!.coordinator.receive(id!, m);
+          // Resume checks its form before returning its command RESULT. A load
+          // failure may also wait for PAUSE while START is checking its form.
+          // Those checks must be able to finish while this message is waiting.
+          const waitsForCommand = m.type === 'LOAD_FAILURE' || m.type === 'REQUEST' && ['CONTROL', 'AUTO_RESUME'].includes(m.kind);
+          if (waitsForCommand) waitingForExtension = true;
+          try {
+            if (m.type === 'LOAD_FAILURE') await current!.coordinator.failure(id!, m.runId);
+            else await current!.coordinator.receive(id!, m);
+          } finally { if (waitsForCommand) waitingForExtension = false; }
         };
         ws.on('message', raw => {
           lastSeen.set(ws, Date.now());
@@ -462,12 +469,14 @@ export async function serveCloud(options: {
               if (!authenticated || error instanceof CloudError && [401, 403,429].includes(error.status)) ws.close(1008, 'Authentication failed');
             }
           } };
-          // A CONTROL request may await a command RESULT. Let RESULT bypass the
-          // profile queue to avoid deadlocking its own acknowledgement.
+          // Only nested form checks bypass an in-flight command's queue. Normal
+          // CHECK_FORM still follows prior STATE messages, and SUBMIT always
+          // stays ordered behind progress and the durable submit transaction.
           let result = false;
           try {
             const message=JSON.parse(raw.toString());
-            result=authenticated&&path==='/extensions'&&(message.type==='RESULT'||message.type==='REQUEST'&&String(message.kind).startsWith('ATTENTION_'));
+            result=authenticated&&path==='/extensions'&&(message.type==='RESULT'||message.type==='REQUEST'&&
+              (String(message.kind).startsWith('ATTENTION_')||waitingForExtension&&message.kind==='CHECK_FORM'));
           } catch {}
           if (result) void handle(); else chain = chain.then(handle);
         });

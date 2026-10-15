@@ -70,7 +70,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     if(!readOnly&&journal[c.commandId]){if(journal[c.commandId].done)return journal[c.commandId].result;throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}
     if(!readOnly){journal[c.commandId]={done:false};const keys=Object.keys(journal);for(const k of keys.slice(0,-1000))delete journal[k];await chrome.storage.local.set({[journalKey]:journal});}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-15-cloud-access':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator','accountAccess']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-16-cloud-controls':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){
@@ -93,7 +93,23 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     else result=await adapter.control(c);
     if(!readOnly){journal[c.commandId]={done:true,result};await chrome.storage.local.set({[journalKey]:journal});}return result;
   }
-  async function request(kind:string,run?:RunState,payload:Record<string,unknown>={}):Promise<any>{if(!connected)throw new Error('App mất kết nối; không cấp quyền chạy/gửi.');const requestId=crypto.randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{requests.delete(requestId);reject(new Error('App không xác nhận; giữ khóa gửi để đối chiếu.'));},kind==='ATTENTION_ACQUIRE'?180000:5000);requests.set(requestId,{resolve,reject,timer});send({type:'REQUEST',requestId,kind,runId:run?.runId,formId:run?.formId,...payload});});}
+  async function request(kind:string,run?:RunState,payload:Record<string,unknown>={}):Promise<any>{
+    if(!connected)throw new Error('App mất kết nối; không cấp quyền chạy/gửi.');
+    const requestId=crypto.randomUUID();
+    // Controls can include profile transfer or account/page checks. Match the
+    // coordinator's command budget; short submit grants keep their own limit.
+    const timeout=kind==='ATTENTION_ACQUIRE'?180000:kind==='START'?120000:['CONTROL','AUTO_RESUME'].includes(kind)?60000:5000;
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{
+        requests.delete(requestId);
+        reject(new Error(kind==='SUBMIT'?'App không xác nhận; giữ khóa gửi để đối chiếu.':`App chưa xác nhận ${kind}. Kiểm tra trạng thái trước khi thử lại.`));
+      },timeout);
+      requests.set(requestId,{resolve,reject,timer});
+      try{send({type:'REQUEST',requestId,kind,runId:run?.runId,formId:run?.formId,...payload});}
+      catch(e){clearTimeout(timer);requests.delete(requestId);reject(e);}
+    });
+  }
+
   return {
     status,request,isConnected:()=>connected,
     boot:()=>void connect(),

@@ -254,7 +254,12 @@ async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLO
 }
 
 async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
-  if(cloudOrigin())throw new Error('Bản online chỉ bắt đầu lượt từ website quản lý. Đăng nhập tài khoản đã được duyệt rồi chọn profile để chạy.');
+  if(cloudOrigin()){
+    const tab=await chrome.tabs.get(tabId);
+    if(!allowedFormUrl(tab.url??''))throw new Error('Hãy mở một trang Google Forms trước khi chạy.');
+    const reply=await native.request('START',undefined,{url:tab.url,mode});
+    return reply.run;
+  }
   await executionSnapshot();
   const tab = await chrome.tabs.get(tabId);
   if (!isFormsUrl(tab.url)) throw new Error("Hãy mở một trang Google Forms trước khi chạy.");
@@ -429,6 +434,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 let messageQueue=Promise.resolve();
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  // Panel controls can wait for a coordinator command which itself needs page
+  // messages (CLAIM_DOCUMENT, FORM_EVENT, GET_RUN_FOR_TAB). Keep that queue free.
+  if(['START_RUN','PAUSE_RUN','RESUME_RUN','STOP_RUN'].includes(message.type)){
+    void (async()=>{
+      if(sender.tab&&isFormsUrl(sender.url??sender.tab.url))throw new Error('Trang form không được phép điều khiển profile.');
+      if(message.type==='START_RUN')return startRun(message.tabId,message.mode);
+      if(message.type!=='PAUSE_RUN'&&message.type!=='RESUME_RUN'&&message.type!=='STOP_RUN')throw new Error('Lệnh điều khiển không hợp lệ.');
+      const run=await getRun(message.tabId);
+      if(run?.managed){
+        const reply=await native.request('CONTROL',run,{action:message.type.replace('_RUN','')});
+        return message.type==='STOP_RUN'?reply.result?.run:reply.result;
+      }
+      return message.type==='PAUSE_RUN'?pauseRun(message.tabId):message.type==='RESUME_RUN'?resumeRun(message.tabId):stopRun(message.tabId);
+    })().then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
+  }
   // An acquire may wait for another profile; never hold the regular page/Stop
   // queue while waiting, otherwise navigation claims and cancellation deadlock.
   if(message.type==='PAGE_ATTENTION_ACQUIRE'||message.type==='PAGE_ATTENTION_RELEASE'||message.type==='AUTO_RESUME'){
@@ -501,11 +521,6 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         await chrome.storage.local.clear();
         await clearAttachments();
         return sendResponse({ ok: true });
-      }
-      if (message.type === "START_RUN") return sendResponse(await startRun(message.tabId, message.mode));
-      if (message.type === "PAUSE_RUN"||message.type==='RESUME_RUN'||message.type==='STOP_RUN'){
-        const run=await getRun(message.tabId);if(run?.managed){const result=await native.request('CONTROL',run,{action:message.type.replace('_RUN','')});return sendResponse(result.result);}
-        return sendResponse(message.type==='PAUSE_RUN'?await pauseRun(message.tabId):message.type==='RESUME_RUN'?await resumeRun(message.tabId):await stopRun(message.tabId));
       }
       if (message.type === "SCAN_FORM") {
         const tab = await chrome.tabs.get(message.tabId);

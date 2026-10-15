@@ -809,34 +809,47 @@ function armAutoResume(question: Question,wholePage=false): void {
   const initial=new Map(questions().map(q=>[q.element,answerFingerprint(q)]));
   const correctionPage=()=>`${location.pathname}:${JSON.stringify(questions().map(q=>[q.id,q.label,q.kind]))}`;
   const generation=runRequestGeneration,runId=boundRunId,page=correctionPage();
-  let edited=false,committed=false;
-  const retry = () => {
+  let edited=false,committed=false,attempts=0;
+  const recover = async () => {
+    resumed=false;
+    if(cancelled||generation!==runRequestGeneration||runId!==boundRunId||submitAttempted||active)return;
+    // Retry only the same still-waiting document. Pause, Stop, recovery and a
+    // replacement run must never be undone by a delayed correction callback.
+    try{
+      const state=await chrome.runtime.sendMessage({type:'GET_RUN_FOR_TAB'} satisfies ExtensionMessage);
+      if(!cancelled&&state?.runId===runId&&state.contentEpoch===documentEpoch&&state.status==='waiting_manual'&&!state.recoveryRequired&&!state.submitAttempted&&attempts<3)retry(1000);
+    }catch{}
+  };
+  const retry = (delay?:number) => {
     if(cancelled||resumed)return;
     window.clearTimeout(timer);
     timer=window.setTimeout(() => {
       if (cancelled || resumed || active || submitAttempted || generation!==runRequestGeneration || runId!==boundRunId || page!==correctionPage() || !question.element.isConnected) return;
       const current=questions();
       if(!isFilled(question)||questionError(question)||validationError()||hasUnsatisfiedCaptcha())return;
-      if(['text','textarea','date'].includes(question.kind)&&(!edited||!committed))return;
-      if(wholePage&&(!edited||!committed||current.some(q=>q.required&&!isFilled(q))))return;
+      if(['text','textarea','date'].includes(question.kind)&&!edited)return;
+      if(wholePage&&(!edited||current.some(q=>q.required&&!isFilled(q))))return;
       // Preserve only answers changed by the user on this page, never write the
       // correction back to their saved profile or let a later run inherit it.
       for(const q of current)if(isFilled(q)&&!questionError(q)&&initial.get(q.element)!==answerFingerprint(q))manualCorrections.set(q.element,answerFingerprint(q));
       resumed = true;
-      cancelManualResume?.();
+      attempts++;
       void Promise.resolve(chrome.runtime.sendMessage({type:'AUTO_RESUME',runId,epoch:documentEpoch} satisfies ExtensionMessage)).then(async reply=>{
-        if(generation!==runRequestGeneration||runId!==boundRunId||submitAttempted||reply?.ok===false)return;
+        if(generation!==runRequestGeneration||runId!==boundRunId||submitAttempted)return;
+        if(reply?.ok===false){await recover();return;}
+        if(!cancelled)cancelManualResume?.();
         // Background/manager resumes a scoped run itself. Unmanaged test
         // harnesses and older unscoped runs can acknowledge without dispatch.
         if(reply?.resumed)return;
         if(runId)return;
         active=true;await emit({type:'progress',message:`Đã nhận thao tác thủ công: ${question.label}`});requestExecute();
-      }).catch(()=>{active=false;});
-    }, 180);
+      }).catch(()=>void recover());
+    }, delay??(edited&&!committed?650:180));
   };
   const edit=(event:Event)=>{
     if(!(event.target instanceof Element)||!currentTargetContains(event.target))return;
     edited=true;
+    attempts=0;
     if(event.type==='input')committed=false;
     else if(event.type==='change'||event.type==='focusout'||event.type==='click'&&!['text','textarea','date'].includes(question.kind))committed=true;
     retry();
@@ -846,7 +859,7 @@ function armAutoResume(question: Question,wholePage=false): void {
   for(const event of ['input','change','click','focusout'])target.addEventListener(event,edit,true);
   // Google Picker commits the upload asynchronously, without a click/change
   // on the original card. Observe the rendered filename/removal control too.
-  const observer = new MutationObserver(retry);
+  const observer = new MutationObserver(()=>retry());
   observer.observe(target, { childList: true, subtree: true, attributes: true,characterData:true });
   cancelManualResume = () => {
     cancelled = true;

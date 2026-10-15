@@ -84,7 +84,7 @@ export class Coordinator {
       if(live&&message.type==='REQUEST')await this.runBuffer.flush(id);
     }
     await this.store.touch(id);if(message.type==='HEARTBEAT')return;const s=await this.store.session(id);
-    if(message.type==='PROFILE_CHANGED'){s.synced=false;await this.store.saveSession(s);this.changed();return;}
+    if(message.type==='PROFILE_CHANGED'){if(s.synced)s.managerDraft=false;s.synced=false;await this.store.saveSession(s);this.changed();return;}
     if(message.type==='STATE'){await this.acceptState(id,message.run);return;}
     if(message.type==='EXECUTION'){const ex=message.execution??null;if(sameExecution(s.execution,ex))return;s.execution=ex;await this.store.saveSession(s);this.changed();return;}
     if(message.type==='REQUEST' && typeof message.requestId==='string'){
@@ -102,6 +102,17 @@ export class Coordinator {
           this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,...result}));return;
         }
         if(message.kind==='OPEN_MANAGER'){this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,url:this.launchUrl}));return;}
+        if(message.kind==='START'){
+          if(!this.cloud)throw new Error('Lệnh bắt đầu không được hỗ trợ.');
+          if(!allowedFormUrl(message.url)||!['test','live'].includes(message.mode))throw new Error('Link Google Forms hoặc chế độ không hợp lệ.');
+          if(s.execution||s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status))throw new Error('Profile đang có lượt chạy. Dừng lượt hiện tại trước.');
+          // Same import, account quotas, Live permission and durable start gate
+          // as the manager. The authenticated socket can start only its profile.
+          const imported=await this.pull(id);
+          if(imported.conflict)throw new Error('Hồ sơ có thay đổi ở cả website và extension. Chọn bản cần giữ trong Chi tiết trên website trước khi chạy.');
+          await this.start([id],message.url,message.mode);
+          this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,run:(await this.store.session(id)).run}));return;
+        }
         if(message.kind==='AUTO_RESUME'){const result=await this.control(id,'RESUME',message.runId,true);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CONTROL'){if(s.run?.runId!==message.runId||!['PAUSE','RESUME','STOP'].includes(message.action))throw new Error('Lệnh điều khiển không hợp lệ.');const result=await this.control(id,message.action,message.runId);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CHECK_FORM'){if(s.run?.runId!==message.runId||!(await this.store.group(message.runId)).members.includes(id)||await this.store.blocked(id,message.formId))throw new Error('Form này có khóa gửi chưa được giải quyết.');}
@@ -134,22 +145,22 @@ export class Coordinator {
   async pull(id:string) {
     await this.runBuffer?.flush(id);
     const s=await this.store.session(id);const document:ProfileDocument=await this.command(id,'READ_PROFILE');validateProfile(document.profile);
-    if(s.profile&&!s.synced&&JSON.stringify(s.profile)!==JSON.stringify(document.profile)){s.conflict=document;await this.store.saveSession(s);this.changed();return s;}
+    if(s.profile&&!s.synced&&s.managerDraft!==false&&JSON.stringify(s.profile)!==JSON.stringify(document.profile)){s.conflict=document;await this.store.saveSession(s);this.changed();return s;}
     await this.importDocument(id,document);return await this.store.session(id);
   }
   async importDocument(id:string,document:ProfileDocument){
     for(const a of Object.values(document.profile.attachments)){if(!a)continue;const info=await this.command(id,'ATTACHMENT_INFO',{id:a.id});if(info.size!==a.size)throw new Error('Dung lượng ảnh khác hồ sơ.');let chunks:Buffer[]=[];for(let offset=0;offset<a.size;offset+=CHUNK_BYTES){const part=await this.command(id,'ATTACHMENT_READ',{id:a.id,offset,length:CHUNK_BYTES});chunks.push(Buffer.from(part.base64,'base64'));}await this.store.saveAttachment(id,a.id,Buffer.concat(chunks),info.hash);}
     const current:ProfileDocument=await this.command(id,'READ_PROFILE');if(current.revision!==document.revision)throw new Error('Hồ sơ đã thay đổi trong lúc đọc; hãy đọc lại.');
-    const s=await this.store.session(id);s.profile=document.profile;s.revision=document.revision;s.synced=true;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();
+    const s=await this.store.session(id);s.profile=document.profile;s.revision=document.revision;s.synced=true;s.managerDraft=undefined;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();
   }
   async push(id:string,force=false){
     await this.runBuffer?.flush(id);
     const s=await this.store.session(id);if(!s.profile)throw new Error('Chưa có hồ sơ.');const current:ProfileDocument=await this.command(id,'READ_PROFILE');
     if(current.revision!==s.revision&&!force){s.conflict=current;await this.store.saveSession(s);this.changed();throw new Error('Extension đã thay đổi; hãy chọn bản cần giữ.');}
     for(const a of Object.values(s.profile.attachments)){if(!a)continue;const bytes=await this.store.attachment(id,a.id);const info=await this.command(id,'ATTACHMENT_INFO',{id:a.id}).catch(()=>undefined);if(info?.hash===bytes.hash)continue;const transferId=randomUUID();await this.command(id,'ATTACHMENT_BEGIN',{transferId,attachment:a,hash:bytes.hash});for(let offset=0;offset<bytes.data.length;offset+=CHUNK_BYTES)await this.command(id,'ATTACHMENT_CHUNK',{transferId,index:offset/CHUNK_BYTES,base64:bytes.data.subarray(offset,offset+CHUNK_BYTES).toString('base64')});await this.command(id,'ATTACHMENT_FINISH',{transferId});}
-    const result=await this.command(id,'COMMIT_PROFILE',{profile:s.profile,baseRevision:current.revision});s.revision=result.revision;s.synced=true;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();return s;
+    const result=await this.command(id,'COMMIT_PROFILE',{profile:s.profile,baseRevision:current.revision});s.revision=result.revision;s.synced=true;s.managerDraft=undefined;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();return s;
   }
-  async edit(id:string,values:Partial<SessionView>){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;}await this.store.saveSession(s);this.changed();return s;}
+  async edit(id:string,values:Partial<SessionView>){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;s.managerDraft=true;}await this.store.saveSession(s);this.changed();return s;}
   async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion,resume=false){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):finalQuestion;

@@ -92,7 +92,11 @@ Role/status/quota nằm trong bảng backend riêng, không cho `anon` hoặc
 cầu tài khoản hợp lệ. Admin không được đổi quyền admin khác hoặc tự khóa mình
 qua màn hình này; việc quản lý thêm role admin nằm ngoài phiên bản đầu.
 
-Extension cloud chuẩn không chạy độc lập, kể cả Resume/Submit từ lượt local cũ.
+Extension cloud không chạy độc lập. Từ v1.3.2, Bắt đầu/Tạm dừng/Tiếp tục/Dừng
+trong extension đều đi qua cùng bộ điều phối, quyền, quota và khóa gửi như website.
+Bắt đầu từ extension dùng hồ sơ của profile đang liên kết và email đã gán trên
+website; thay đổi chỉ ở extension được nhập về, thay đổi đồng thời cả hai phía
+vẫn cần chọn bản giữ trong Chi tiết. Resume/Submit từ lượt local cũ bị chặn.
 File Load unpacked có thể bị người giữ mã nguồn sửa; cơ chế này kiểm soát dịch vụ
 cloud và client chuẩn, không phải DRM cho bản local hoặc mã nguồn đã phân phối.
 

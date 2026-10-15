@@ -44,3 +44,48 @@ it('serves live dashboard progress and page permission over WebSocket without qu
   await expect.poll(async()=>(await paired.store.session(paired.sessionId)).run?.status).toBe('ready_to_submit');
   expect((await paired.store.history(paired.sessionId))[0].eventSeq).toBe(11);
 },20000);
+
+it.each(['CONTROL', 'AUTO_RESUME'])('acknowledges nested CHECK_FORM while %s waits for the extension Resume result', async kind => {
+  const f = await httpFixture(); cleanup.push(f.close);
+  const paired = await f.pair(users[1]);
+  const ws = new WebSocket(f.config.origin.replace('http:', 'ws:') + '/extensions', { headers: { Origin: `chrome-extension://${extension}` } });
+  cleanup.push(async () => { ws.terminate(); });
+  const messages: any[] = [];
+  let resumed: any, resumeCommand: any;
+  const send = (m: any) => ws.send(JSON.stringify({ protocol: 1, sessionId: paired.sessionId, ...m }));
+  ws.on('message', raw => {
+    const m = JSON.parse(raw.toString()); messages.push(m);
+    if (m.type === 'COMMAND' && m.kind === 'RESUME') {
+      resumeCommand = m;
+      // These requests bypass scheduling only; run/form authorization still applies.
+      send({ type: 'REQUEST', requestId: 'wrong-form', kind: 'CHECK_FORM', runId: m.runId, formId: 'other-form' });
+      send({ type: 'REQUEST', requestId: 'old-run', kind: 'CHECK_FORM', runId: 'old-run', formId: 'nested-resume' });
+      // The real extension checks its form before acknowledging RESUME.
+      send({ type: 'REQUEST', requestId: 'nested-form', kind: 'CHECK_FORM', runId: m.runId, formId: 'nested-resume' });
+    } else if (m.type === 'REPLY' && m.requestId === 'nested-form') {
+      send({ type: 'RESULT', commandId: resumeCommand.commandId, ok: m.ok, result: resumed, error: m.error });
+    } else if (m.type === 'COMMAND') {
+      send({ type: 'RESULT', commandId: m.commandId, ok: true, result: m.kind === 'READ_PROFILE' ? { profile: { values: {}, customFields: [], mappings: {}, attachments: {} }, revision: 0 } : {} });
+    }
+  });
+  await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  send({ type: 'HELLO', transport: 'cloud', accessPolicy: 1, extensionId: extension, token: paired.token });
+  await expect.poll(() => messages.some(m => m.type === 'WELCOME')).toBe(true);
+  await expect.poll(async () => (await paired.store.session(paired.sessionId)).synced).toBe(true);
+  const c = f.app.runtimes.get(users[1])!.coordinator;
+  await expect.poll(() => c.pending.size).toBe(0);
+  await c.edit(paired.sessionId, { expectedEmail: 'binh@example.test' });
+  await c.start([paired.sessionId], 'https://docs.google.com/forms/d/e/nested-resume/viewform', 'test');
+  await expect.poll(() => c.pending.size).toBe(0);
+  const initial = (await paired.store.session(paired.sessionId)).run!;
+  const waiting = { ...initial, formId: 'nested-resume', eventSeq: 1, status: 'waiting_manual' as const, recoveryRequired: false, blockingIssue: { reason: 'validation' as const, message: 'Đợi sửa dữ liệu' } };
+  await c.acceptState(paired.sessionId, waiting); await c.runBuffer!.flush(paired.sessionId);
+  resumed = { ...waiting, eventSeq: 2, status: 'running', blockingIssue: undefined };
+  send({ type: 'REQUEST', requestId: 'resume', kind, action: 'RESUME', runId: initial.runId });
+  await expect.poll(() => messages.find(m => m.requestId === 'resume'), { timeout: 1500 }).toMatchObject({ ok: true });
+  expect(messages.find(m => m.requestId === 'nested-form')).toMatchObject({ ok: true });
+  expect(messages.find(m => m.requestId === 'wrong-form')).toMatchObject({ ok: false });
+  expect(messages.find(m => m.requestId === 'old-run')).toMatchObject({ ok: false });
+  expect((await paired.store.session(paired.sessionId)).run).toMatchObject({ status: 'running', submitAttempted: false });
+  expect((await f.pool.query('SELECT * FROM hanu.locks')).rows).toEqual([]);
+}, 15000);

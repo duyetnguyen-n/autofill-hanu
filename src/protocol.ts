@@ -19,6 +19,8 @@ export interface SessionView {
   id: string; name: string; expectedEmail: string; connected: boolean;
   /** Cloud token remains linked even while the Chrome profile is offline. */
   linked?: boolean;
+  /** Distinguish pending manager edits from an extension-only profile change. */
+  managerDraft?: boolean;
   lastSeen: string; profile?: Profile; revision: number; synced: boolean;
   conflict?: ProfileDocument; error?: string; run?: RunState; execution?:ExecutionView|null;
 }

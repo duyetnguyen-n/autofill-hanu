@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 export default defineConfig(({ mode }) => {
   const cloudOrigin=process.env.HANU_CLOUD_ORIGIN??'';
-  const common={outDir:cloudOrigin?'dist-cloud':'dist',define:{__HANU_CLOUD_ORIGIN__:JSON.stringify(cloudOrigin)}};
+  const common={outDir:cloudOrigin?(process.env.HANU_CLOUD_OUT_DIR??'dist-cloud'):'dist',define:{__HANU_CLOUD_ORIGIN__:JSON.stringify(cloudOrigin)}};
   if (mode === "background" || mode === "content") {
     return {
       define:common.define,

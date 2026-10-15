@@ -146,3 +146,21 @@ it('rejects wrong-run, other-session and delayed sequence events, and keeps a sh
   await a.store.connected(a.sessionId, false);
   expect(await a.store.acceptProgress(a.sessionId, { ...run, eventSeq: 4, status: 'running' })).toBe(false);
 });
+
+it('imports extension-only edits while retaining unsaved manager drafts as conflicts', async () => {
+  const f = await setup(), a = await f.pair();
+  const c = new Coordinator(a.store, undefined, true);
+  const local = structuredClone((await a.store.session(a.sessionId)).profile!);
+  local.values.phone = '0900000000';
+  c.command = async () => ({ profile: local, revision: 2 });
+  await c.receive(a.sessionId, { type: 'PROFILE_CHANGED' });
+  const imported = await c.pull(a.sessionId);
+  expect(imported).toMatchObject({ synced: true, profile: local });
+  expect(imported.conflict).toBeUndefined();
+  const draft = structuredClone(local); draft.values.phone = '0911111111';
+  await c.edit(a.sessionId, { profile: draft });
+  local.values.phone = '0922222222';
+  await c.receive(a.sessionId, { type: 'PROFILE_CHANGED' });
+  const conflict = await c.pull(a.sessionId);
+  expect(conflict).toMatchObject({ synced: false, managerDraft: true, profile: draft, conflict: { profile: local } });
+});

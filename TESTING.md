@@ -235,3 +235,49 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
   Số hàng trước/sau không đổi: 3 account, 7 profile, 5 attachment, 94 run,
   0 khóa gửi. Backend/UI mới chưa commit, push hoặc deploy Render trong lượt này.
   Không cần cập nhật extension vì không đổi giao thức kết nối.
+
+
+## Gỡ vòng chờ khi extension yêu cầu Tiếp tục — 15/10/2026
+
+- Tái hiện timeout bằng WebSocket thật và PostgreSQL fixture: extension gửi
+  CONTROL/RESUME hoặc AUTO_RESUME; server đợi RESULT của lệnh RESUME, trong khi
+  extension phải đợi REPLY của CHECK_FORM trước khi trả RESULT. Hàng đợi từng
+  profile giữ CHECK_FORM phía sau yêu cầu đang đợi, gây vòng chờ. Hai ca hồi quy
+  đều thất bại trước sửa và qua sau sửa.
+- Cho CHECK_FORM lồng trong yêu cầu điều khiển/LOAD_FAILURE đang đợi command
+  được xử lý ngoài hàng đợi đó. Giữ xác thực tài khoản, socket, session, run và
+  form. CHECK_FORM thông thường vẫn theo thứ tự STATE; SUBMIT vẫn đi qua hàng
+  đợi và transaction khóa gửi. Không tăng timeout, không gỡ khóa hoặc đổi quyền.
+- Typecheck, build:cloud-server và 295 ca Vitest / 39 file qua với maxWorkers=4.
+  Ca mới kiểm tra cả CONTROL và AUTO_RESUME, từ chối form sai/lượt cũ và không
+  tạo khóa gửi trong Test. Đây là fixture; chưa tái hiện trên nick người dùng vì
+  chưa có email/profile cụ thể. Công cụ trình duyệt lỗi request-header policy,
+  chưa kiểm tra trực tiếp phiên Google hoặc thao tác trên form thật.
+- Đã đọc trạng thái quyền và metadata chạy ở Supabase, không đọc/ghi ảnh hay
+  thông tin thí sinh, không thay quyền, không chạy form, không xóa khóa gửi.
+  Backend mới chưa commit/push/deploy; bản sửa này không đổi extension.
+
+
+## Đồng nhất điều khiển extension và tự tiếp tục — 16/10/2026, v1.3.2
+
+- Extension cloud có Bắt đầu/Test/Live qua chính coordinator của website, chỉ
+  cho profile của socket đã xác thực. Cùng kiểm tra email đã gán, quyền Live,
+  quota, hồ sơ/ảnh và khóa gửi; không cho lượt local cũ chạy/gửi độc lập.
+- Tách RPC điều khiển ở background khỏi hàng đợi thông điệp của trang, trả đúng
+  RunState cho nút Dừng, và giữ bản sửa vòng chờ CHECK_FORM ở server. Deadline
+  điều khiển khớp lệnh server; submit vẫn giữ timeout ngắn và khóa durable.
+- Phân biệt bản nháp ở manager với thay đổi chỉ từ extension để Start không
+  báo xung đột giả. Thay đổi đồng thời hai phía vẫn cần chọn bản giữ.
+- Sửa trường hợp lệ rồi ngừng gõ 650 ms sẽ tự tiếp tục, không cần blur. Yêu cầu
+  tạm lỗi giữ theo dõi và thử lại tối đa 3 lần trên đúng run/document còn chờ;
+  không tự mở lại Pause, Stop, recovery hoặc lượt đã khóa gửi.
+- Typecheck và 299 ca / 39 file Vitest qua. Có ca kiểm tra Live bị từ chối,
+  quota, form sai, draft xung đột và lỗi tạm khi tự tiếp tục.
+- test:cloud-controls qua với 3 Chromium profile cô lập, extension/background/
+  content thật, WebSocket và PostgreSQL fixture. Kiểm tra bốn nút điều khiển,
+  ba trường sai tự tiếp tục sau input hợp lệ không blur và giữ đáp án sửa,
+  Pause chủ động không tự mở, Test gửi 0, Live fixture đúng 1 lần/profile và
+  không gửi lại. Báo cáo test-results/cloud-controls-flow-3.json.
+- Harness cloud build trong thư mục tạm HANU_CLOUD_OUT_DIR riêng, không ghi
+  đè dist-cloud mà Chrome người dùng đang nạp. Build production tại dist-cloud
+  dùng đúng https://hanu-autofill.onrender.com, development=false, v1.3.2.

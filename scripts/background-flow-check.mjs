@@ -13,11 +13,12 @@ import {serve} from '../build/server/main.mjs';
 // Replace the native pipe with a fixture bridge; NativeClient and Coordinator
 // are unchanged, and no Windows native-host registration or real profile is used.
 const count=Number(process.argv.find(a=>a.startsWith('--profiles='))?.split('=')[1]??3);
+const controls=process.argv.includes('--controls');
 const serial=process.argv.includes('--serial'),sharedFinal=process.argv.includes('--final-question'),cloud=process.argv.includes('--cloud');
 assert(count>=2&&count<=5);
 const dir=await mkdtemp(join(tmpdir(),'hanu-background-flow-')),profiles=[],steps=new Map(),submissions=new Map(),observations=[],focusEvents=[];
 assert(resolve(dir).startsWith(resolve(tmpdir())+sep)&&basename(dir).startsWith('hanu-background-flow-'));
-const output=cloud?`cloud-background-flow-${count}`:sharedFinal?`shared-final-question-flow-${count}`:`${serial?'serial':'parallel'}-background-flow-${count}`;
+const output=cloud?`${controls?'cloud-controls':'cloud-background'}-flow-${count}`:sharedFinal?`shared-final-question-flow-${count}`:`${serial?'serial':'parallel'}-background-flow-${count}`;
 let app,fixtureServer,sampler,stopping=false;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn,ms=120000){const end=Date.now()+ms;while(!await fn()){if(Date.now()>end)throw new Error('Background fixture timed out');await sleep(50);}}
@@ -32,7 +33,7 @@ class CDP {
   close(){this.cancelPending();this.ws.close();}
 }
 const fixtureHtml=(index,step)=>{
-const field=step===0?'<div role="checkbox" tabindex="0" aria-label="Record your email" aria-checked="false">Record your email</div>':step===1?'<div role="listitem"><div role="heading">TÔI CAM KẾT本人保证 *</div><div id="pledge"></div></div>':step===2?'<div role="listitem"><div role="heading">Họ và tên *</div><input id="name" type="text" name="name" required></div><div role="listitem"><div role="heading">GIỚI TÍNH | 性别 *</div><div role="listbox" tabindex="0" aria-expanded="false"><div jsname="LgbsSe">Choose</div><div jsname="V68bde" class="OA0qNb" style="display:none"></div></div><input id="gender" type="hidden" name="gender"></div><div role="listitem"><div role="heading">Ảnh giấy tờ tùy thân *</div><input id="file" type="file"></div>':'<div role="listitem"><div role="heading">Số điện thoại *</div><input id="phone" type="text" name="phone" required></div>';
+const field=step===0?'<div role="checkbox" tabindex="0" aria-label="Record your email" aria-checked="false">Record your email</div>':step===1?'<div role="listitem"><div role="heading">TÔI CAM KẾT本人保证 *</div><div id="pledge"></div></div>':step===2?'<div role="listitem"><div role="heading">Họ và tên *</div><input id="name" type="text" name="name" required></div><div role="listitem"><div role="heading">GIỚI TÍNH | 性别 *</div><div role="listbox" tabindex="0" aria-expanded="false"><div jsname="LgbsSe">Choose</div><div jsname="V68bde" class="OA0qNb" style="display:none"></div></div><input id="gender" type="hidden" name="gender"></div><div role="listitem"><div role="heading">Ảnh giấy tờ tùy thân *</div><input id="file" type="file"></div>':'<div role="listitem"><div role="heading">Số điện thoại *</div><input id="phone" type="text" name="phone" pattern="[0-9]{10}" required></div>';
 return `<!doctype html><meta charset="utf-8"><style>body{margin:0;width:100%;font:18px Arial}form{width:calc(100% - 48px);max-width:640px;margin:20px auto}div[role=listitem]{padding:16px;border:1px solid #ddd;margin:15px 0;box-sizing:border-box;width:100%}[role=option],button,[role=radio],[role=checkbox],[jsname=LgbsSe]{padding:12px}input{font:inherit}</style><div data-google-account="nick${index}@example.test">nick${index}@example.test</div><h1>Background fixture ${index} — page ${step}</h1><form method="POST" action="/forms/u/0/d/e/background-fixture/formResponse">${field}${sharedFinal&&step===3?'<div role="listitem" data-item-id="last-question"><div role="heading">Năm nay là năm bao nhiêu? *</div><input type="text" name="entry.9000" required></div>':''}<div role="alert"></div><button type="button">${step<3?'Next':'Submit'}</button></form><script>
 const observe=kind=>fetch('/observe',{method:'POST',body:JSON.stringify({index:${index},step:${step},kind,width:innerWidth,height:innerHeight,visibility:document.visibilityState,focused:document.hasFocus(),at:Date.now()})});observe('load');document.addEventListener('visibilitychange',()=>observe('visibility'));
 const checkbox=document.querySelector('[role=checkbox]');if(checkbox)checkbox.onclick=()=>checkbox.setAttribute('aria-checked','true');
@@ -51,9 +52,9 @@ if(cloud){
   // the dashboard's live overlay rather than a stale DB checkpoint. This test
   // polls at 50 ms; use the internal view to avoid the HTTP API's rate limit.
   app={store:{sessions:async()=>runtime.coordinator.runBuffer.overlay(await runtime.store.sessions())},coordinator:runtime.coordinator,origin:cloudFixture.config.origin,url:cloudFixture.config.origin,close:()=>cloudFixture.close()};
-  process.env.PUBLIC_ORIGIN=app.origin;process.env.HANU_CLOUD_DEV='1';await import('./build-cloud.mjs');
+  process.env.PUBLIC_ORIGIN=app.origin;process.env.HANU_CLOUD_DEV='1';process.env.HANU_CLOUD_OUT_DIR=join(dir,'cloud-build');await import('./build-cloud.mjs');
 }
-const extension=join(dir,'extension'),data=join(dir,'app');await cp(cloud?'dist-cloud':'dist',extension,{recursive:true});await mkdir(data,{recursive:true});
+const extension=join(dir,'extension'),data=join(dir,'app');await cp(cloud?process.env.HANU_CLOUD_OUT_DIR:'dist',extension,{recursive:true});await mkdir(data,{recursive:true});
 const harness=cloud?`(()=>{const listeners=[];globalThis.__fixture={ask:m=>new Promise(resolve=>listeners.forEach(fn=>fn(m,{},resolve)))};const original=chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);chrome.runtime.onMessage.addListener=fn=>{listeners.push(fn);original(fn)};})();\n`:`(()=>{const ports=new Map(),listeners=[],out=[];let id=0;globalThis.__fixture={out,deliver:(id,m)=>ports.get(id)?.messages.forEach(fn=>fn(m)),ask:m=>new Promise(resolve=>listeners.forEach(fn=>fn(m,{},resolve)))};const original=chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);chrome.runtime.onMessage.addListener=fn=>{listeners.push(fn);original(fn)};chrome.runtime.connectNative=()=>{const p={id:++id,messages:[],disconnects:[],onMessage:{addListener:fn=>p.messages.push(fn)},onDisconnect:{addListener:fn=>p.disconnects.push(fn)},postMessage:m=>out.push({id:p.id,kind:'message',message:m}),disconnect:()=>{out.push({id:p.id,kind:'close'});p.disconnects.forEach(fn=>fn())}};ports.set(p.id,p);out.push({id:p.id,kind:'open'});return p;};})();\n`;
 await writeFile(join(extension,'background.js'),harness+await readFile(join(extension,'background.js'),'utf8'));
 const openssl=process.platform==='win32'?'C:/Program Files/Git/usr/bin/openssl.exe':'openssl';execFileSync(openssl,['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(dir,'key.pem'),'-out',join(dir,'cert.pem'),'-days','1','-subj','/CN=docs.google.com'],{stdio:'ignore'});
@@ -92,6 +93,40 @@ const leasePeak=peak(intervals),menuPeak=peak(menuIntervals);assert.equal(serial
 const testMs=Date.now()-start;
 console.log(`PASS: ${count} initially minimized profiles complete delayed required controls, rAF dropdown + 1.8s menu, upload and full document navigation without viewing any form; Test submits zero.`);
 const manager=await chromium.launch({channel:process.platform==='win32'?'msedge':'chromium',headless:true});try{const page=await manager.newPage({viewport:{width:1440,height:1050}});if(cloud)await page.context().addCookies([{name:'test-account',value:'account-a',url:app.origin,httpOnly:true,sameSite:'Lax'}]);await page.goto(app.url);await page.getByText('Xong Test',{exact:false}).first().waitFor();await page.screenshot({path:`test-results/${output}-manager.png`,fullPage:true});}finally{await manager.close();}
+if(controls){
+  assert(cloud&&!sharedFinal,'Controls fixture uses cloud mode without a shared verification question');
+  const ask=(p,type)=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return __fixture.ask({type:${JSON.stringify(type)},tabId:r.tabId,mode:'test'});})()`);
+  const first=profiles[0];
+  assert.equal((await ask(first,'PAUSE_RUN')).status,'paused');
+  assert.equal((await ask(first,'RESUME_RUN')).status,'running');
+  await complete('ready_to_submit');
+  assert.equal((await ask(first,'STOP_RUN')).status,'idle');
+  for(const p of profiles)await app.coordinator.control(p.id,'STOP');
+  steps.clear();
+  for(const p of profiles)await p.eval(`(async()=>{const profile=(await chrome.storage.local.get('profile')).profile;profile.values.phone='wrong';return __fixture.ask({type:'SAVE_PROFILE',profile});})()`);
+  const starts=await Promise.all(profiles.map(p=>ask(p,'START_RUN')));
+  assert(starts.every(r=>r.status==='running'),JSON.stringify(starts));
+  await wait(async()=>(await app.store.sessions()).every(s=>s.run?.status==='waiting_manual'));
+  for(const s of await app.store.sessions())assert.equal(s.run.blockingIssue.reason,'validation');
+  const correct=p=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{const input=document.querySelector('#phone');input.value='0911111111';input.dispatchEvent(new Event('input',{bubbles:true}));}});})()`);
+  await Promise.all(profiles.map(correct));
+  await wait(async()=>(await app.store.sessions()).every(s=>s.run?.status==='ready_to_submit'),15000);
+  for(const p of profiles){
+    const actual=await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return (await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>document.querySelector('#phone').value}))[0].result;})()`);
+    assert.equal(actual,'0911111111');
+  }
+  assert.equal([...submissions.values()].reduce((a,b)=>a+b,0),0);
+  assert.equal((await ask(first,'PAUSE_RUN')).status,'paused');
+  await correct(first);await sleep(900);
+  assert.equal((await first.eval("chrome.storage.local.get('managedRun')")).managedRun.status,'paused');
+  assert.equal((await ask(first,'RESUME_RUN')).status,'running');await complete('ready_to_submit');
+  for(const p of profiles){
+    await app.coordinator.control(p.id,'STOP');
+    await p.eval(`(async()=>{const profile=(await chrome.storage.local.get('profile')).profile;profile.values.phone='0900000000';return __fixture.ask({type:'SAVE_PROFILE',profile});})()`);
+    await app.coordinator.pull(p.id);
+  }
+  console.log('PASS: real extension Start/Pause/Resume/Stop matches manager controls; three invalid fields resume after valid typing without blur; explicit Pause remains paused; Test sends zero.');
+}
 for(const p of profiles)await app.coordinator.control(p.id,'STOP');steps.clear();const live=await app.coordinator.start(profiles.map(p=>p.id),fixtureUrl,'live',sharedQuestion);await complete('completed');for(const p of profiles){assert.equal(submissions.get(p.index),1);await assert.rejects(()=>app.coordinator.control(p.id,'RESUME'));assert.equal(submissions.get(p.index),1);}
 if(cloud){
   await Promise.all(profiles.map(p=>app.coordinator.runBuffer.flush(p.id)));
@@ -102,7 +137,7 @@ if(cloud){
     assert.equal(await app.coordinator.store.blocked(p.id,'background-fixture'),true);
   }
 }
-const report={scope:cloud?'Isolated headed Chromium windows; production cloud extension with real WebSocket, PostgreSQL (PGlite), coordinator and renderer leases.':'Isolated headed Chromium windows; production content/background with a fixture-only native pipe shim; actual coordinator and renderer leases. Page rendering is kept active by the extension under test, not the harness. No Playwright attachment/focus emulation or throttling-suppression flags on form browsers.',execution:serial?'serial':'parallel',sharedFinalQuestion:sharedFinal,profiles:count,testMs,totalMs:Date.now()-start,leasePeak,menuPeak,testRun:group.id,liveRun:live.id,testStoppedBeforeSend:true,liveSubmissions:[...submissions.values()],invalidNext:observations.filter(o=>o.kind==='invalid-next').length,observations,focusEvents};await writeFile(`test-results/${output}.json`,JSON.stringify(report,null,2));await rm(`test-results/${output}-error.json`,{force:true});console.log(`PASS: ${serial?'Serial':'Parallel'} Test ${testMs} ms; ${leasePeak} simultaneous leases, ${menuPeak} overlapping dropdowns. Live exactly once/profile; Resume cannot submit twice.`);
+const report={scope:cloud?'Isolated headed Chromium windows; production cloud extension with real WebSocket, PostgreSQL (PGlite), coordinator and renderer leases.':'Isolated headed Chromium windows; production content/background with a fixture-only native pipe shim; actual coordinator and renderer leases. Page rendering is kept active by the extension under test, not the harness. No Playwright attachment/focus emulation or throttling-suppression flags on form browsers.',execution:serial?'serial':'parallel',sharedFinalQuestion:sharedFinal,extensionControls:controls,profiles:count,testMs,totalMs:Date.now()-start,leasePeak,menuPeak,testRun:group.id,liveRun:live.id,testStoppedBeforeSend:true,liveSubmissions:[...submissions.values()],invalidNext:observations.filter(o=>o.kind==='invalid-next').length,observations,focusEvents};await writeFile(`test-results/${output}.json`,JSON.stringify(report,null,2));await rm(`test-results/${output}-error.json`,{force:true});console.log(`PASS: ${serial?'Serial':'Parallel'} Test ${testMs} ms; ${leasePeak} simultaneous leases, ${menuPeak} overlapping dropdowns. Live exactly once/profile; Resume cannot submit twice.`);
 }catch(e){const diagnostics=[];for(const p of profiles)try{diagnostics.push(await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;if(!r||r.tabId<0)return;return {window:await chrome.windows.get((await chrome.tabs.get(r.tabId)).windowId),page:await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>({width:innerWidth,height:innerHeight,hidden:document.hidden,focused:document.hasFocus(),cards:[...document.querySelectorAll('[role=listitem]')].map(e=>({text:e.textContent,width:e.getBoundingClientRect().width,controls:e.querySelectorAll('input,[role=radio],[role=listbox]').length}))})})};})()`));}catch{}await writeFile('test-results/background-flow-error.json',JSON.stringify({error:String(e),sessions:app?await app.store.sessions():undefined,observations,focusEvents,diagnostics},null,2));throw e;}finally{
 stopping=true;clearInterval(sampler);for(const p of profiles){clearInterval(p.poller);for(const port of p.ports.values())port.ws.terminate();try{await p.cdp?.send('Browser.close');}catch{}p.cdp?.close();if(!p.child.killed)p.child.kill();}if(app)await app.close();if(fixtureServer)await new Promise(r=>fixtureServer.close(r));await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100}).catch(()=>{});
 }

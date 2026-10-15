@@ -2,8 +2,9 @@ import {afterEach,it,expect,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
 import type {Command} from '../src/protocol';
 import type {ExtensionMessage,RunState} from '../src/shared';
+let nativeRequest: ReturnType<typeof vi.fn>;
 let adapter:{start:(c:Command,s:string)=>Promise<any>;control:(c:Command)=>Promise<any>;execution:()=>Promise<any>;disconnected:()=>Promise<any>};
-vi.mock('../src/native-client',()=>({createNativeClient:(a:typeof adapter)=>{adapter=a;return {boot:vi.fn(),state:vi.fn(),request:vi.fn(async()=>({})),isConnected:()=>true};}}));
+vi.mock('../src/native-client',()=>({createNativeClient:(a:typeof adapter)=>{adapter=a;nativeRequest=vi.fn(async()=>({}));return {boot:vi.fn(),state:vi.fn(),request:nativeRequest,isConnected:()=>true};}}));
 afterEach(()=>{vi.unstubAllGlobals();vi.resetModules();});
 const url='https://docs.google.com/forms/d/e/lease-fixture/viewform';
 async function fixture(){
@@ -21,7 +22,10 @@ it('requires server-managed runs in cloud builds, including legacy local Resume 
  try{
   vi.stubGlobal('__HANU_CLOUD_ORIGIN__','https://fixture.example');
   const f=await fixture();
-  expect(await f.ask({type:'START_RUN',tabId:1,mode:'test'})).toMatchObject({ok:false,error:expect.stringContaining('website quản lý')});
+  nativeRequest.mockResolvedValueOnce({run:{runId:'server-run',managed:true,status:'running'}});
+  expect(await f.ask({type:'START_RUN',tabId:1,mode:'test'})).toMatchObject({runId:'server-run',managed:true,status:'running'});
+  expect(nativeRequest).toHaveBeenCalledWith('START',undefined,{url,mode:'test'});
+  expect(f.data['run:1']).toBeUndefined();
   const legacy:RunState={runId:'legacy-local',tabId:1,formId:'lease-fixture',mode:'live',status:'paused',contentEpoch:'old-page',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:''};
   f.data['run:1']=legacy;
   expect(await f.ask({type:'RESUME_RUN',tabId:1})).toMatchObject({ok:false,error:expect.stringContaining('website')});
