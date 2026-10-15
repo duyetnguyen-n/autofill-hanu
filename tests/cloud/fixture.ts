@@ -15,12 +15,18 @@ export const extension = 'a'.repeat(32);
 export async function databaseFixture() {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
-    CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY);
+    CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_user_meta_data jsonb DEFAULT '{}',created_at timestamptz NOT NULL DEFAULT now(),last_sign_in_at timestamptz);
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     GRANT USAGE ON SCHEMA auth TO authenticated;
     CREATE SCHEMA storage; CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     INSERT INTO auth.users VALUES('${users[0]}'),('${users[1]}');`);
   await db.exec(await readFile('supabase/migrations/202610130001_cloud.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202610150001_user_access.sql', 'utf8'));
+  // Existing tests opt into approved synthetic accounts; new access tests remove
+  // these grants explicitly to exercise the default pending state.
+  await db.exec(`INSERT INTO hanu.accounts(user_id,email,email_verified,name,status,contact_name,phone,purpose,consent_at,max_profiles,max_concurrent,live_enabled)
+    VALUES('${users[0]}','an@example.test',true,'An thử nghiệm','active','An thử nghiệm','0901234567','Kiểm thử sản phẩm',now(),100,100,true),
+    ('${users[1]}','binh@example.test',true,'Bình thử nghiệm','active','Bình thử nghiệm','0902345678','Kiểm thử sản phẩm',now(),100,100,true) ON CONFLICT(user_id) DO UPDATE SET email=EXCLUDED.email,email_verified=EXCLUDED.email_verified,name=EXCLUDED.name,status=EXCLUDED.status,contact_name=EXCLUDED.contact_name,phone=EXCLUDED.phone,purpose=EXCLUDED.purpose,consent_at=EXCLUDED.consent_at,max_profiles=EXCLUDED.max_profiles,max_concurrent=EXCLUDED.max_concurrent,live_enabled=EXCLUDED.live_enabled;`);
   let tail = Promise.resolve();
   async function lock() {
     const previous = tail; let unlock!: () => void;
@@ -74,7 +80,7 @@ export async function httpFixture(uiDir?: string) {
       async user(): Promise<WebUser | undefined> {
         if (!key || !authorized.has(key)) return;
         const index = key === 'account-a' ? 0 : 1;
-        return { id: users[index], name: ['An thử nghiệm', 'Bình thử nghiệm'][index], email: ['an@example.test', 'binh@example.test'][index], sessionKey: key, expiresAt: Date.now() + 3600000 };
+        return { id: users[index], name: ['An thử nghiệm', 'Bình thử nghiệm'][index], email: ['an@example.test', 'binh@example.test'][index], emailVerified: true, googleSub: `fixture-google-${index}`, sessionKey: key, expiresAt: Date.now() + 3600000 };
       },
       async logout() { if (key) authorized.delete(key); res.setHeader('Set-Cookie', 'test-account=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'); }
     };

@@ -16,7 +16,8 @@ Sau lần thiết lập đầu, xem [cách cập nhật và deploy lại](DEPLOY
 ## 1. Chuẩn bị Supabase
 
 1. Tạo project riêng cho HANU, ưu tiên region Singapore nếu người dùng ở Việt Nam.
-2. Mở SQL Editor, chạy toàn bộ `supabase/migrations/202610130001_cloud.sql`
+2. Mở SQL Editor, chạy toàn bộ `supabase/migrations/202610130001_cloud.sql`, rồi
+   `supabase/migrations/202610150001_user_access.sql`
    **một lần**. Nếu báo bảng đã tồn tại, kiểm tra lần chạy trước thay vì xóa bảng
    hoặc chạy lại trên project đang có dữ liệu. Giữ bucket `hanu-private` private.
 3. Lấy Project URL, publishable/anon key, secret/service_role key trong phần API

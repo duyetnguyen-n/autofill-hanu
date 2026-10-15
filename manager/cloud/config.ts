@@ -9,6 +9,7 @@ export interface CloudConfig {
   trustProxy?: boolean;
   // Render starts a replacement before terminating the existing instance.
   rollingDeploy?: boolean;
+  bootstrapAdminEmail?: string;
 }
 export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
   const required = (key: string, value = env[key]?.trim()) => {
@@ -24,12 +25,14 @@ export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
   const supabaseUrl = new URL(required('SUPABASE_URL'));
   if (supabaseUrl.protocol !== 'https:' && !(development && ['localhost', '127.0.0.1'].includes(supabaseUrl.hostname) && supabaseUrl.protocol === 'http:')) throw new Error('SUPABASE_URL phải dùng HTTPS.');
   const port = Number(env.PORT ?? 3000);
+  const bootstrapAdminEmail = env.HANU_BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase() || undefined;
+  if (bootstrapAdminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bootstrapAdminEmail)) throw new Error('HANU_BOOTSTRAP_ADMIN_EMAIL phải là email Google của chủ sản phẩm.');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT không hợp lệ.');
   return { origin: url.origin, host: env.HOST ?? '127.0.0.1', port, development,
     supabaseUrl: supabaseUrl.origin, publishableKey: required('SUPABASE_PUBLISHABLE_KEY'),
     secretKey: required('SUPABASE_SECRET_KEY'), databaseUrl: required('DATABASE_URL'),
     databaseCa: env.PGSSLROOTCERT ? readFileSync(env.PGSSLROOTCERT, 'utf8') : undefined,trustProxy:env.TRUST_PROXY==='1',
-    rollingDeploy: env.RENDER === 'true' };
+    rollingDeploy: env.RENDER === 'true', bootstrapAdminEmail };
 }
 export function databasePool(config: CloudConfig) {
   const url = new URL(config.databaseUrl);

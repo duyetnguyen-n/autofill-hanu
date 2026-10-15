@@ -20,6 +20,7 @@
     "build:cloud-server": "node scripts/run-node24.mjs scripts/build-cloud-server.mjs",
     "cloud:check": "node scripts/run-node24.mjs --env-file=.env.cloud node_modules/tsx/dist/cli.mjs scripts/check-cloud.ts",
     "cloud:configure-password": "node scripts/run-node24.mjs scripts/configure-cloud-password.mjs",
+    "test:access-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/access-ui-check.ts",
     "test:cloud-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/cloud-ui-check.ts",
     "cloud": "node scripts/run-node24.mjs --env-file=.env.cloud build/cloud-server/main.mjs --serve-cloud",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.manager.json",

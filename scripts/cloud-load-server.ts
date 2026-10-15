@@ -18,6 +18,10 @@ const fixture = await loadFixture(process.env.HANU_LOAD_DATABASE_URL);
 const owners = Array.from({ length: count }, () => randomUUID());
 await fixture.pool.query('INSERT INTO auth.users(id) SELECT unnest($1::uuid[])', [owners]);
 
+await fixture.pool.query(`INSERT INTO hanu.accounts(user_id,email,email_verified,name,status,contact_name,phone,purpose,consent_at,max_profiles,max_concurrent,live_enabled)
+  SELECT id,'synthetic-'||n||'@example.test',true,'Synthetic user '||n,'active','Synthetic user '||n,'0901234567','Synthetic load test',now(),100,100,true
+  FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id,ordinal) CROSS JOIN LATERAL (SELECT ordinal-1 AS n) x`, [owners]);
+
 function authorized(req: IncomingMessage) {
   const supplied = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
   return /^[a-f0-9]{64}$/.test(supplied) && timingSafeEqual(Buffer.from(supplied), Buffer.from(key));
@@ -33,7 +37,7 @@ const auth: WebAuth = { request(req) {
       const index = userIndex(req);
       if (!authorized(req) || index < 0) return;
       return { id: owners[index], email: `synthetic-${index}@example.test`, name: `Synthetic user ${index}`,
-        sessionKey: owners[index], expiresAt: Date.now() + 3600000 };
+        emailVerified: true, sessionKey: owners[index], expiresAt: Date.now() + 3600000 };
     },
     async login() { throw new Error('Load fixture has no real login.'); },
     async callback() { throw new Error('Load fixture has no real login.'); },

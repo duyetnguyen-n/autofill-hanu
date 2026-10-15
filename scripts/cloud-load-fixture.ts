@@ -27,11 +27,12 @@ export async function loadFixture(databaseUrl?: string) {
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
     END $$;
-    CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY);
+    CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_user_meta_data jsonb DEFAULT '{}',created_at timestamptz NOT NULL DEFAULT now(),last_sign_in_at timestamptz);
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     GRANT USAGE ON SCHEMA auth TO authenticated;
     CREATE SCHEMA storage; CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);`);
     await pg.query(await readFile('supabase/migrations/202610130001_cloud.sql', 'utf8'));
+    await pg.query(await readFile('supabase/migrations/202610150001_user_access.sql', 'utf8'));
     const blobs = new Map<string, Buffer>();
     const objects: PrivateObjects = {
       async put(path, bytes) { blobs.set(path, Buffer.from(bytes)); },

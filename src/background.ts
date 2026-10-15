@@ -67,7 +67,7 @@ async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE
   const tabId=sender.tab?.id;
   if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
   let run=await getRun(tabId);
-  const valid=(r?:RunState)=>r?.status==='running'&&!r.submitAttempted&&r.runId===message.runId&&r.contentEpoch===message.epoch&&(!r.managed||native.isConnected()&&!interruptedRuns.has(r.runId!));
+  const valid=(r?:RunState)=>r?.status==='running'&&!r.submitAttempted&&r.runId===message.runId&&r.contentEpoch===message.epoch&&(!cloudOrigin()||r.managed)&&(!r.managed||native.isConnected()&&!interruptedRuns.has(r.runId!));
   if(!valid(run))throw new Error('Lượt/trang đã dừng; không mở cửa sổ.');
   const old=pageAttention.get(tabId);if(old?.epoch===message.epoch)return {ok:true,token:old.token};
   await releasePageAttention(tabId);
@@ -206,6 +206,7 @@ async function dispatchTrustedKeys(tabId: number, keys: string[]): Promise<boole
 
 async function runOnTab(tabId: number, mode: RunMode, skipQuestionId?: string): Promise<void> {
   const run=await getRun(tabId);
+  if(cloudOrigin()&&(!run?.managed||!native.isConnected()))throw new Error('Bắt đầu lượt từ website bằng tài khoản đã được duyệt.');
   if(run?.status!=='running')throw new Error('Lượt đã dừng; không phát lệnh điền form.');
   await sendToForm(tabId, { type: "RUN_CURRENT_PAGE", mode, skipQuestionId, runId:run?.runId, finalQuestion:run.finalQuestion });
 }
@@ -253,6 +254,7 @@ async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLO
 }
 
 async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
+  if(cloudOrigin())throw new Error('Bản online chỉ bắt đầu lượt từ website quản lý. Đăng nhập tài khoản đã được duyệt rồi chọn profile để chạy.');
   await executionSnapshot();
   const tab = await chrome.tabs.get(tabId);
   if (!isFormsUrl(tab.url)) throw new Error("Hãy mở một trang Google Forms trước khi chạy.");
@@ -306,6 +308,7 @@ async function stopRun(tabId: number): Promise<RunState | undefined> {
 
 async function resumeRun(tabId: number,automatic=false): Promise<RunState | undefined> {
   const current = await getRun(tabId);
+  if(cloudOrigin()&&(!current?.managed||!native.isConnected()))throw new Error('Tiếp tục lượt từ website bằng tài khoản đã được duyệt.');
   if (!current) return undefined;
   if (current.submitAttempted) throw new Error("Lượt đã khóa gửi; hãy xác minh kết quả, không chạy lại.");
   if(!current.runId){current.runId=crypto.randomUUID();current.profileSnapshot=await getProfile();current.profileRevision=await getProfileRevision();await saveRun(current);}
@@ -448,6 +451,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const run=await getRun(sender.tab.id);
         if(pageAttention.get(sender.tab.id)?.epoch!==message.epoch)await releasePageAttention(sender.tab.id);
         if(run&&run.formId===canonicalFormId(sender.url??sender.tab.url??'')){
+          if(cloudOrigin()&&!run.managed&&!endedExecution(run)){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
           run.contentEpoch=message.epoch;await saveRun(run);
           return sendResponse({ok:true,run:run.managed&&!native.isConnected()?{...run,recoveryRequired:true}:run});
         }
@@ -458,6 +462,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if (message.type === "GET_RUN_FOR_TAB") {
         const run = sender.tab?.id === undefined ? undefined : await getRun(sender.tab.id);
         const currentFormId = canonicalFormId(sender.url??sender.tab?.url??'');
+        if(cloudOrigin()&&run&&!run.managed)return sendResponse({...run,recoveryRequired:true});
         if(run?.managed&&(!native.isConnected()||run.recoveryRequired))return sendResponse({...run,recoveryRequired:true});
         return sendResponse(run?.formId === currentFormId ? run : undefined);
       }
@@ -653,6 +658,7 @@ async function managedControl(command:Command){
 async function grantSubmit(message:Extract<ExtensionMessage,{type:'REQUEST_SUBMIT'}>,sender:chrome.runtime.MessageSender){
   if(sender.tab?.id===undefined||(sender.frameId??0)!==0)throw new Error('Trang gửi không hợp lệ.');const run=await getRun(sender.tab.id);
   if(!run||run.mode!=='live'||run.status!=='running'||run.submitAttempted||run.runId!==message.runId||run.contentEpoch!==message.epoch||canonicalFormId(sender.url??sender.tab.url??'')!==run.formId)throw new Error('Không được cấp quyền gửi lần nữa.');
+  if(cloudOrigin()&&(!run.managed||!native.isConnected()))throw new Error('Website chưa cấp quyền gửi cho lượt này.');
   if(run.managed){if(interruptedRuns.has(run.runId!)||!native.isConnected())throw new Error('App đang dừng hoặc mất kết nối.');await checkAccount(run.tabId,run.expectedEmail!);}
   if(await hasLocalLock(run.formId))throw new Error('Form có khóa gửi.');
   const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};locks[run.runId!]={formId:run.formId,resolution:'uncertain',createdAt:now()};

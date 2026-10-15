@@ -17,6 +17,8 @@ export interface DataStore {
   saveRun(session: string, run: RunState): Result<void>;
   history(session: string): Result<RunState[]>;
   beginGroup(group: GroupView, sessions: SessionView[]): Result<void>;
+  authorizeResume?(id: string): Result<void>;
+  cancelResume?(id: string, runId: string): Result<void>;
   acceptProgress(id: string, run: RunState): Result<boolean>;
   blocked(session: string, form: string): Result<boolean>;
   acquireSubmit(session: string, run: string, form: string, progress?: RunState): Result<void>;

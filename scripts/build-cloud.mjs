@@ -22,7 +22,7 @@ manifest.content_security_policy={extension_pages:`script-src 'self'; object-src
 await writeFile('dist-cloud/manifest.json',JSON.stringify(manifest,null,2)+'\n');
 const files=['background.js','content.js','manifest.json'];
 const hashes={};for(const file of files)hashes[file]=createHash('sha256').update(await readFile(`dist-cloud/${file}`)).digest('hex');
-await writeFile('dist-cloud/build-info.json',JSON.stringify({origin:url.origin,development:process.env.HANU_CLOUD_DEV==='1',protocol:1,builtAt:new Date().toISOString(),hashes},null,2)+'\n');
+await writeFile('dist-cloud/build-info.json',JSON.stringify({origin:url.origin,development:process.env.HANU_CLOUD_DEV==='1',protocol:1,accessPolicy:1,builtAt:new Date().toISOString(),hashes},null,2)+'\n');
 await writeFile('dist-cloud/README.txt',`HSK Autofill Online\nWebsite: ${url.origin}\n\n1. Chrome: chrome://extensions -> Developer mode -> Load unpacked -> chọn thư mục này.\n2. Đăng nhập Google trên website, bấm Thêm profile và lấy mã.\n3. Mở HSK Google Forms Autofill · Online trong đúng Chrome profile, nhập mã liên kết.\n\nKhông cần sao chép ID extension vào website. Mỗi profile dùng một mã riêng, hiệu lực 5 phút.\nChrome 116 trở lên. Không cần cài app local hoặc Native Messaging host.\nTắt bản local khi dùng Online trong cùng profile; giữ bản local nếu còn dữ liệu cũ.\nDữ liệu local không tự chuyển sang Online: xuất từ app local và nhập bằng nút Nhập từ bản local trên website.\nSau reload, chờ extension tự nối lại với mã phiên đã lưu; không xóa dữ liệu hoặc nhập mã mới chỉ vì mất kết nối tạm thời.\n`);
 if(!extensionOnly){
   await import('./build-cloud-server.mjs');

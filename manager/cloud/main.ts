@@ -17,6 +17,9 @@ import { supabaseObjects } from './storage';
 import { digest } from '../server/store';
 import {MAX_ARCHIVE_BYTES} from '../server/archive';
 import {importArchive} from './import-archive';
+import { Accounts } from './accounts';
+import { assertAccess, assertLive } from './access-policy';
+import type { Account } from '../../src/account';
 
 interface Runtime {
   store: PostgresStore; coordinator: Coordinator; browsers: Set<WebSocket>;
@@ -59,6 +62,20 @@ export async function serveCloud(options: {
 }) {
   const { config, repository } = options;
   const auth = options.auth ?? supabaseAuth(config);
+  const accounts = new Accounts(repository.pool, config.bootstrapAdminEmail);
+  const accessCache = new Map<string, { account: Account; checked: number }>();
+  const changingAccess = new Set<string>();
+  async function allowed(owner: string, fresh = false) {
+    const cached = accessCache.get(owner);
+    let account = cached?.account;
+    if (fresh || !cached || Date.now() - cached.checked >= 2000) {
+      account = await accounts.get(owner);
+      if (account) accessCache.set(owner, { account, checked: Date.now() });
+    }
+    if (account?.expiresAt && Date.parse(account.expiresAt) <= Date.now()) account = { ...account, status: 'expired' };
+    assertAccess(account);
+    return account;
+  }
   const uiDir = options.uiDir ?? resolve(fileURLToPath(new URL('.', import.meta.url)), '../cloud-ui');
   const runtimes = new Map<string, Runtime>();
   const tickets = new Map<string, Ticket>();
@@ -91,6 +108,7 @@ export async function serveCloud(options: {
     activation = attempt;
     return attempt.finally(() => { activation = undefined; });
   }
+  await checkCloudDatabase(repository.pool);
   try { await activate(); }
   catch (error) {
     if (config.rollingDeploy && error instanceof LeaseBusyError) {
@@ -150,6 +168,15 @@ export async function serveCloud(options: {
       coordinator.launchUrl = config.origin;
       coordinator.unavailable=error=>{if(!(error instanceof CloudError)||error.status===503)failClosed(error);};
       coordinator.progressUnavailable=failClosed;
+      const sendCommand = coordinator.command.bind(coordinator);
+      coordinator.command = async (id, kind, payload = {}, runId, timeout) => {
+        if (!['STOP', 'STOP_PROFILE', 'PAUSE'].includes(kind)) {
+          const account = await allowed(owner, ['START', 'RESUME'].includes(kind));
+          if (kind === 'START') assertLive(account, String(payload.mode));
+          if (kind === 'RESUME') assertLive(account, (await store.session(id)).run?.mode ?? 'test');
+        }
+        return sendCommand(id, kind, payload, runId, timeout);
+      };
       const current = result;
       coordinator.changed = () => { current.snapshot=undefined;void broadcast(current); };
       coordinator.progressChanged = () => {
@@ -160,6 +187,23 @@ export async function serveCloud(options: {
     }
     result.touched = Date.now();
     return result;
+  }
+  async function interruptAccess(owner: string, message = 'Quyền sử dụng đã thay đổi. Tải lại để kiểm tra.') {
+    accessCache.delete(owner);
+    for (const [key, ticket] of tickets) if (ticket.user.id === owner) tickets.delete(key);
+    const current = runtimes.get(owner);
+    if (!current) return;
+    for (const ws of current.browsers) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ACCESS_CHANGED', error: message }));
+      ws.close(1008, 'Access changed');
+    }
+    const peers = [...current.coordinator.peers];
+    for (const [, ws] of peers) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'EMERGENCY_STOP', error: message }));
+      ws.close(1008, 'Access changed');
+    }
+    await Promise.all(peers.map(([id, ws]) => current.coordinator.disconnect(id, ws)));
+    await current.coordinator.settledConnections();
   }
   function json(res: ServerResponse, value: unknown, status = 200) {
     res.statusCode = status; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.end(JSON.stringify(value));
@@ -181,7 +225,7 @@ export async function serveCloud(options: {
         const requestAuth = auth.request(req, res);
         const code = url.searchParams.get('code');
         if (!code || code.length > 4096 || url.searchParams.has('error')) { res.writeHead(303, { Location: '/?auth_error=1' }); return res.end(); }
-        try { await requestAuth.callback(code); if (!await requestAuth.user()) throw new CloudError('Đăng nhập Google không hợp lệ.', 401); }
+        try { await requestAuth.callback(code); const user = await requestAuth.user(); if (!user) throw new CloudError('Đăng nhập Google không hợp lệ.', 401); await accounts.identify(user); }
         catch { res.writeHead(303, { Location: '/?auth_error=1' }); return res.end(); }
         res.writeHead(303, { Location: '/' }); return res.end();
       }
@@ -194,7 +238,8 @@ export async function serveCloud(options: {
         }
         const user = await requestAuth.user();
         if (!user) throw new CloudError('Đăng nhập Google để mở trang quản lý.', 401);
-        if (path === '/api/auth/me' && req.method === 'GET') return json(res, { id: user.id, email: user.email, name: user.name });
+        const account = await accounts.identify(user);
+        if (path === '/api/auth/me' && req.method === 'GET') return json(res, account);
         if (path === '/api/auth/logout' && req.method === 'POST') {
           await body(req); await requestAuth.logout();
           for (const [ws, browser] of browserUsers) if (browser.sessionKey === user.sessionKey && browser.id === user.id) ws.close(1008, 'Signed out');
@@ -204,6 +249,55 @@ export async function serveCloud(options: {
         if (emergencyError) throw new CloudError(emergencyError, 503);
         if (!ready || closing) { res.setHeader('Retry-After', '2'); throw new CloudError(updating, 503); }
         rate.check(`api:${user.id}`, 300, 60000);
+        if (path === '/api/account' && req.method === 'PATCH') {
+          rate.check(`account:${user.id}`, 10, 60000);
+          const result = await accounts.profile(user.id, await body(req, 4096));
+          accessCache.delete(user.id);
+          return json(res, result);
+        }
+        if (path.startsWith('/api/admin/')) {
+          await accounts.requireAdmin(user.id);
+          rate.check(`admin:${user.id}`, 120, 60000);
+          if (path === '/api/admin/accounts' && req.method === 'GET') return json(res, await accounts.list(url.searchParams));
+          if (path === '/api/admin/events' && req.method === 'GET') return json(res, await accounts.events());
+          if (path === '/api/admin/grants' && req.method === 'GET') return json(res, await accounts.grants());
+          if (path === '/api/admin/grants' && req.method === 'POST') return json(res, await accounts.createGrant(user.id, await body(req, 4096)), 201);
+          if (path === '/api/admin/grants' && req.method === 'DELETE') {
+            await accounts.deleteGrant(user.id, String((await body(req, 1024)).email ?? ''));
+            return json(res, { ok: true });
+          }
+          const match = path.match(/^\/api\/admin\/accounts\/([0-9a-f-]{36})(?:\/sessions\/([a-zA-Z0-9-]{20,80})\/revoke)?$/);
+          if (match) {
+            const target = match[1], session = match[2];
+            if (!session && req.method === 'GET') return json(res, { ...await accounts.detail(target), events: await accounts.events(target) });
+            if (!session && req.method === 'PATCH') {
+              if (changingAccess.has(target)) throw new CloudError('Tài khoản đang được cập nhật. Thử lại sau.', 409);
+              const value = await body(req, 8192);
+              changingAccess.add(target);
+              try {
+                const updated = await accounts.update(user.id, target, value);
+                accessCache.delete(target);
+                if (updated.interrupt) await interruptAccess(target);
+                else for (const ws of runtimes.get(target)?.browsers ?? []) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ACCOUNT_UPDATED' }));
+                return json(res, { ...updated.account, interrupted: updated.interrupt });
+              } finally { changingAccess.delete(target); }
+            }
+            if (session && req.method === 'POST') {
+              await body(req, 1024);
+              const ws = runtimes.get(target)?.coordinator.peers.get(session);
+              await accounts.revokeExtension(user.id, target, session);
+              if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'REVOKED' }));
+              ws?.close(1008, 'Revoked');
+              if (ws) await runtimes.get(target)?.coordinator.disconnect(session, ws);
+              else await repository.store(target).connected(session, false);
+              runtimes.get(target)?.coordinator.changed();
+              return json(res, { ok: true });
+            }
+          }
+          throw new CloudError('Không tìm thấy API quản trị.', 404);
+        }
+        assertAccess(account);
+        await allowed(user.id);
         const current = runtime(user.id), { store, coordinator } = current;
         if(path==='/api/import'&&req.method==='POST'){
           rate.check(`import:${user.id}`,3,3600000);
@@ -223,7 +317,7 @@ export async function serveCloud(options: {
           if (value.replaceSessionId !== undefined && typeof value.replaceSessionId !== 'string') throw new CloudError('Profile liên kết lại không hợp lệ.');
           return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
         }
-        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion)); }
+        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); await Promise.all((await store.sessions()).map(s => coordinator.runBuffer?.flush(s.id))); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion)); }
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
         if (group && req.method === 'POST') { await body(req); return json(res, await coordinator.groupControl(group[1], group[2].toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP')); }
@@ -275,7 +369,7 @@ export async function serveCloud(options: {
         throw new CloudError('Không tìm thấy API.', 404);
       }
       if (req.method !== 'GET') throw new CloudError('Method không hợp lệ.', 405);
-      const file = resolve(uiDir, '.' + decodeURIComponent(path === '/' ? '/index.html' : path));
+      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account'].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream'); res.end(readFileSync(file));
@@ -283,7 +377,7 @@ export async function serveCloud(options: {
       if (!(error instanceof CloudError) && /^(08|53|57|58)/.test(String((error as { code?: string }).code ?? ''))) failClosed(error);
       // Database messages may include private values. Do not expose them.
       const databaseError = !!(error as { code?: string }).code;
-      json(res, { error: error instanceof CloudError || !databaseError ? (error as Error).message : 'Không xử lý được dữ liệu. Kiểm tra cấu hình server.' }, error instanceof CloudError ? error.status : databaseError ? 503 : 400);
+      json(res, { error: error instanceof CloudError || !databaseError ? (error as Error).message : 'Không xử lý được dữ liệu. Kiểm tra cấu hình server.', ...(error instanceof CloudError && error.code ? { code: error.code } : {}) }, error instanceof CloudError ? error.status : databaseError ? 503 : 400);
     }
   });
 
@@ -313,12 +407,13 @@ export async function serveCloud(options: {
               if (m.type !== 'AUTH' || typeof m.ticket !== 'string') throw new CloudError('Authentication required', 401);
               const key = digest(m.ticket), ticket = tickets.get(key); tickets.delete(key);
               if (!ticket || ticket.expires < Date.now() || ticket.user.expiresAt <= Date.now()) throw new CloudError('Session expired', 401);
-              owner = ticket.user.id; current = runtime(owner); current.browsers.add(ws); browserUsers.set(ws, ticket.user);
+              owner = ticket.user.id; await allowed(owner, true); current = runtime(owner); current.browsers.add(ws); browserUsers.set(ws, ticket.user);
               authenticated = true; clearTimeout(handshake);
               expiry = setTimeout(() => ws.close(1008, 'Refresh session'), Math.min(ticket.user.expiresAt - Date.now(), 30 * 60000));
               await broadcast(current); return;
             }
             rate.check(`handshake:${clientIp(req)}`, 30, 60000);
+            if (m.accessPolicy !== 1) throw new CloudError('Cập nhật và Reload extension bản mới để sử dụng cơ chế cấp quyền tài khoản.', 403);
             if (m.protocol !== PROTOCOL_VERSION || m.transport !== 'cloud' || !/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId) || !/^[a-p]{32}$/.test(m.extensionId) || req.headers.origin && req.headers.origin !== `chrome-extension://${m.extensionId}`) throw new CloudError('Extension hoặc giao thức không hợp lệ.', 401);
             if (m.type === 'PAIR') {
               const paired = await repository.pair(m.sessionId, m.extensionId, String(m.code ?? ''));
@@ -334,6 +429,7 @@ export async function serveCloud(options: {
               if (ws.readyState !== WebSocket.OPEN) { await current.coordinator.disconnect(id!, ws); return; }
               ws.send(JSON.stringify({ type: 'WELCOME', sessionId: id }));
             } else throw new CloudError('Handshake không hợp lệ.', 401);
+            await allowed(owner!, true);
             authenticated = true; clearTimeout(handshake);
             void current!.coordinator.pull(id!).catch(async error => {
               if (closing) return;
@@ -342,7 +438,9 @@ export async function serveCloud(options: {
             });
             return;
           }
-          if (path === '/events') return;
+          if (path === '/events') { await allowed(owner!); return; }
+          if (m.type !== 'RESULT') await allowed(owner!);
+          if (current!.coordinator.peers.get(id!) !== ws) throw new CloudError('Kết nối đã được thu hồi.', 403);
           if (m.protocol !== PROTOCOL_VERSION || m.sessionId !== id) throw new CloudError('Mã phiên không khớp kết nối.', 401);
           if(m.type==='REQUEST'&&m.kind==='UNLINK'){
             await repository.revoke(owner!,id!);
@@ -357,6 +455,9 @@ export async function serveCloud(options: {
             if (!(error instanceof CloudError) && (error as any).code) failClosed(error);
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ERROR', error: error instanceof CloudError || !(error as any).code ? (error as Error).message : 'Không lưu được trạng thái.' }));
+              if (authenticated && error instanceof CloudError && error.status === 403) {
+                ws.send(JSON.stringify({ type: path === '/extensions' ? 'EMERGENCY_STOP' : 'ACCESS_CHANGED', error: error.message }));
+              }
               if (!authenticated || error instanceof CloudError && [401, 403,429].includes(error.status)) ws.close(1008, 'Authentication failed');
             }
           } };
@@ -395,7 +496,15 @@ export async function serveCloud(options: {
     }, 2000);
   }
   if (!ready) retryActivation();
+  let accessCheck: Promise<unknown> | undefined;
   const heartbeat = setInterval(() => {
+    if (!accessCheck && !closing && !emergencyError) {
+      accessCheck = Promise.all([...runtimes].filter(([, r]) => r.browsers.size || r.coordinator.peers.size).map(async ([owner]) => {
+        try { await allowed(owner, true); }
+        catch (error) { if (error instanceof CloudError && error.status === 403) await interruptAccess(owner, error.message); else throw error; }
+      })).catch(failClosed).finally(() => { accessCheck = undefined; });
+    }
+    for (const [owner, entry] of accessCache) if (Date.now() - entry.checked > 300000) accessCache.delete(owner);
     for (const [ws, seen] of lastSeen) if (Date.now() - seen > 65000 && !browserUsers.has(ws)) ws.terminate();
     for (const [key, ticket] of tickets) if (ticket.expires < Date.now()) tickets.delete(key);
     for (const [owner, current] of runtimes) if (!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.attention.close(); runtimes.delete(owner); }
@@ -404,7 +513,7 @@ export async function serveCloud(options: {
     closing = true; ready = false; clearInterval(heartbeat); clearInterval(leaseTimer); clearTimeout(retryTimer);
     // An in-flight claim/recovery must finish before release, or a closing
     // waiting instance could acquire a lease after its cleanup had completed.
-    await activation?.catch(() => {}); clearInterval(leaseTimer); await renewal;
+    await activation?.catch(() => {}); clearInterval(leaseTimer); await renewal; await accessCheck;
     for (const current of runtimes.values()) {clearTimeout(current.broadcastTimer);current.coordinator.attention.close();}
     await Promise.all([...sockets.clients].map(ws => new Promise<void>(resolve => { ws.once('close', () => resolve()); ws.terminate(); })));
     // close callbacks schedule persistence; finish it before releasing the lease.

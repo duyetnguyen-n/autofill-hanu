@@ -102,7 +102,7 @@ class Peer {
   send(message:any){if(this.ws.readyState!==WebSocket.OPEN)throw new Error('Synthetic peer disconnected.');this.ws.send(JSON.stringify({protocol:PROTOCOL_VERSION,sessionId:this.id,...message}));}
   async pair(code:string){
     await new Promise<void>((resolve,reject)=>{if(this.ws.readyState===WebSocket.OPEN)resolve();else{this.ws.once('open',resolve);this.ws.once('error',reject);}});
-    this.send({type:'PAIR',transport:'cloud',extensionId:'a'.repeat(32),code});
+    this.send({type:'PAIR',transport:'cloud',accessPolicy:1,extensionId:'a'.repeat(32),code});
     await within(this.paired,15000,'Pairing timed out.');
   }
   request(kind:string,extra:Record<string,unknown>={}):Promise<Outcome>{

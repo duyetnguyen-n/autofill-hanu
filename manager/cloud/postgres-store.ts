@@ -5,11 +5,11 @@ import type { GroupView, SessionView } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import { canonicalFormId } from '../../src/protocol';
 import { validCloudProgress } from './progress';
+import { CloudError } from './errors';
+import { requireAccount, assertLive, assertCapacity } from './access-policy';
+export { CloudError } from './errors';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export class CloudError extends Error {
-  constructor(message: string, public status = 400) { super(message); }
-}
 export class LeaseBusyError extends CloudError {
   constructor() { super('Một server quản lý khác đang hoạt động. Chờ tối đa 65 giây sau khi server cũ dừng.', 503); }
 }
@@ -143,6 +143,9 @@ export class PostgresStore implements DataStore {
   async beginGroup(g: GroupView, sessions: SessionView[]) {
     await transaction(this.pool, async db => {
       await this.assertLease(db);
+      const account = await requireAccount(db, this.owner, true);
+      assertLive(account, g.mode);
+      await assertCapacity(db, account, sessions.map(s => s.id));
       // Lock in a stable order to avoid deadlocks between overlapping starts.
       const ids = sessions.map(s => s.id);
       const rows = (await db.query('SELECT id,data,version FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE', [this.owner, ids])).rows;
@@ -166,6 +169,28 @@ export class PostgresStore implements DataStore {
         [this.owner, JSON.stringify(sessions.map(s => ({id:s.id,data:s})))])).rows;
       const versions = new Map(updated.map(row => [row.id,row.version]));
       for (const s of sessions) { this.versions.set(s,versions.get(s.id));this.baselines.set(s,structuredClone(s)); }
+    });
+  }
+  async authorizeResume(id: string) {
+    await transaction(this.pool, async db => {
+      await this.assertLease(db);
+      const account = await requireAccount(db, this.owner, true);
+      const s = await this.read(id, db, true);
+      if (!s.run?.runId || s.run.submitAttempted) throw new CloudError('Lượt chưa sẵn sàng tiếp tục hoặc đã khóa gửi.', 409);
+      assertLive(account, s.run.mode);
+      await assertCapacity(db, account, [id]);
+      // Reserve the slot before another concurrent Start/Resume can check it.
+      s.run.status = 'running';
+      await this.write(s, db);
+      await this.writeRun(id, s.run, db);
+    });
+  }
+  async cancelResume(id: string, runId: string) {
+    await transaction(this.pool, async db => {
+      const s = await this.read(id, db, true);
+      if (s.run?.runId !== runId || s.run.submitAttempted || s.run.status !== 'running') return;
+      s.run.status = 'paused'; s.run.recoveryRequired = true;
+      await this.write(s, db); await this.writeRun(id, s.run, db);
     });
   }
   async acceptProgress(id: string, run: RunState) {
@@ -192,6 +217,8 @@ export class PostgresStore implements DataStore {
     if (!form || typeof form !== 'string') throw new CloudError('Form thiếu định danh.');
     await transaction(this.pool, async db => {
       await this.assertLease(db);
+      const account = await requireAccount(db, this.owner, true);
+      assertLive(account, 'live');
       // Both the group gate and profile are locked until the grant is committed.
       const g = (await db.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2 FOR SHARE', [this.owner, run])).rows[0]?.data as GroupView | undefined;
       const s = await this.read(session, db, true);
@@ -277,6 +304,7 @@ export class CloudRepository {
     await this.pool.query("UPDATE hanu.groups SET data=jsonb_set(data,'{paused}','true') WHERE EXISTS(SELECT 1 FROM hanu.sessions s WHERE s.owner=hanu.groups.owner AND s.data#>>'{run,runId}'=hanu.groups.id AND s.data#>>'{run,recoveryRequired}'='true')");
   }
   async pairCode(owner: string, replace?: string) {
+    await requireAccount(this.pool, owner);
     if (replace) {
       const s = await this.store(owner).session(replace);
       if (s.connected || s.execution || s.run && ['running', 'submitting'].includes(s.run.status)) throw new CloudError('Dừng và ngắt kết nối profile trước khi liên kết lại.', 409);
@@ -289,7 +317,12 @@ export class CloudRepository {
   async pair(session: string, extension: string, code: string) {
     if (!/^[A-F0-9]{12}$/.test(code)) throw new CloudError('Mã liên kết không hợp lệ.');
     return transaction(this.pool, async db => {
-      const row = (await db.query('DELETE FROM hanu.pairing WHERE code_hash=$1 AND expires_at>now() RETURNING owner,replace_session', [digest(code)])).rows[0];
+      const candidate = (await db.query('SELECT owner FROM hanu.pairing WHERE code_hash=$1 AND expires_at>now()', [digest(code)])).rows[0];
+      if (!candidate) throw new CloudError('Mã liên kết hết hạn hoặc đã dùng.', 401);
+      // Account first, then pairing/session, matching admin updates and quota
+      // transactions. Consuming the code first could deadlock with a lock action.
+      const account = await requireAccount(db, candidate.owner, true);
+      const row = (await db.query('DELETE FROM hanu.pairing WHERE code_hash=$1 AND owner=$2 AND expires_at>now() RETURNING owner,replace_session', [digest(code), candidate.owner])).rows[0];
       if (!row) throw new CloudError('Mã liên kết hết hạn hoặc đã dùng.', 401);
       const token = randomBytes(32).toString('hex');
       const id = row.replace_session ?? session;
@@ -300,7 +333,7 @@ export class CloudRepository {
         await db.query('UPDATE hanu.sessions SET token_hash=$3,extension_id=$4,revoked=false,data=$5,version=version+1 WHERE owner=$1 AND id=$2', [row.owner, id, digest(token), extension, JSON.stringify(s)]);
       } else {
         const count = (await db.query('SELECT count(*) AS count FROM hanu.sessions WHERE owner=$1', [row.owner])).rows[0].count;
-        if (Number(count) >= 100) throw new CloudError('Tài khoản đạt giới hạn 100 profile.');
+        if (Number(count) >= account.maxProfiles) throw new CloudError(`Tài khoản đạt giới hạn ${account.maxProfiles} profile.`, 409);
         const data: SessionView = { id, name: `Profile ${Number(count) + 1}`, expectedEmail: '', connected: false, lastSeen: new Date().toISOString(), revision: 0, synced: false };
         await db.query('INSERT INTO hanu.sessions(owner,id,token_hash,extension_id,data) VALUES($1,$2,$3,$4,$5)', [row.owner, id, digest(token), extension, JSON.stringify(data)]);
       }
@@ -310,6 +343,7 @@ export class CloudRepository {
   async authenticate(id: string, extension: string, token: string) {
     if (!/^[a-f0-9]{64}$/.test(token)) return undefined;
     const row = (await this.pool.query('SELECT owner FROM hanu.sessions WHERE id=$1 AND extension_id=$2 AND token_hash=$3 AND NOT revoked', [id, extension, digest(token)])).rows[0];
+    if (row) await requireAccount(this.pool, row.owner);
     return row?.owner as string | undefined;
   }
   async revoke(owner: string, id: string) {

@@ -5,7 +5,7 @@ import { httpFixture, users, extension } from './fixture';
 const cleanup: (()=>Promise<void>)[] = [];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 
-it('serves live dashboard progress and page permission over WebSocket without querying the database',async()=>{
+it('serves live dashboard progress and page permission over WebSocket without querying progress tables; account access is still verified',async()=>{
   const f=await httpFixture();cleanup.push(f.close);
   const paired=await f.pair();
   const ws=new WebSocket(f.config.origin.replace('http:','ws:')+'/extensions',{headers:{Origin:`chrome-extension://${extension}`}});
@@ -17,7 +17,7 @@ it('serves live dashboard progress and page permission over WebSocket without qu
     if(m.type==='COMMAND')send({type:'RESULT',commandId:m.commandId,ok:true,result:m.kind==='READ_PROFILE'?{profile:{values:{},customFields:[],mappings:{},attachments:{}},revision:0}:{}});
   });
   await new Promise<void>((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
-  send({type:'HELLO',transport:'cloud',extensionId:extension,token:paired.token});
+  send({type:'HELLO',transport:'cloud',accessPolicy:1,extensionId:extension,token:paired.token});
   await expect.poll(()=>messages.some(m=>m.type==='WELCOME')).toBe(true);
   await expect.poll(async()=>(await paired.store.session(paired.sessionId)).synced).toBe(true);
   // Wait for the asynchronous profile import to finish before starting.
@@ -39,7 +39,7 @@ it('serves live dashboard progress and page permission over WebSocket without qu
   expect(messages.find(m=>m.requestId==='check').ok).toBe(true);
   const live=(await(await f.api('state')).json()).sessions[0];
   expect(live.run.eventSeq).toBe(10);expect(live.execution.updatedAt).toBe('10');
-  expect(query).not.toHaveBeenCalled();expect(connect).not.toHaveBeenCalled();
+  expect(query.mock.calls.every(([sql])=>sql==='SELECT * FROM hanu.accounts WHERE user_id=$1')).toBe(true);expect(connect).not.toHaveBeenCalled();
   send({type:'STATE',run:{...live.run,eventSeq:11,status:'ready_to_submit'}});
   await expect.poll(async()=>(await paired.store.session(paired.sessionId)).run?.status).toBe('ready_to_submit');
   expect((await paired.store.history(paired.sessionId))[0].eventSeq).toBe(11);

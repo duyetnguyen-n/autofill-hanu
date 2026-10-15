@@ -4,6 +4,7 @@ import { digest } from '../server/store';
 import { CloudError, transaction, type CloudRepository } from './postgres-store';
 import type { RunState } from '../../src/shared';
 import type { SessionView } from '../../src/protocol';
+import { requireAccount } from './access-policy';
 
 function parked(run: RunState): RunState {
   const copy = structuredClone(run);
@@ -14,6 +15,7 @@ function parked(run: RunState): RunState {
 }
 export async function importArchive(repository: CloudRepository, owner: string, value: unknown) {
   validateArchive(value); const archive: DataArchive = value;
+  await requireAccount(repository.pool, owner);
   // Upload immutable objects before the DB transaction. A failed import may
   // leave unreferenced objects, but never partially imported sessions or locks.
   const paths = new Map<string, string>();
@@ -24,7 +26,8 @@ export async function importArchive(repository: CloudRepository, owner: string, 
   }
   await transaction(repository.pool, async db => {
     await repository.store(owner).assertLease(db);
-    if (Number((await db.query('SELECT count(*) AS count FROM hanu.sessions WHERE owner=$1', [owner])).rows[0].count) + archive.sessions.length > 100) throw new CloudError('Nhập dữ liệu sẽ vượt giới hạn 100 profile.');
+    const account = await requireAccount(db, owner, true);
+    if (Number((await db.query('SELECT count(*) AS count FROM hanu.sessions WHERE owner=$1', [owner])).rows[0].count) + archive.sessions.length > account.maxProfiles) throw new CloudError(`Nhập dữ liệu sẽ vượt giới hạn ${account.maxProfiles} profile.`, 409);
     const duplicate = await db.query('SELECT 1 FROM hanu.sessions WHERE id=ANY($1::text[])', [archive.sessions.map(s => s.id)]);
     if (duplicate.rowCount) throw new CloudError('Bản dữ liệu này đã được nhập hoặc trùng profile. Dữ liệu hiện tại được giữ nguyên.', 409);
     for (const source of archive.sessions) {

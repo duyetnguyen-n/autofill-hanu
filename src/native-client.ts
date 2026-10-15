@@ -40,7 +40,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     try{await ensureIdentity();const current=await connector();if(stopped||version!==generation){current.disconnect();return;}port=current;
       current.onMessage.addListener(m=>{if(port===current)onMessage(m,current);});
       current.onDisconnect.addListener(()=>{if(port!==current)return;port=undefined;connected=false;generation++;pairingError(cloud?(current.error??'Mất kết nối website quản lý.'):chromeError(chrome.runtime.lastError?.message??'Mất kết nối app.'));for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error(error));}requests.clear();void adapter.disconnected().catch(()=>undefined).finally(retry);});
-      send({...pairCode?{type:'PAIR',code:pairCode}:{type:'HELLO',token:identity.token},...(cloud?{transport:'cloud',extensionId:chrome.runtime.id}:{})});
+      send({...pairCode?{type:'PAIR',code:pairCode}:{type:'HELLO',token:identity.token},...(cloud?{transport:'cloud',extensionId:chrome.runtime.id,accessPolicy:1}:{})});
     }catch(e){pairingError((e as Error).message);port=undefined;retry();}finally{connecting=false;}
   }
   function onMessage(m:any,current:CoordinatorPort){
@@ -70,7 +70,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     if(!readOnly&&journal[c.commandId]){if(journal[c.commandId].done)return journal[c.commandId].result;throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}
     if(!readOnly){journal[c.commandId]={done:false};const keys=Object.keys(journal);for(const k of keys.slice(0,-1000))delete journal[k];await chrome.storage.local.set({[journalKey]:journal});}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-13-cloud':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-15-cloud-access':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator','accountAccess']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){

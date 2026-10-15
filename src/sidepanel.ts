@@ -314,8 +314,10 @@ window.addEventListener("unhandledrejection", (event) => {
 void refresh().then(renderModeHelp);
 async function refreshNative(){const s=await send<{extensionId:string;sessionId:string;connected:boolean;paired:boolean;error:string}>({type:'NATIVE_STATUS'});$(HTMLElement,'#extensionId').textContent=s.extensionId;$(HTMLButtonElement,'#openCoordinator').disabled=!s.connected&&!cloudOrigin();$(HTMLButtonElement,'#unlinkProfile').hidden=!s.paired;const text=$(HTMLElement,'#nativeStatus');text.textContent=s.connected?`Đã kết nối ${cloudOrigin()?'website':'app'}. Mã phiên: ${s.sessionId}`:s.error|| (s.paired?(cloudOrigin()?'Đã liên kết. Đang kết nối lại website.':'Đã liên kết. Hãy mở app quản lý.'):(cloudOrigin()?'Chưa liên kết. Lấy mã trên website và nhập bên dưới.':'Chưa liên kết. Sao chép ID extension sang app để tạo mã.'));text.className=s.connected?'native-connected':s.error?'native-error':'muted';}
 if(cloudOrigin()){
+  $(HTMLButtonElement,'#startRun').hidden=true;
+  $(HTMLSelectElement,'#runMode').disabled=true;
   $(HTMLButtonElement,'#openCoordinator').textContent='Mở website quản lý';
-  const notice=document.querySelector<HTMLElement>('.notice');if(notice)notice.textContent='Hồ sơ và ảnh được đồng bộ với tài khoản của bạn trên website quản lý.';
+  const notice=document.querySelector<HTMLElement>('.notice');if(notice)notice.textContent='Liên kết tài khoản đã được duyệt. Bắt đầu Test/Live và quản lý quyền sử dụng trên website.';
   const idRow=document.querySelector<HTMLElement>('.extension-id-row');if(idRow)idRow.hidden=true;
   const title=document.querySelector<HTMLElement>('.extension-id-row')?.previousElementSibling;if(title)title.textContent='Liên kết website quản lý';
 }

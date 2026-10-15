@@ -1,5 +1,10 @@
 # Cập nhật website HANU sau này
 
+**Bản quản lý người dùng ngày 15/10/2026:** đọc [USER-ACCESS.md](USER-ACCESS.md)
+trước khi cập nhật. Bản này cần migration mới, cấu hình email admin đầu tiên
+và build/Reload extension cloud; các bước cập nhật thông thường bên dưới
+chưa bao gồm ba thay đổi này.
+
 Website: https://hanu-autofill.onrender.com
 
 [Render của dịch vụ](https://dashboard.render.com/web/srv-db74o9qd0e5s73b25jng/deploys)

@@ -16,7 +16,7 @@ async function connectExtension(f: Awaited<ReturnType<typeof setup>>, owner = 0)
   const code = (await (await f.api('pair', owner, {})).json()).code;
   const peer = socket(f.config.origin, '/extensions'); await peer.opened;
   const sessionId = crypto.randomUUID();
-  peer.ws.send(JSON.stringify({ type: 'PAIR', protocol: 1, transport: 'cloud', sessionId, extensionId: extension, code }));
+  peer.ws.send(JSON.stringify({ type: 'PAIR', protocol: 1, transport: 'cloud', accessPolicy: 1, sessionId, extensionId: extension, code }));
   await expect.poll(() => peer.messages.find(m => m.type === 'PAIRED')).toBeTruthy();
   const paired = peer.messages.find(m => m.type === 'PAIRED');
   // Real protocol acknowledgement through WSS endpoint (local ws in fixture).
@@ -36,7 +36,7 @@ it('requires authentication and same-origin mutations; login exposes no auth tok
   expect((await fetch(`${f.config.origin}/api/state`)).status).toBe(401);
   expect((await fetch(`${f.config.origin}/api/pair`, { method: 'POST', headers: { Cookie: 'test-account=account-a', Origin: 'https://wrong.example', 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(403);
   const me = await (await f.api('auth/me')).json();
-  expect(me).toEqual({ id: users[0], email: 'an@example.test', name: 'An thử nghiệm' });
+  expect(me).toMatchObject({ id: users[0], email: 'an@example.test', name: 'An thử nghiệm' });
   const login = await f.api('auth/login', 0, {});
   expect(login.status).toBe(200); expect((await login.json()).url).toContain('/auth/callback');
 }, 20000);
@@ -84,7 +84,7 @@ it('rejects page-origin extension connections and spoofed profile tokens', async
   const page = new WebSocket(f.config.origin.replace('http:', 'ws:') + '/extensions', { headers: { Origin: f.config.origin } });
   const error = await new Promise<Error>(r => page.once('error', r)); expect(error.message).toContain('403');
   const rogue = socket(f.config.origin, '/extensions'); await rogue.opened;
-  rogue.ws.send(JSON.stringify({ type: 'HELLO', protocol: 1, transport: 'cloud', sessionId: a.sessionId, extensionId: extension, token: 'b'.repeat(64) }));
+  rogue.ws.send(JSON.stringify({ type: 'HELLO', protocol: 1, transport: 'cloud', accessPolicy: 1, sessionId: a.sessionId, extensionId: extension, token: 'b'.repeat(64) }));
   await expect.poll(() => rogue.messages.some(m => m.type === 'UNPAIRED')).toBe(true);
 });
 

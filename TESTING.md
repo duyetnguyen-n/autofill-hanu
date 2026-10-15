@@ -1,5 +1,30 @@
 # Kiểm thử HANU Coordinator 1.3.1 (2026-10-12)
 
+## Quản lý người dùng và trang quản trị - 15/10/2026
+
+- `npm run typecheck`: qua. `npm test -- --maxWorkers=4`: 290 ca trong 39 file
+  qua. Bao gồm pending/approval, admin bootstrap từ Google identity xác minh,
+  chống tự nâng quyền, RLS, quota Start/Resume đồng thời, quyền Live, hết hạn,
+  thu hồi extension, giữ khóa gửi qua khóa/mở tài khoản và nhật ký quản trị.
+- Một lần chạy toàn suite cùng lúc với hai Vite build gây timeout 5 giây ở các
+  fixture PostgreSQL WASM. Chạy riêng với 4 worker qua; không tăng timeout để
+  che lỗi nghiệp vụ.
+- `npm run build:cloud`, `npm run build:manager:assets`, `npm run test:cloud-ui`,
+  `npm run test:access-ui`, `npm run test:manager-ui`: qua. UI kiểm tra đăng ký
+  thông tin, chờ duyệt, cấp quyền, khóa, quyền cấp trước, nhật ký, tách admin/user,
+  sáng/tối và viewport 390 px. Ảnh tại `test-results/access-*.png`; dữ liệu giả.
+- `npm run test:cloud-flow`: 3 Chrome profile ban đầu thu nhỏ, extension cloud
+  thật, WebSocket và PGlite, câu cuối dùng chung, dropdown, upload và chuyển
+  tài liệu. Test dừng trước gửi; Live nhận đúng một phản hồi/profile; Resume
+  không gửi lại. Test mất 4.780 ms, 3 renderer lease và dropdown chồng thời gian.
+  Harness nhận diện worker qua dấu fixture vì Chromium mới có component
+  extension `background.js` riêng; không gắn nhầm worker tích hợp của Chrome.
+- Build cuối `dist-cloud/build-info.json`: production origin
+  `https://hanu-autofill.onrender.com`, `development=false`, `accessPolicy=1`.
+  Chưa chạy migration hoặc triển khai trên production, chưa cấu hình email
+  admin thật, chưa thay extension trong thư mục Chrome người dùng đang nạp.
+  Hướng dẫn kích hoạt: `docs/USER-ACCESS.md`.
+
 ## Kiểm tra lại Google Picker trên Render — 15/10/2026
 
 - Tái hiện từ màn quản lý `https://hanu-autofill.onrender.com/`: extension báo đã chuyển ảnh nhưng Picker vẫn ở màn trống, chưa có tệp được xác nhận trên form.

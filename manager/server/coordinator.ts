@@ -233,7 +233,14 @@ export class Coordinator {
       this.runBuffer?.groupGate(group);this.runBuffer?.refresh(id,s,true);
     }
     let result:any;
-    try{result=await this.command(id,kind,automatic?{automatic:true}:{},s.run.runId);}catch(error){this.runBuffer?.halt(id);throw error;}
+    try{
+      if(kind==='RESUME')await this.store.authorizeResume?.(id);
+      result=await this.command(id,kind,automatic?{automatic:true}:{},s.run.runId);
+    }catch(error){
+      this.runBuffer?.halt(id);
+      if(kind==='RESUME'&&this.store.cancelResume){await this.store.cancelResume(id,s.run.runId);this.runBuffer?.refresh(id,await this.store.session(id));}
+      throw error;
+    }
     // Persist the acknowledged state even when its separate STATE message is late.
     if(result?.runId===s.run.runId)await this.acceptState(id,result);
     if(kind==='RESUME'){

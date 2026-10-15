@@ -12,10 +12,26 @@ async function fixture(){
  const sendMessage=vi.fn(async(_id:number,msg:any)=>msg.type==='PAGE_ACCOUNT'?{email:'fixture@example.test'}:{ok:true});
  const create=vi.fn(async(options:any)=>{const tab={id:55,url:options.url,status:'complete',windowId:1};tabs.set(55,tab);return tab;});
  vi.stubGlobal('chrome',{runtime:{getURL:(p:string)=>p,onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:vi.fn(async()=>({}))},action:{onClicked:{addListener:vi.fn()}},tabs:{get:vi.fn(async(id:number)=>{const tab=tabs.get(id);if(!tab)throw new Error('closed');return tab;}),query:vi.fn(async()=>[...tabs.values()]),create,sendMessage,onUpdated:{addListener:vi.fn()},onRemoved:{addListener:(fn:any)=>removed=fn}},windows:{create:vi.fn()},storage:{local:{get:vi.fn(async(key:string|null)=>key===null?structuredClone(data):{[key]:structuredClone(data[key])}),set:vi.fn(async(value:any)=>Object.assign(data,structuredClone(value))),remove:vi.fn(async(key:string)=>delete data[key])}}});
- await import('../src/background');const ask=(msg:ExtensionMessage)=>new Promise<any>(resolve=>listener(msg,{},resolve));
+ await import('../src/background');const ask=(msg:ExtensionMessage,sender:object={})=>new Promise<any>(resolve=>listener(msg,sender,resolve));
  return {data,tabs,create,sendMessage,ask,removed:(id:number)=>removed(id)};
 }
 function command(kind:Command['kind'],runId='new-managed'):Command{return {type:'COMMAND',protocol:1,sessionId:'session',commandId:crypto.randomUUID(),kind,runId,payload:{url,mode:'test',revision:1,expectedEmail:'fixture@example.test'}};}
+it('requires server-managed runs in cloud builds, including legacy local Resume and Submit paths',async()=>{
+ vi.useFakeTimers();
+ try{
+  vi.stubGlobal('__HANU_CLOUD_ORIGIN__','https://fixture.example');
+  const f=await fixture();
+  expect(await f.ask({type:'START_RUN',tabId:1,mode:'test'})).toMatchObject({ok:false,error:expect.stringContaining('website quản lý')});
+  const legacy:RunState={runId:'legacy-local',tabId:1,formId:'lease-fixture',mode:'live',status:'paused',contentEpoch:'old-page',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:''};
+  f.data['run:1']=legacy;
+  expect(await f.ask({type:'RESUME_RUN',tabId:1})).toMatchObject({ok:false,error:expect.stringContaining('website')});
+  f.data['run:1'].status='running';
+  expect(await f.ask({type:'REQUEST_SUBMIT',runId:'legacy-local',epoch:'old-page'},{tab:{id:1,url},url,frameId:0})).toMatchObject({ok:false,error:expect.stringContaining('cấp quyền gửi')});
+  expect(await f.ask({type:'GET_RUN_FOR_TAB'},{tab:{id:1,url},url,frameId:0})).toMatchObject({recoveryRequired:true});
+  expect(await f.ask({type:'CLAIM_DOCUMENT',epoch:'new-page'},{tab:{id:1,url},url,frameId:0})).toMatchObject({ok:true,run:{status:'paused',recoveryRequired:true}});
+  expect(f.data.submissionLocks).toBeUndefined();expect(f.sendMessage).not.toHaveBeenCalledWith(1,expect.objectContaining({type:'RUN_CURRENT_PAGE'}));
+ }finally{vi.useRealTimers();}
+});
 it('carries the shared final question in the immutable managed run and every Resume command to content',async()=>{
  const f=await fixture(),q={label:'Câu hỏi cuối',value:'2026'};const start=command('START');start.payload.finalQuestion=q;await adapter.start(start,'session');
  expect(f.data.managedRun.finalQuestion).toEqual(q);expect(f.data.profile.customFields).toEqual([]);expect(f.sendMessage).toHaveBeenCalledWith(55,expect.objectContaining({type:'RUN_CURRENT_PAGE',finalQuestion:q}));

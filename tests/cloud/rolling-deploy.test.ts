@@ -54,7 +54,7 @@ it('keeps the old coordinator exclusive, then accepts the same profile token aft
       result: { profile: { values: {}, mappings: {}, customFields: [], attachments: {} }, revision: 0 } }));
   });
   await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
-  ws.send(JSON.stringify({ type: 'HELLO', protocol: 1, transport: 'cloud', extensionId: extension, sessionId: paired.sessionId, token: paired.token }));
+  ws.send(JSON.stringify({ type: 'HELLO', protocol: 1, transport: 'cloud', accessPolicy: 1, extensionId: extension, sessionId: paired.sessionId, token: paired.token }));
   await expect.poll(() => messages.some(m => m.type === 'WELCOME' && m.sessionId === paired.sessionId)).toBe(true);
 }, 20000);
 

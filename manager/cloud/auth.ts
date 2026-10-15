@@ -3,7 +3,7 @@ import { createServerClient, parseCookieHeader, serializeCookieHeader } from '@s
 import { CloudError } from './postgres-store';
 import type { CloudConfig } from './config';
 
-export interface WebUser { id: string; email: string; name: string; sessionKey: string; expiresAt: number }
+export interface WebUser { id: string; email: string; name: string; sessionKey: string; expiresAt: number; emailVerified?: boolean; avatarUrl?: string; googleSub?: string }
 export interface AuthRequest {
   login(): Promise<string>;
   callback(code: string): Promise<void>;
@@ -55,7 +55,14 @@ export function supabaseAuth(config: CloudConfig): WebAuth {
         // expiry and select which browser channels to close on local logout.
         const claims = JSON.parse(Buffer.from(session.session!.access_token.split('.')[1], 'base64url').toString());
         if (typeof claims.session_id !== 'string' || !Number.isFinite(claims.exp)) return;
-        verified = { id: data.user.id, email: data.user.email ?? '', name: String(data.user.user_metadata?.full_name ?? data.user.email ?? ''), sessionKey: claims.session_id, expiresAt: claims.exp * 1000 };
+        const google = data.user.identities.find(i => i.provider === 'google')?.identity_data;
+        // Use identity claims returned by verified Auth, not editable user_metadata,
+        // to decide whether an email is verified or eligible for admin bootstrap.
+        const email = data.user.email ?? '';
+        verified = { id: data.user.id, email, name: String(data.user.user_metadata?.full_name ?? email), sessionKey: claims.session_id, expiresAt: claims.exp * 1000,
+          emailVerified: google?.email_verified === true && String(google.email ?? '').toLowerCase() === email.toLowerCase(),
+          avatarUrl: typeof google?.avatar_url === 'string' ? google.avatar_url.slice(0, 2048) : typeof google?.picture === 'string' ? google.picture.slice(0, 2048) : '',
+          googleSub: typeof google?.sub === 'string' ? google.sub.slice(0, 200) : '' };
         return verified;
       },
       async logout() {

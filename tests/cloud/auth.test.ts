@@ -10,7 +10,7 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
   const userId='11111111-1111-4111-8111-111111111111',sessionId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const encoded=(v:unknown)=>Buffer.from(JSON.stringify(v)).toString('base64url');
   const token=`${encoded({alg:'HS256',typ:'JWT'})}.${encoded({sub:userId,session_id:sessionId,exp:Math.floor(Date.now()/1000)+3600})}.fixture-signature`;
-  const user={id:userId,email:'auth@example.test',app_metadata:{provider:'google'},user_metadata:{full_name:'Auth thử nghiệm'},identities:[{id:userId,user_id:userId,provider:'google',identity_data:{sub:'google-fixture'}}],aud:'authenticated',created_at:new Date().toISOString()};
+  const user={id:userId,email:'auth@example.test',app_metadata:{provider:'google'},user_metadata:{full_name:'Auth thử nghiệm',email_verified:true},identities:[{id:userId,user_id:userId,provider:'google',identity_data:{sub:'google-fixture',email:'auth@example.test',email_verified:true}}],aud:'authenticated',created_at:new Date().toISOString()};
   let verifiedCalls=0,codeChallenge='',codeVerifier='';
   let origin='';
   const server=createServer(async(req,res)=>{
@@ -47,6 +47,10 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
   expect(data.url).toContain('provider=google');expect(codeChallenge).toBeTruthy();expect([...jar.keys()].some(key=>key.includes('code-verifier'))).toBe(true);
   const callback=await request('/callback');expect(callback.status).toBe(200);expect(await callback.json()).toMatchObject({id:userId,sessionKey:sessionId});expect(codeVerifier).toBeTruthy();
   const count=verifiedCalls;expect(await(await request('/me')).json()).toMatchObject({id:userId});expect(verifiedCalls).toBeGreaterThan(count);
+  expect(await(await request('/me')).json()).toMatchObject({emailVerified:true,googleSub:'google-fixture'});
+  user.identities[0].identity_data.email_verified=false;
+  expect(await(await request('/me')).json()).toMatchObject({emailVerified:false});
+  user.identities[0].identity_data.email_verified=true;
   // The SDK must consult Auth, rather than trust the user payload in its cookie.
   const cookieKey=[...jar.keys()].find(key=>key.includes('auth-token')&&!key.includes('code-verifier'))!;
   const value=jar.get(cookieKey)!;
