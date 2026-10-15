@@ -79,13 +79,14 @@ it('persists a shared answer before resuming through the cloud buffer and preser
   const x=await setup(),q={label:'Câu cuối',value:'2026',formId:'fixture-fast'},commands:string[]=[];
   // A real Test run must keep its mode when applying and continuing the answer.
   const session=await x.store.session(x.id);session.run!.mode='test';await x.store.saveSession(session);x.buffer.refresh(x.id,session);
-  await x.c.receive(x.id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:2,status:'waiting_manual'}});
+  const blockingIssue={reason:'verification' as const,message:'Cần đáp án',questionLabel:q.label};
+  await x.c.receive(x.id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:2,status:'waiting_manual',blockingIssue}});
   await x.buffer.flush(x.id);
   x.c.command=async(id,kind)=>{
     commands.push(kind);
     if(kind==='SET_FINAL_QUESTION'){
       // Simulate RESULT overtaking the extension's separate waiting STATE.
-      await x.c.receive(id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:3,status:'waiting_manual',finalQuestion:q}});
+      await x.c.receive(id,{type:'STATE',run:{...x.progress,mode:'test',eventSeq:3,status:'waiting_manual',blockingIssue,finalQuestion:q}});
     }
     if(kind==='RESUME'){
       expect((await x.store.session(id)).run?.finalQuestion).toEqual(q);

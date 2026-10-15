@@ -33,6 +33,18 @@ export function matchesFinalQuestionLabel(label:string, expected:string):boolean
   return normalizeQuestionLabel(label)===normalizeQuestionLabel(expected);
 }
 
+// Applying an answer must not resume a profile blocked on an earlier field.
+// A verification blocker identifies the target before the answer is read;
+// once a target is known, require its full label to match as well.
+export function canApplyFinalQuestion(run:RunState|undefined, question?:Pick<FinalQuestion,'label'|'formId'>):boolean {
+  if(!run?.runId||run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(run.status))return false;
+  if(question?.formId&&question.formId!==run.formId)return false;
+  if(run.status==='ready_to_submit')return true;
+  const issue=run.blockingIssue;
+  if(!issue||issue.reason==='captcha'||issue.reason==='file_upload')return false;
+  return question?.label.trim()?!!issue.questionLabel&&matchesFinalQuestionLabel(issue.questionLabel,question.label):issue.reason==='verification';
+}
+
 export interface FieldRule {
   key: string;
   label: string;

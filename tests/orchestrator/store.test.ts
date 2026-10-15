@@ -36,7 +36,7 @@ describe('durable coordinator state',()=>{
     c.command=async()=>({});const q={label:'Câu hỏi cuối',value:'Đáp án'};
     expect((await c.setFinalQuestion(members,q)).every(r=>r.ok)).toBe(true);
     const s=store.session(members[0]);await c.acceptState(s.id,{...s.run!,eventSeq:1,finalQuestion:undefined});expect(store.session(s.id).run?.finalQuestion).toEqual(q);
-    const locked=store.session(members[1]);locked.run!.submitAttempted=true;store.saveSession(locked);await expect(c.setFinalQuestion(members,q)).rejects.toThrow('chưa gửi');
+    const locked=store.session(members[1]);locked.run!.submitAttempted=true;store.saveSession(locked);expect(await c.setFinalQuestion(members,q)).toEqual([{id:members[0],ok:true},expect.objectContaining({id:members[1],ok:false,skipped:true})]);
   });
   it('requires support in every extension before starting any shared-answer run',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),starts:any[]=[];for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
@@ -45,7 +45,7 @@ describe('durable coordinator state',()=>{
   });
   it('resumes a persisted answer without waiting for a slower profile acknowledgement',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[],q={label:'Câu cuối',value:'A'};
-    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.mode='test';store.saveSession(s);c.peers.set(id,{} as any);}
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:q.label};s.run!.mode='test';store.saveSession(s);c.peers.set(id,{} as any);}
     let release!:()=>void;const slow=new Promise<void>(resolve=>{release=resolve;});
     c.command=async(id,kind)=>{
       if(kind==='SET_FINAL_QUESTION'&&id===members[1])await slow;
@@ -64,34 +64,66 @@ describe('durable coordinator state',()=>{
   });
   it('does not resume a failed update while letting other selected profiles continue',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[];
-    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(id,{} as any);}
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:'Câu cuối'};store.saveSession(s);c.peers.set(id,{} as any);}
     c.command=async(id,kind)=>{if(kind==='SET_FINAL_QUESTION'&&id===members[1])throw new Error('offline');if(kind==='RESUME')resumed.push(id);return {};};
     expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:members[0],ok:true},{id:members[1],ok:false,error:'offline'}]);
     expect(resumed).toEqual([members[0]]);expect(store.session(members[1]).run?.finalQuestion).toBeUndefined();
   });
-  it('validates all selected profiles before applying or resuming any answer',async()=>{
+  it('skips a locked profile while applying and resuming a ready profile',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),commands=vi.fn(async()=>({}));c.command=commands;
-    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.submitAttempted=id===members[1];store.saveSession(s);c.peers.set(id,{} as any);}
-    await expect(c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).rejects.toThrow('chưa gửi');expect(commands).not.toHaveBeenCalled();
+    for(const id of members){const s=store.session(id);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:'Câu cuối'};s.run!.submitAttempted=id===members[1];store.saveSession(s);c.peers.set(id,{} as any);}
+    expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:members[0],ok:true},expect.objectContaining({id:members[1],ok:false,skipped:true})]);expect(commands.mock.calls.map(call=>call.slice(0,2))).toEqual([[members[0],'SET_FINAL_QUESTION'],[members[0],'RESUME']]);
   });
   it('does not resume when the answer cannot be persisted',async()=>{
     const {store,members}=setup(1),c=new Coordinator(store),commands:string[]=[];
-    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    const s=store.session(members[0]);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:'Câu cuối'};store.saveSession(s);c.peers.set(s.id,{} as any);
     c.command=async(_id,kind)=>{commands.push(kind);return {};};
     const save=vi.spyOn(store,'saveSession').mockImplementation(()=>{throw new Error('disk unavailable');});
     try{expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:s.id,ok:false,error:'disk unavailable'}]);expect(commands).toEqual(['SET_FINAL_QUESTION']);}
     finally{save.mockRestore();}
   });
+  it('applies only to the arrived profiles, then lets a late profile receive a later answer',async()=>{
+    const {store,members}=setup(8),c=new Coordinator(store),commands:{id:string;kind:string}[]=[],q={label:'Câu cuối',value:'A',formId:'form'};
+    for(const [i,id] of members.entries()){
+      const s=store.session(id);s.run!.status=i===1?'running':i===2?'failed':i===7?'ready_to_submit':'waiting_manual';
+      s.run!.blockingIssue={reason:i===4?'file_upload':'verification',message:'Chờ',questionLabel:i===6?'Câu khác':q.label};
+      if(i===5)s.run!.formId='other';store.saveSession(s);if(i!==3)c.peers.set(id,{} as any);
+    }
+    c.command=async(id,kind)=>{commands.push({id,kind});if(kind==='RESUME')return {...store.session(id).run,status:'running',eventSeq:1};return {};};
+    const before=members.slice(1,7).map(id=>structuredClone(store.session(id).run));
+    const result=await c.setFinalQuestion(members,q,true);
+    expect(result.filter(r=>r.ok).map(r=>r.id)).toEqual([members[0],members[7]]);
+    expect(result.filter(r=>'skipped' in r&&r.skipped)).toHaveLength(6);
+    expect(commands.filter(c=>c.kind==='RESUME').map(c=>c.id)).toEqual([members[0],members[7]]);
+    expect(members.slice(1,7).map(id=>store.session(id).run)).toEqual(before);
+    const late=store.session(members[1]);late.run!.status='waiting_manual';store.saveSession(late);
+    commands.length=0;
+    const later=await c.setFinalQuestion(members,{...q,value:'B'},true);
+    expect(later.filter(r=>r.ok).map(r=>r.id)).toEqual([members[1]]);
+    expect(commands).toEqual([{id:members[1],kind:'SET_FINAL_QUESTION'},{id:members[1],kind:'RESUME'}]);
+    expect(store.session(members[0]).run?.finalQuestion?.value).toBe('A');
+    expect(store.session(members[1]).run).toMatchObject({mode:'live',submitAttempted:false,finalQuestion:{value:'B'}});
+  });
+  it('does not wait for another profile database read before resuming a ready member',async()=>{
+    const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[];
+    for(const id of members){const s=store.session(id);s.run!.status='ready_to_submit';store.saveSession(s);c.peers.set(id,{} as any);}
+    let release!:()=>void;const slow=new Promise<void>(resolve=>{release=resolve;}),read=store.session.bind(store);
+    vi.spyOn(store,'session').mockImplementation(((id:string)=>id===members[1]?slow.then(()=>read(id)):read(id)) as any);
+    c.command=async(id,kind)=>{if(kind==='RESUME')resumed.push(id);return {};};
+    const applying=c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true);
+    try{await vi.waitFor(()=>expect(resumed).toEqual([members[0]]));}finally{release();}
+    expect((await applying).every(r=>r.ok)).toBe(true);
+  });
   it('refuses to update or resume a replacement run after the initial checks',async()=>{
     const {store,members}=setup(1),c=new Coordinator(store),commands:string[]=[];
-    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    const s=store.session(members[0]);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:'Câu cuối'};store.saveSession(s);c.peers.set(s.id,{} as any);
     c.command=async(id,kind,_payload,runId)=>{commands.push(kind);expect(runId).toBe('group');const changed=store.session(id);changed.run!.runId='replacement';store.saveSession(changed);return {};};
     const results=await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true);
     expect(results[0]).toMatchObject({ok:false,error:'Lượt đã thay đổi trong lúc cập nhật.'});expect(commands).toEqual(['SET_FINAL_QUESTION']);expect(store.session(s.id).run?.finalQuestion).toBeUndefined();
   });
   it('reports an acknowledged answer separately from a failed resume',async()=>{
     const {store,members}=setup(1),c=new Coordinator(store);
-    const s=store.session(members[0]);s.run!.status='waiting_manual';store.saveSession(s);c.peers.set(s.id,{} as any);
+    const s=store.session(members[0]);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'verification',message:'Cần đáp án',questionLabel:'Câu cuối'};store.saveSession(s);c.peers.set(s.id,{} as any);
     c.command=async(_id,kind)=>{if(kind==='RESUME')throw new Error('offline');return {};};
     expect(await c.setFinalQuestion(members,{label:'Câu cuối',value:'A'},true)).toEqual([{id:s.id,ok:false,error:'Đã cập nhật đáp án nhưng chưa tiếp tục được: offline'}]);expect(store.session(s.id).run?.finalQuestion?.value).toBe('A');
   });

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
 import { CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView } from '../../src/protocol';
-import {validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
+import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 
@@ -154,22 +154,21 @@ export class Coordinator {
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):finalQuestion;
     if(!finalQuestion||!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)throw new Error('Chọn profile và nhập câu hỏi cuối.');
-    await Promise.all(ids.map(id=>this.runBuffer?.flush(id)));
-    const runs=new Map<string,string>();
-    // Validate every member before any update, with bounded parallel DB reads.
-    for(let offset=0;offset<ids.length;offset+=4)await Promise.all(ids.slice(offset,offset+4).map(async id=>{
-      const s=await this.store.session(id);
-      if(!this.peers.has(id)||!s.run?.runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error(`${s.name}: chỉ cập nhật lượt đang chờ và chưa gửi.`);
-      if(finalQuestion.formId&&finalQuestion.formId!==s.run.formId)throw new Error(`${s.name}: câu hỏi đã chọn thuộc form khác.`);
-      runs.set(id,s.run.runId);
-    }));
     return Promise.all(ids.map(async id=>{
-      const runId=runs.get(id)!;let updated=false;
+      let updated=false;
       try{
+        // Flush/read/check each member independently. A running, offline or
+        // failed member must not hold up another member's SET + RESUME.
+        await this.runBuffer?.flush(id);
+        const before=await this.store.session(id);
+        if(!this.peers.has(id)||!before.run?.runId||before.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(before.run.status))return {id,ok:false,skipped:true,error:'Profile chưa sẵn sàng hoặc đã gửi; giữ nguyên lượt.'};
+        if(finalQuestion.formId&&finalQuestion.formId!==before.run.formId)return {id,ok:false,skipped:true,error:'Câu hỏi đã chọn thuộc form khác; giữ nguyên lượt.'};
+        if(resume&&!canApplyFinalQuestion(before.run,finalQuestion))return {id,ok:false,skipped:true,error:'Profile chưa tới câu hỏi này; có thể áp dụng sau.'};
+        const runId=before.run.runId;
         await this.command(id,'SET_FINAL_QUESTION',{finalQuestion},runId);
         await this.runBuffer?.flush(id);
         const s=await this.store.session(id);
-        if(!s.run||s.run.runId!==runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status))throw new Error('Lượt đã thay đổi trong lúc cập nhật.');
+        if(!s.run||s.run.runId!==runId||s.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(s.run.status)||resume&&!canApplyFinalQuestion(s.run,finalQuestion))throw new Error('Lượt đã thay đổi trong lúc cập nhật.');
         s.run.finalQuestion=structuredClone(finalQuestion);
         await this.store.saveRun(id,s.run);await this.store.saveSession(s);
         this.runBuffer?.refresh(id,s);this.changed();updated=true;
