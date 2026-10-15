@@ -42,7 +42,6 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
   const sent: ExtensionMessage[] = [];
   const sendMessage = vi.fn(async (message: ExtensionMessage) => {
     sent.push(message);
-    if (message.type === "TRUSTED_CLICK") return {dispatched:false};
     if (message.type === "GET_PROFILE") return profile;
     if (message.type === "UPLOAD_STORED_FILE") {
       if(extra.uploadDelay&&!message.checkOnly)await new Promise(resolve=>window.setTimeout(resolve,extra.uploadDelay));
@@ -82,14 +81,6 @@ it("HALT during upload never advances even if the upload subsequently completes"
   fixture.commit();
   await vi.advanceTimersByTimeAsync(2000);
   expect(fixture.next).not.toHaveBeenCalled();
-});
-
-it("reacts to a committed upload without paying the remaining 250ms polling interval",async()=>{
-  const fixture=await setup();fixture.commit();await vi.advanceTimersByTimeAsync(10);expect(fixture.next).toHaveBeenCalledTimes(1);expect(fixture.submit).not.toHaveBeenCalled();
-});
-
-it("keeps waiting when the matching filename is mounted before Picker closes",async()=>{
-  const fixture=await setup();document.querySelector('[data-item-id="file"]')!.insertAdjacentHTML('beforeend','<span>saved.png</span><button aria-label="Remove file">×</button>');await vi.advanceTimersByTimeAsync(300);expect(fixture.next).not.toHaveBeenCalled();document.querySelector('iframe')!.remove();await vi.advanceTimersByTimeAsync(10);expect(fixture.next).toHaveBeenCalledTimes(1);expect(fixture.submit).not.toHaveBeenCalled();
 });
 
 it("finishes dropdowns before opening Picker and fills text while upload is still pending", async () => {

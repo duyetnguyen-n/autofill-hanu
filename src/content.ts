@@ -77,19 +77,13 @@ function formId(): string {
 function pageFingerprint(): string {
   // Google Forms can retain hidden headings from earlier pages. Fingerprint only
   // the currently visible interactive cards so Next is recognized reliably.
-  const roots = findQuestionRoots();
-  const cards = roots.map(root => [stableQuestionId(root) ?? questionId(root,questionLabel(root)),questionLabel(root)]);
-  // Section-only pages are valid too. Do not truncate long pages: two
-  // sections can share the same first 700 characters.
-  const sections = Array.from(document.querySelectorAll<HTMLElement>('[role="heading"],h1,h2,h3'))
-    .filter(node=>visible(node)&&!node.closest('[role="dialog"],[role="alertdialog"]')&&!roots.some(root=>root.contains(node)))
-    .map(node=>node.textContent?.trim()??'');
+  const labels = findQuestionRoots().map(questionLabel).join("|");
   const navigation = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]'))
     .filter(visible)
     .map((node) => normalize(node.innerText ?? node.textContent ?? ""))
     .filter(text => /^(next|tiep(?:\s.*)?|trang tiep(?:\s.*)?|submit|gui|nop)$/.test(text))
     .join("|");
-  return JSON.stringify([location.pathname,cards,sections,navigation]);
+  return `${location.pathname}:${labels.slice(0, 700)}:${navigation}`;
 }
 
 function matchesOrHas(element: Element, selector: string): boolean {
@@ -668,9 +662,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
     // Allow that final update, without issuing another upload request.
     if (closed) closedAt ??= Date.now();
     if (closedAt !== undefined && Date.now() - closedAt >= 5000) break;
-    // Wake on the committed file chip/Picker closing instead of always paying
-    // another polling interval after Google has already finished the upload.
-    await waitForCondition(()=>uploadedFileMatches(question,reference.name)&&(!picker.isConnected||!visible(picker)),250,250);
+    await new Promise(resolve => window.setTimeout(resolve, 250));
   }
   question.element.dataset.hanuUploadError = "Chưa xác nhận được ảnh đã tải lên hoàn tất. Extension đã dừng; hãy kiểm tra Picker hoặc chọn ảnh thủ công.";
   return false;
@@ -911,36 +903,7 @@ async function blockForCorrection(message:string,question?:Question):Promise<voi
 }
 
 async function waitForPageChange(before: string): Promise<boolean> {
-  return waitForCondition(()=>{
-    // Temporarily empty loading screens are not pages we can fill. Required
-    // cards must have their controls mounted; instruction-only pages are valid.
-    if(!(button('next')||button('submit'))||!layoutReady())return false;
-    if(Array.from(document.querySelectorAll('[role="dialog"],[role="alertdialog"],[aria-busy="true"]')).some(visible))return false;
-    return pageFingerprint()!==before;
-  },7000,250,()=>pageFingerprint()===before&&Boolean(validationError()));
-}
-
-async function activateNext(next:HTMLElement):Promise<boolean>{
-  const usable=()=>active&&next.isConnected&&button('next')===next&&visible(next)
-    &&next.getAttribute('aria-disabled')!=='true'&&!(next instanceof HTMLButtonElement&&next.disabled);
-  if(!usable())return false;
-  next.scrollIntoView?.({block:'center',behavior:'auto'});
-  if(!usable())return false;
-  if(typeof document.elementFromPoint==='function'){
-    const {x,y}=pointerCoordinates(next),hit=document.elementFromPoint(x,y);
-    if(!hit||!(hit===next||next.contains(hit)))return false;
-  }
-  // Try browser input first. A dispatched click can still be loading, so it
-  // must not be repeated merely because a short timer has expired.
-  const reply=await chrome.runtime.sendMessage({type:'TRUSTED_CLICK',...pointerCoordinates(next)} satisfies ExtensionMessage)
-    .catch(()=>({ok:false})) as {ok?:boolean;dispatched?:boolean}|undefined;
-  if(reply?.dispatched)return active;
-  if(reply?.dispatched!==false)return active;
-  if(!usable())return false;
-  // Only an explicit pre-dispatch failure permits the DOM fallback. A missing
-  // acknowledgement could mean input was already sent, so do not repeat it.
-  next.click();
-  return active;
+  return waitForCondition(()=>pageFingerprint()!==before,7000,250,()=>Boolean(validationError()));
 }
 
 async function execute(depth = 0): Promise<void> {
@@ -1177,13 +1140,15 @@ async function execute(depth = 0): Promise<void> {
     await emit({ type: "failed", message: "Không tìm thấy nút Tiếp hoặc Gửi trên trang hiện tại." });
     return;
   }
-  const changed = await withAttention('Chuẩn bị bấm Tiếp',async()=>{
+  const changed = await withAttention('Chuyển trang form',async()=>{
     if(!await ensurePageReady()||!active)return false;
     const missing=questions().find(q=>q.required&&!manuallyHandled.has(q.id)&&!isFilled(q));
     if(missing){await blockForCorrection(`Câu bắt buộc chưa hoàn tất: ${missing.label}`,missing);return false;}
-    const before=pageFingerprint();
-    if(!await activateNext(next))return false;
-    return waitForPageChange(before);
+    const before=pageFingerprint();next.click();
+    if(await waitForPageChange(before))return true;
+    if(!active||validationError()||!next.isConnected||next.getAttribute('aria-disabled')==='true')return false;
+    // Retry only Next, never Submit, and only when there is no validation error.
+    return await trustedClick(next)?waitForPageChange(before):false;
   });
   if (!active) return;
   // Google Forms can retain an old aria-alert in the DOM after the next page

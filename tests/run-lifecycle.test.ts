@@ -29,7 +29,7 @@ async function fixture() {
     onMessage: { addListener: (fn: Listener) => { listener = fn; } },
     sendMessage: vi.fn(async (msg: ExtensionMessage) => {
       sent.push(msg);
-      return msg.type === 'TRUSTED_CLICK' ? {dispatched:false} : msg.type === 'GET_PROFILE' ? profile : undefined;
+      return msg.type === 'GET_PROFILE' ? profile : undefined;
     })
   }});
   const submit = vi.fn();

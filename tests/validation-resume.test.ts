@@ -15,7 +15,6 @@ async function fixture(extra='',mode:'test'|'live'='test'){
   document.querySelector('#next')!.addEventListener('click',next);
   vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:async(m:any)=>{
     sent.push(m);
-    if(m.type==='TRUSTED_CLICK')return {dispatched:false};
     if(m.type==='GET_PROFILE')return profile;
     if(m.type==='AUTO_RESUME'){listener({type:'RUN_CURRENT_PAGE',mode,runId:'run'},{},()=>{});return {ok:true,resumed:true};}
     if(m.type==='REQUEST_SUBMIT')return {granted:true};
