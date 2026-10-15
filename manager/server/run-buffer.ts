@@ -1,5 +1,5 @@
 import type { DataStore } from './data-store';
-import { canonicalFormId, type GroupView, type SessionView, type ExecutionView } from '../../src/protocol';
+import { sameExecution, canonicalFormId, type GroupView, type SessionView, type ExecutionView } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import { validCloudProgress } from '../cloud/progress';
 
@@ -83,7 +83,7 @@ export class RunBuffer {
   execution(id: string, execution: ExecutionView | null) {
     const entry = this.entries.get(id);
     if (!entry) return false;
-    if (JSON.stringify(entry.session.execution ?? null) !== JSON.stringify(execution)) {
+    if (!sameExecution(entry.session.execution,execution)) {
       entry.session.execution = structuredClone(execution);
       entry.executionDirty = true;
     }

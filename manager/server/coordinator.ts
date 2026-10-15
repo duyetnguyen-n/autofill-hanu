@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
-import { CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView } from '../../src/protocol';
+import { sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView } from '../../src/protocol';
 import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
@@ -86,7 +86,7 @@ export class Coordinator {
     await this.store.touch(id);if(message.type==='HEARTBEAT')return;const s=await this.store.session(id);
     if(message.type==='PROFILE_CHANGED'){s.synced=false;await this.store.saveSession(s);this.changed();return;}
     if(message.type==='STATE'){await this.acceptState(id,message.run);return;}
-    if(message.type==='EXECUTION'){if(JSON.stringify(s.execution??null)===JSON.stringify(message.execution??null))return;s.execution=message.execution??null;await this.store.saveSession(s);this.changed();return;}
+    if(message.type==='EXECUTION'){const ex=message.execution??null;if(sameExecution(s.execution,ex))return;s.execution=ex;await this.store.saveSession(s);this.changed();return;}
     if(message.type==='REQUEST' && typeof message.requestId==='string'){
       try{
         if(String(message.kind).startsWith('ATTENTION_')){

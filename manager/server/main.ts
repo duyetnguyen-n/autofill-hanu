@@ -25,7 +25,10 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   const state=()=>({sessions:store.sessions(),groups:store.groups(),platform:{os:process.platform,arch:process.arch},allowedExtensionIds:allowedIds(),emergencyError});
   function failClosed(error:unknown){if(!/database or disk is full|disk I\/O error/i.test(String(error)))return;emergencyError='Không lưu được tiến độ do ổ đĩa đầy hoặc lỗi ghi. Đã dừng các phiên. Giải phóng dung lượng rồi mở lại app.';for(const ws of coordinator.peers.values())if(ws.readyState===1){ws.send(JSON.stringify({type:'EMERGENCY_STOP',error:emergencyError}));ws.close(1011,'Storage unavailable');}try{coordinator.changed();}catch{}}
   function allowedIds():string[]{try{return JSON.parse(readFileSync(join(dir,'allowed-extensions.json'),'utf8'));}catch{return [];}}
-  coordinator.changed=()=>{const event=JSON.stringify({type:'STATE',...state()});for(const ws of browsers)if(ws.readyState===1)ws.send(event);};
+  const peerLastSeen=new Map<string,number>();
+  let changeTimer:ReturnType<typeof setTimeout>|undefined;let closing=false;
+  const broadcastNow=()=>{changeTimer=undefined;const event=JSON.stringify({type:'STATE',...state()});for(const ws of browsers)if(ws.readyState===1)ws.send(event);};
+  coordinator.changed=()=>{if(closing||changeTimer)return;changeTimer=setTimeout(broadcastNow,100);};
   const uiDir=options.uiDir??resolve(fileURLToPath(new URL('.',import.meta.url)),'../manager-ui');
   async function body(req:IncomingMessage){let size=0;const chunks:Buffer[]=[];for await(const chunk of req){size+=chunk.length;if(size>64*1024*1024)throw new Error('Yêu cầu quá lớn.');chunks.push(chunk);}return chunks.length?JSON.parse(Buffer.concat(chunks).toString()):{};}
   const server=createServer(async(req,res)=>{
@@ -81,21 +84,21 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
       if(emergencyError){ws.send(JSON.stringify({type:'EMERGENCY_STOP',error:emergencyError}));ws.close(1011,'Storage unavailable');return;}
       let id:string|undefined;const handshakeTimer=setTimeout(()=>ws.close(1008,'Handshake timeout'),10000);
       ws.on('message',async raw=>{try{const m=JSON.parse(raw.toString());if(m.protocol!==PROTOCOL_VERSION)throw new Error('Phiên bản giao thức không khớp.');
-        if(!id){if(!/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId))throw new Error('Mã phiên không hợp lệ.');if(m.type==='PAIR'){const token=store.pair(m.sessionId,m.code);await coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'PAIRED',token,sessionId:id}));}
-          else if(m.type==='HELLO'&&store.authenticate(m.sessionId,String(m.token??''))){await coordinator.connect(m.sessionId,ws);id=m.sessionId;ws.send(JSON.stringify({type:'WELCOME',sessionId:id}));}
+        if(!id){if(!/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId))throw new Error('Mã phiên không hợp lệ.');if(m.type==='PAIR'){const token=store.pair(m.sessionId,m.code);await coordinator.connect(m.sessionId,ws);id=String(m.sessionId);peerLastSeen.set(id,Date.now());ws.send(JSON.stringify({type:'PAIRED',token,sessionId:id}));}
+          else if(m.type==='HELLO'&&store.authenticate(m.sessionId,String(m.token??''))){await coordinator.connect(m.sessionId,ws);id=String(m.sessionId);peerLastSeen.set(id,Date.now());ws.send(JSON.stringify({type:'WELCOME',sessionId:id}));}
           else{ws.send(JSON.stringify({type:'UNPAIRED'}));return;}clearTimeout(handshakeTimer);void coordinator.pull(id!).catch(e=>{failClosed(e);try{const s=store.session(id!);s.error=(e as Error).message;store.saveSession(s);coordinator.changed();}catch(storageError){failClosed(storageError);}});
-        }else {if(m.sessionId!==id)throw new Error('Mã phiên không khớp kết nối.');if(m.type==='LOAD_FAILURE')await coordinator.failure(id,m.runId);else await coordinator.receive(id,m);}
+        }else {peerLastSeen.set(id,Date.now());if(m.sessionId!==id)throw new Error('Mã phiên không khớp kết nối.');if(m.type==='LOAD_FAILURE')await coordinator.failure(id,m.runId);else await coordinator.receive(id,m);}
       }catch(e){failClosed(e);if(ws.readyState===1)ws.send(JSON.stringify({type:'ERROR',error:(e as Error).message}));}});
-      ws.on('close',()=>{clearTimeout(handshakeTimer);if(id)void coordinator.disconnect(id,ws).catch(failClosed);});
+      ws.on('close',()=>{clearTimeout(handshakeTimer);peerLastSeen.delete(id??'');if(id)void coordinator.disconnect(id,ws).catch(failClosed);});
     });
   });
   await new Promise<void>(resolve=>server.listen(options.port??0,'127.0.0.1',resolve));const address=server.address() as {port:number};origin=`http://127.0.0.1:${address.port}`;
   const url=`${origin}/#token=${uiToken}`;
   privateWrite(join(dir,'connection.json'),JSON.stringify({port:address.port,bridgeToken,pid:process.pid,launchUrl:url}));
-  const heartbeat=setInterval(()=>{for(const[id,ws]of coordinator.peers){const s=store.session(id);if(Date.now()-Date.parse(s.lastSeen)>15000)ws.terminate();}},5000);
+  const heartbeat=setInterval(()=>{const now=Date.now();for(const[id,ws]of coordinator.peers){const seen=peerLastSeen.get(id)??0;if(now-seen>15000)ws.terminate();}},5000);
   coordinator.launchUrl=url;
   if(options.open)openManager(url);
-  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();await coordinator.settledConnections();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
+  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){closing=true;clearTimeout(changeTimer);coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();await coordinator.settledConnections();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
 }
 if(process.argv.includes('--serve')){
   const dir=dataDirectory();mkdirSync(dir,{recursive:true,mode:0o700});const lock=join(dir,'instance.lock');

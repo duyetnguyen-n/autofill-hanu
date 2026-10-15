@@ -10,6 +10,11 @@ export interface Command {
 }
 export interface ProfileDocument { profile: Profile; revision: number }
 export interface ExecutionView {runId?:string;tabId:number;mode:RunMode;status:RunState['status'];managed:boolean;tabOpen:boolean;active?:boolean;message?:string;startedAt?:string;updatedAt:string}
+export function sameExecution(a:ExecutionView|null|undefined,b:ExecutionView|null|undefined):boolean{
+  if(a==null||b==null)return a==null&&b==null;
+  const fields:Record<keyof ExecutionView,true>={runId:true,tabId:true,mode:true,status:true,managed:true,tabOpen:true,active:true,message:true,startedAt:true,updatedAt:true};
+  return (Object.keys(fields) as (keyof ExecutionView)[]).every(key=>a[key]===b[key]);
+}
 export interface SessionView {
   id: string; name: string; expectedEmail: string; connected: boolean;
   lastSeen: string; profile?: Profile; revision: number; synced: boolean;

@@ -167,11 +167,13 @@ async function dispatchTrustedClick(tabId: number, x: number, y: number): Promis
   if(renderGuards.get(tabId)?.cancelled)return false;
   const target = { tabId };
   let attached = false;
+  let inputAttempted = false;
   try {
     if(!renderGuards.has(tabId)){await chrome.debugger.attach(target, "1.3");attached=true;}
     // Google Forms' Material controls can ignore synthetic DOM clicks. CDP
     // creates a browser-trusted pointer sequence at the exact CSS position.
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0, pointerType: "mouse" });
+    inputAttempted = true;
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse" });
     await new Promise((resolve) => setTimeout(resolve, 18));
     await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" });
@@ -179,7 +181,9 @@ async function dispatchTrustedClick(tabId: number, x: number, y: number): Promis
   } catch {
     // Some managed Chromium builds block debugger. The content script retains
     // its DOM-event fallback in that case.
-    return false;
+    // After a press was attempted its outcome can be uncertain. Do not allow
+    // the caller to duplicate it with a DOM click; verify the page instead.
+    return inputAttempted;
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => undefined);
   }

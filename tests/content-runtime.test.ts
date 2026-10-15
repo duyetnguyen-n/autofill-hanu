@@ -32,7 +32,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? profile : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true };
         })
       }
     });
@@ -74,7 +74,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? profile : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true };
         })
       }
     });
@@ -113,7 +113,7 @@ describe("compiled content-script behavior", () => {
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-        sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PROFILE" ? profile : { ok: true })
+        sendMessage: vi.fn(async (message: { type: string }) => message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true })
       }
     });
 
@@ -168,7 +168,7 @@ describe("compiled content-script behavior", () => {
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-        sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PROFILE" ? profile : { ok: true })
+        sendMessage: vi.fn(async (message: { type: string }) => message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true })
       }
     });
 
@@ -196,7 +196,7 @@ describe("compiled content-script behavior", () => {
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-        sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PROFILE" ? profile : { ok: true })
+        sendMessage: vi.fn(async (message: { type: string }) => message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true })
       }
     });
 
@@ -262,7 +262,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? profile : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true };
         })
       }
     });
@@ -293,7 +293,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
         })
       }
     });
@@ -324,7 +324,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
         })
       }
     });
@@ -357,7 +357,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
         })
       }
     });
@@ -417,7 +417,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? profile : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true };
         })
       }
     });
@@ -450,7 +450,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
         })
       }
     });
@@ -489,7 +489,7 @@ describe("compiled content-script behavior", () => {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
         sendMessage: vi.fn(async (message: { type: string }) => {
           sent.push(message);
-          return message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
+          return message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? emptyProfile() : { ok: true };
         })
       }
     });
@@ -534,7 +534,7 @@ describe("compiled content-script behavior", () => {
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-        sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PROFILE" ? profile : { ok: true })
+        sendMessage: vi.fn(async (message: { type: string }) => message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true })
       }
     });
 
@@ -578,7 +578,7 @@ describe("compiled content-script behavior", () => {
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
-        sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PROFILE" ? profile : { ok: true })
+        sendMessage: vi.fn(async (message: { type: string }) => message.type === "TRUSTED_CLICK" ? { dispatched: false } : message.type === "GET_PROFILE" ? profile : { ok: true })
       }
     });
 

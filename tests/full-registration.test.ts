@@ -80,6 +80,7 @@ it('fills every registration page from blank, waits for upload, clears, and repe
   };
   vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:typeof listener)=>listener=fn},sendMessage:async(message:ExtensionMessage)=>{
     sent.push(message);
+    if(message.type==='TRUSTED_CLICK')return {dispatched:false};
     if(message.type==='GET_PROFILE')return profile;
     if(message.type==='UPLOAD_STORED_FILE'){
       if(message.checkOnly)return {state:'assigned'};

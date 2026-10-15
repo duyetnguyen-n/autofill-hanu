@@ -11,6 +11,13 @@ const stores:Store[]=[],dirs:string[]=[];
 afterEach(()=>{for(const store of stores)try{store.close();}catch{}for(const dir of dirs)rmSync(dir,{recursive:true,force:true});stores.length=dirs.length=0;});
 function setup(count=2){const dir=mkdtempSync(join(tmpdir(),'hanu-store-'));dirs.push(dir);const path=join(dir,'db.sqlite');const store=new Store(path);stores.push(store);const members=Array.from({length:count},(_,i)=>`session-${i}`);for(const id of members){const token=store.pair(id,store.pairCode());expect(store.authenticate(id,token)).toBe(true);const s=store.session(id);s.profile=emptyProfile();s.profile.values.fullName=id;s.expectedEmail=`${id}@example.com`;s.synced=true;s.run={runId:'group',sessionId:id,managed:true,formId:'form',tabId:1,mode:'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',eventSeq:0};store.saveSession(s);}store.saveGroup({id:'group',url:'https://docs.google.com/forms/d/e/form/viewform',mode:'live',members,paused:false,createdAt:''});return {store,path,members};}
 describe('durable coordinator state',()=>{
+  it('invalidates cached sessions after rollback and does not expose mutable cache references',()=>{
+    const {store,members}=setup(1),id=members[0],before=store.session(id).name;
+    expect(()=>store.transaction(()=>{const s=store.session(id);s.name='rollback';store.saveSession(s);throw new Error('rollback');})).toThrow('rollback');
+    expect(store.session(id).name).toBe(before);
+    store.sessions()[0].name='unsaved';expect(store.session(id).name).toBe(before);
+    const changed=store.session(id);changed.name='failed insert';expect(()=>store.saveSession(changed,'duplicate-token')).toThrow();expect(store.session(id).name).toBe(before);
+  });
   it('automatically resumes only an unsubmitted correction wait without unpausing a stopped group',async()=>{
     const {store,members}=setup(1),c=new Coordinator(store),commands=vi.fn(async()=>({})),id=members[0];c.command=commands;
     const s=store.session(id);s.run!.status='waiting_manual';s.run!.blockingIssue={reason:'validation',message:'Sai định dạng'};store.saveSession(s);

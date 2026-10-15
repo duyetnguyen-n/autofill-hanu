@@ -7,6 +7,8 @@ import type { DataStore } from './data-store';
 export const digest = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
 export class Store implements DataStore {
   db: DatabaseSync;
+  private sessionCache = new Map<string, SessionView>();
+  private sessionCacheDirty = true;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -20,10 +22,12 @@ export class Store implements DataStore {
     for (const s of this.sessions()) { s.connected = false; s.execution=undefined; if (s.run && !['completed','idle','ready_to_submit'].includes(s.run.status)) { s.run.status = s.run.submitAttempted ? 'submit_uncertain' : 'paused'; s.run.recoveryRequired = true; this.saveRun(s.id,s.run); } this.saveSession(s); }
     for(const group of this.groups())if(this.sessions().some(s=>s.run?.runId===group.id&&s.run.recoveryRequired)){group.paused=true;this.saveGroup(group);}
   }
-  transaction<T>(fn: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const value = fn(); this.db.exec('COMMIT'); return value; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }
-  sessions(): SessionView[] { return (this.db.prepare('SELECT data FROM sessions').all() as {data:string}[]).map(r => JSON.parse(r.data)); }
-  session(id: string): SessionView { const r = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as {data:string}|undefined; if (!r) throw new Error('Không tìm thấy profile.'); return JSON.parse(r.data); }
-  saveSession(s: SessionView, token?: string) { if (token) this.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(s.id,digest(token),JSON.stringify(s)); else this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(s),s.id); }
+  transaction<T>(fn: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const value = fn(); this.db.exec('COMMIT'); return value; } catch (e) { this.db.exec('ROLLBACK');this.sessionCache.clear();this.sessionCacheDirty=true;throw e; } }
+  private loadSessions(): SessionView[] { return (this.db.prepare('SELECT data FROM sessions').all() as {data:string}[]).map(r => JSON.parse(r.data)); }
+  private rebuildCache() { if (!this.sessionCacheDirty) return; this.sessionCache.clear(); for (const s of this.loadSessions()) this.sessionCache.set(s.id, s); this.sessionCacheDirty = false; }
+  sessions(): SessionView[] { this.rebuildCache(); return structuredClone([...this.sessionCache.values()]); }
+  session(id: string): SessionView { this.rebuildCache(); const cached = this.sessionCache.get(id); if (cached) return structuredClone(cached); const r = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as {data:string}|undefined; if (!r) throw new Error('Không tìm thấy profile.'); const parsed = JSON.parse(r.data); this.sessionCache.set(id, parsed); return structuredClone(parsed); }
+  saveSession(s: SessionView, token?: string) { if (token) this.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(s.id,digest(token),JSON.stringify(s)); else this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(s),s.id);this.sessionCache.set(s.id,structuredClone(s)); }
   authenticate(id: string, token: string): boolean { const row = this.db.prepare('SELECT token FROM sessions WHERE id=?').get(id) as {token:string}|undefined; return !!row && row.token === digest(token); }
   pairCode() { const code = randomBytes(6).toString('hex').toUpperCase(); this.db.prepare('INSERT INTO pairing VALUES(?,?)').run(digest(code),Date.now()+300000); return code; }
   pair(id: string, code: string) { return this.transaction(() => {
