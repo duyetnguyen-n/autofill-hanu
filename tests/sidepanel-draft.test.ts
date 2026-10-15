@@ -29,3 +29,34 @@ it('keeps unsaved values, custom fields and mappings when uploading, then saves 
   document.querySelector<HTMLButtonElement>('#saveProfile')!.click();
   await vi.waitFor(()=>expect(sent.find(m=>m.type==='SAVE_PROFILE')).toMatchObject({profile:{values:{fullName:'New draft name'},customFields:[{value:'New draft value'}],mappings:{'form:q':'fullName'},attachments:{identityDocument:attachment}}}));
 });
+
+it('follows a managed Start into its new tab and ignores an older acknowledgement or old-run event', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('__HANU_CLOUD_ORIGIN__','https://fixture.example');
+  document.body.innerHTML=readFileSync('sidepanel.html','utf8');
+  const stored=emptyProfile(),sent:any[]=[];let listener:any;
+  const old={runId:'old',managed:true,tabId:1,mode:'test',status:'idle',eventSeq:9,startedAt:'2026-10-15T00:00:00Z',logs:[]};
+  const next={...old,runId:'new',tabId:2,status:'waiting_manual',eventSeq:2,startedAt:'2026-10-16T00:00:00Z'};
+  vi.stubGlobal('chrome',{runtime:{getManifest:()=>({version:'test'}),onMessage:{addListener:(fn:any)=>{listener=fn;}},sendMessage:async(m:any)=>{
+    sent.push(m);
+    if(m.type==='GET_PANEL_STATE')return {profile:structuredClone(stored),run:old,tabId:1};
+    if(m.type==='NATIVE_STATUS')return {extensionId:'a'.repeat(32),connected:true};
+    if(m.type==='START_RUN'){
+      listener({type:'RUN_STATE_UPDATED',run:next});
+      return {...next,tabId:-1,eventSeq:0,status:'running'};
+    }
+    if(m.type==='PAUSE_RUN')return {...next,eventSeq:3,status:'paused'};
+    return {ok:true};
+  }}});
+  await import('../src/sidepanel');
+  await vi.waitFor(()=>expect(document.querySelector('#stateBadge')!.textContent).toBe('Sẵn sàng'));
+  expect(document.querySelector<HTMLButtonElement>('#startRun')!.hidden).toBe(false);
+  document.querySelector<HTMLButtonElement>('#startRun')!.click();
+  await vi.waitFor(()=>expect(document.querySelector('#stateBadge')!.textContent).toBe('Cần bạn xử lý'));
+  listener({type:'RUN_STATE_UPDATED',run:{...next,eventSeq:1,status:'running'}});
+  listener({type:'RUN_STATE_UPDATED',run:{...old,status:'running'}});
+  expect(document.querySelector('#stateBadge')!.textContent).toBe('Cần bạn xử lý');
+  document.querySelector<HTMLButtonElement>('#pauseRun')!.click();
+  await vi.waitFor(()=>expect(sent.find(m=>m.type==='PAUSE_RUN')).toMatchObject({tabId:2}));
+  await vi.waitFor(()=>expect(document.querySelector('#stateBadge')!.textContent).toBe('Đã tạm dừng'));
+});

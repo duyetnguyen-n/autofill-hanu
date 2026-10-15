@@ -164,3 +164,17 @@ it('imports extension-only edits while retaining unsaved manager drafts as confl
   const conflict = await c.pull(a.sessionId);
   expect(conflict).toMatchObject({ synced: false, managerDraft: true, profile: draft, conflict: { profile: local } });
 });
+
+it('does not treat PostgreSQL JSON key ordering as a conflict on legacy unsynced profiles', async () => {
+  const f = await setup(), a = await f.pair();
+  const c = new Coordinator(a.store, undefined, true);
+  const legacy = await a.store.session(a.sessionId);
+  legacy.synced = false;
+  await a.store.saveSession(legacy);
+  const reordered = Object.fromEntries(Object.entries(legacy.profile!).reverse());
+  expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(legacy.profile));
+  c.command = async () => ({ profile: reordered, revision: 4 });
+  const imported = await c.pull(a.sessionId);
+  expect(imported.synced).toBe(true); expect(imported.conflict).toBeUndefined();
+  expect(imported.profile).toEqual(legacy.profile);
+});

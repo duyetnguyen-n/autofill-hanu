@@ -237,6 +237,16 @@ function renderModeHelp(): void {
     : "Live sẽ tự bấm Gửi đúng một lần khi không còn trường bắt buộc hoặc xác thực chưa xử lý.";
 }
 
+function updateRun(next: RunState | undefined): void {
+  if(next?.managed&&run?.managed){
+    if(next.runId===run.runId&&((next.eventSeq??0)<(run.eventSeq??0)||next.tabId<0&&run.tabId>=0))return;
+    if(next.runId!==run.runId&&Date.parse(next.startedAt??'')<Date.parse(run.startedAt??''))return;
+  }
+  run=next;
+  if(next&&next.tabId>=0)tabId=next.tabId;
+  renderRun();
+}
+
 $(HTMLButtonElement, "#saveProfile").addEventListener("click", () => void saveProfile());
 $(HTMLSelectElement, "#runMode").addEventListener("change", renderModeHelp);
 $(HTMLButtonElement, "#scanForm").addEventListener("click", async () => {
@@ -252,24 +262,20 @@ $(HTMLButtonElement, "#addCustomField").addEventListener("click", () => {
 $(HTMLButtonElement, "#startRun").addEventListener("click", async () => {
   await saveProfile();
   if (tabId === undefined) throw new Error("Không tìm thấy tab đang mở.");
-  run = await send<RunState>({ type: "START_RUN", tabId, mode: $(HTMLSelectElement, "#runMode").value as RunMode });
-  renderRun();
+  updateRun(await send<RunState>({ type: "START_RUN", tabId, mode: $(HTMLSelectElement, "#runMode").value as RunMode }));
 });
 $(HTMLButtonElement, "#pauseRun").addEventListener("click", async () => {
   if (tabId === undefined) return;
-  run = await send<RunState | undefined>({ type: "PAUSE_RUN", tabId });
-  renderRun();
+  updateRun(await send<RunState | undefined>({ type: "PAUSE_RUN", tabId }));
 });
 $(HTMLButtonElement, "#resumeRun").addEventListener("click", async () => {
   await saveProfile();
   if (tabId === undefined) return;
-  run = await send<RunState | undefined>({ type: "RESUME_RUN", tabId });
-  renderRun();
+  updateRun(await send<RunState | undefined>({ type: "RESUME_RUN", tabId }));
 });
 $(HTMLButtonElement, "#stopRun").addEventListener("click", async () => {
   if (tabId === undefined) return;
-  run = await send<RunState | undefined>({ type: "STOP_RUN", tabId });
-  renderRun();
+  updateRun(await send<RunState | undefined>({ type: "STOP_RUN", tabId }));
 });
 $(HTMLButtonElement, "#saveMapping").addEventListener("click", async () => {
   const issue = run?.blockingIssue;
@@ -298,9 +304,8 @@ $(HTMLButtonElement, "#clearData").addEventListener("click", async () => {
 });
 
 chrome.runtime.onMessage.addListener((message: { type?: string; run?: RunState }) => {
-  if (message.type === "RUN_STATE_UPDATED" && message.run && message.run.tabId === tabId) {
-    run = message.run;
-    renderRun();
+  if (message.type === "RUN_STATE_UPDATED" && message.run && (message.run.tabId === tabId || cloudOrigin()&&message.run.managed)) {
+    updateRun(message.run);
   }
 });
 

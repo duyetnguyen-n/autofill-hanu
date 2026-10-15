@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
 import { sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView } from '../../src/protocol';
@@ -145,7 +146,7 @@ export class Coordinator {
   async pull(id:string) {
     await this.runBuffer?.flush(id);
     const s=await this.store.session(id);const document:ProfileDocument=await this.command(id,'READ_PROFILE');validateProfile(document.profile);
-    if(s.profile&&!s.synced&&s.managerDraft!==false&&JSON.stringify(s.profile)!==JSON.stringify(document.profile)){s.conflict=document;await this.store.saveSession(s);this.changed();return s;}
+    if(s.profile&&!s.synced&&s.managerDraft!==false&&!isDeepStrictEqual(s.profile,document.profile)){s.conflict=document;await this.store.saveSession(s);this.changed();return s;}
     await this.importDocument(id,document);return await this.store.session(id);
   }
   async importDocument(id:string,document:ProfileDocument){

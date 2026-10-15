@@ -281,3 +281,18 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - Harness cloud build trong thư mục tạm HANU_CLOUD_OUT_DIR riêng, không ghi
   đè dist-cloud mà Chrome người dùng đang nạp. Build production tại dist-cloud
   dùng đúng https://hanu-autofill.onrender.com, development=false, v1.3.2.
+
+
+### Kiểm tra sau deploy và dữ liệu legacy — 16/10/2026
+
+- Đã push/deploy d08fe15 và xác nhận Render Live, /healthz và /readyz 200.
+  Hai Chrome profile đang mở được Reload v1.3.2, giữ nguyên thư mục nạp, ID,
+  token và dữ liệu. Trên profile bị lỗi, nút Tiếp tục đã đi qua các trang form
+  thử Google, ảnh được Google xác nhận, dừng đúng câu xác thực; chỉ Test.
+- Kiểm tra nút Bắt đầu thật phát hiện xung đột giả trên dữ liệu legacy chưa
+  synced: hai profile JSONB bằng nhau ở database nhưng thứ tự khóa JSON trả từ
+  extension khác. Đổi pull sang isDeepStrictEqual và bổ sung ca hồi quy. Không
+  tự ghi đè hồ sơ khác giá trị hoặc gỡ khóa.
+- Panel theo run mới sang tab mới, không nhận đè acknowledgement eventSeq thấp,
+  tabId=-1 hoặc sự kiện của lượt cũ; có test trực tiếp với DOM sidepanel.
+- Sau bổ sung: typecheck và 301 ca / 39 file qua; build production v1.3.2 qua.
