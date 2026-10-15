@@ -17,6 +17,8 @@ export function sameExecution(a:ExecutionView|null|undefined,b:ExecutionView|nul
 }
 export interface SessionView {
   id: string; name: string; expectedEmail: string; connected: boolean;
+  /** Cloud token remains linked even while the Chrome profile is offline. */
+  linked?: boolean;
   lastSeen: string; profile?: Profile; revision: number; synced: boolean;
   conflict?: ProfileDocument; error?: string; run?: RunState; execution?:ExecutionView|null;
 }

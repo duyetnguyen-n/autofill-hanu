@@ -13,7 +13,8 @@ Tạo **project riêng** cho HANU, chọn region gần người dùng. Không ch
 trong project ứng dụng khác. Lưu mật khẩu database bằng trình quản lý mật khẩu.
 
 Trong SQL Editor chạy `supabase/migrations/202610130001_cloud.sql`, rồi
-`supabase/migrations/202610150001_user_access.sql`, mỗi file một lần. Hoặc
+`supabase/migrations/202610150001_user_access.sql`, tiếp theo
+`supabase/migrations/202610150002_google_approval_only.sql`, mỗi file một lần. Hoặc
 liên kết Supabase CLI và dùng `supabase db push`. Migration tạo schema `hanu`,
 RLS, khóa gửi, liên kết extension và bucket private `hanu-private` (10 MB/tệp).
 Không bật public cho bucket; không thêm policy public cho ảnh. Không expose

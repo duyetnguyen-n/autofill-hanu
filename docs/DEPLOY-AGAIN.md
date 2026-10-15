@@ -5,6 +5,12 @@ trước khi cập nhật. Bản này cần migration mới, cấu hình email a
 và build/Reload extension cloud; các bước cập nhật thông thường bên dưới
 chưa bao gồm ba thay đổi này.
 
+**Bản bỏ bước bổ sung thông tin và thêm Hủy liên kết:** nếu đã cài bản quản lý
+người dùng, chỉ chạy thêm `supabase/migrations/202610150002_google_approval_only.sql`
+rồi deploy backend/UI theo các bước dưới. Không cần build hoặc Reload extension
+cho đợt sửa này. Migration này đã được áp dụng vào Supabase đang cấu hình trong
+workspace ngày 15/10/2026; không cần chạy lại ở project đó.
+
 Website: https://hanu-autofill.onrender.com
 
 [Render của dịch vụ](https://dashboard.render.com/web/srv-db74o9qd0e5s73b25jng/deploys)

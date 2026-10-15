@@ -43,24 +43,24 @@ export class PostgresStore implements DataStore {
   constructor(public pool: SqlPool, public owner: string, public objects: PrivateObjects, public instance: string) {}
   private decode(row: any): SessionView {
     if (!row) throw new CloudError('Không tìm thấy profile.', 404);
-    const session = row.data as SessionView;
+    const session: SessionView = { ...row.data, linked: !row.revoked };
     this.versions.set(session, row.version);
     this.baselines.set(session, structuredClone(session));
     return session;
   }
   private async read(id: string, db: SqlConnection = this.pool, lock = false) {
-    const result = await db.query(`SELECT data,version FROM hanu.sessions WHERE owner=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.owner, id]);
+    const result = await db.query(`SELECT data,version,revoked FROM hanu.sessions WHERE owner=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.owner, id]);
     return this.decode(result.rows[0]);
   }
   private async write(s: SessionView, db: SqlConnection = this.pool, locked?: { data: SessionView; version: number }) {
     const version = this.versions.get(s);
     if (version === undefined) throw new CloudError('Đọc lại hồ sơ trước khi lưu.', 409);
     const original=this.baselines.get(s)!;
-    const row=locked??(await db.query('SELECT data,version FROM hanu.sessions WHERE owner=$1 AND id=$2 FOR UPDATE',[this.owner,s.id])).rows[0];
+    const row=locked??(await db.query('SELECT data,version,revoked FROM hanu.sessions WHERE owner=$1 AND id=$2 FOR UPDATE',[this.owner,s.id])).rows[0];
     if(!row)throw new CloudError('Không tìm thấy profile.',404);
-    const current=row.data as SessionView;
+    const current: SessionView = { ...row.data, linked: 'revoked' in row ? !row.revoked : row.data.linked };
     const fields=[...new Set([...Object.keys(original),...Object.keys(s)])] as (keyof SessionView)[];
-    const changed=fields.filter(key=>JSON.stringify(s[key])!==JSON.stringify(original[key]));
+    const changed=fields.filter(key=>key!=='linked'&&JSON.stringify(s[key])!==JSON.stringify(original[key]));
     let mergeQuestion=false;
     if(changed.includes('run')&&s.run&&original.run&&current.run&&JSON.stringify(current.run)!==JSON.stringify(original.run)){
       const runFields=[...new Set([...Object.keys(original.run),...Object.keys(s.run)])] as (keyof RunState)[];
@@ -76,7 +76,7 @@ export class PostgresStore implements DataStore {
     }
     const merged={...current,...Object.fromEntries(changed.map(key=>[key,s[key]]))} as SessionView;
     if(mergeQuestion)merged.run={...current.run!,finalQuestion:s.run!.finalQuestion};
-    const result = await db.query('UPDATE hanu.sessions SET data=$3,version=version+1 WHERE owner=$1 AND id=$2 AND version=$4 RETURNING version', [this.owner, s.id, JSON.stringify(merged), row.version]);
+    const result = await db.query('UPDATE hanu.sessions SET data=$3,version=version+1 WHERE owner=$1 AND id=$2 AND version=$4 RETURNING version', [this.owner, s.id, JSON.stringify({ ...merged, linked: undefined }), row.version]);
     if (!result.rowCount) throw new CloudError('Profile vừa thay đổi. Đọc lại trước khi tiếp tục.', 409);
     for(const key of Object.keys(s))delete (s as any)[key];Object.assign(s,merged);
     this.versions.set(s, result.rows[0].version);
@@ -87,7 +87,7 @@ export class PostgresStore implements DataStore {
     if (!result.rowCount) throw new CloudError('Bộ điều phối đã mất quyền chạy. Đã ngừng cấp lệnh.', 503);
   }
   async sessions() {
-    return (await this.pool.query('SELECT data,version FROM hanu.sessions WHERE owner=$1 ORDER BY created_at,id', [this.owner])).rows.map(row => this.decode(row));
+    return (await this.pool.query('SELECT data,version,revoked FROM hanu.sessions WHERE owner=$1 ORDER BY created_at,id', [this.owner])).rows.map(row => this.decode(row));
   }
   session(id: string) { return this.read(id); }
   async saveSession(s: SessionView) {
@@ -148,7 +148,7 @@ export class PostgresStore implements DataStore {
       await assertCapacity(db, account, sessions.map(s => s.id));
       // Lock in a stable order to avoid deadlocks between overlapping starts.
       const ids = sessions.map(s => s.id);
-      const rows = (await db.query('SELECT id,data,version FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE', [this.owner, ids])).rows;
+      const rows = (await db.query('SELECT id,data,version,revoked FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE', [this.owner, ids])).rows;
       const locked = new Map(rows.map(row => [row.id, this.decode(row)]));
       const form = canonicalFormId(g.url);
       const blocked = form ? new Set((await db.query("SELECT session FROM hanu.locks WHERE owner=$1 AND session=ANY($2::text[]) AND form=$3 AND resolution!='not_received'", [this.owner, ids, form])).rows.map(row => row.session)) : new Set();
@@ -166,7 +166,7 @@ export class PostgresStore implements DataStore {
         [this.owner, JSON.stringify(sessions.map(s => ({ session:s.id,id:s.run!.runId,data:s.run,seq:s.run!.eventSeq??0 })))]);
       const updated = (await db.query(`UPDATE hanu.sessions s SET data=p.data,version=s.version+1
         FROM jsonb_to_recordset($2::jsonb) AS p(id text,data jsonb) WHERE s.owner=$1 AND s.id=p.id RETURNING s.id,s.version`,
-        [this.owner, JSON.stringify(sessions.map(s => ({id:s.id,data:s})))])).rows;
+        [this.owner, JSON.stringify(sessions.map(s => ({id:s.id,data:{...s,linked:undefined}})))])).rows;
       const versions = new Map(updated.map(row => [row.id,row.version]));
       for (const s of sessions) { this.versions.set(s,versions.get(s.id));this.baselines.set(s,structuredClone(s)); }
     });
@@ -348,6 +348,11 @@ export class CloudRepository {
   }
   async revoke(owner: string, id: string) {
     await this.store(owner).connected(id, false);
-    await this.pool.query('UPDATE hanu.sessions SET revoked=true,token_hash=$3 WHERE owner=$1 AND id=$2', [owner, id, digest(randomBytes(32))]);
+    await transaction(this.pool, async db => {
+      // Match pairing's lock order, and invalidate pending relink codes too.
+      await db.query('SELECT user_id FROM hanu.accounts WHERE user_id=$1 FOR UPDATE', [owner]);
+      await db.query('DELETE FROM hanu.pairing WHERE owner=$1 AND replace_session=$2', [owner, id]);
+      await db.query('UPDATE hanu.sessions SET revoked=true,token_hash=$3 WHERE owner=$1 AND id=$2', [owner, id, digest(randomBytes(32))]);
+    });
   }
 }

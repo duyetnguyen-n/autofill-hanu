@@ -38,7 +38,8 @@ try {
   await page.getByLabel('Tìm người dùng').fill('binh@example.test');
   await expect(page.getByRole('table').locator('tbody tr')).toHaveCount(1);
   await page.getByRole('button', { name: 'Xét duyệt', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText('Chưa bổ sung');
+  await expect(page.getByRole('dialog')).toContainText('binh@example.test');
+  await expect(page.getByRole('dialog')).not.toContainText('hoàn tất thông tin');
   await page.screenshot({ path: 'test-results/access-admin-detail.png', fullPage: true });
   await page.getByLabel('Đóng chi tiết tài khoản').click();
 
@@ -46,15 +47,19 @@ try {
   await member.addCookies([{ name: 'test-account', value: 'account-b', url: app.config.origin }]);
   const user = await member.newPage(); user.on('pageerror', e => errors.push(e.message));
   await user.goto(app.config.origin);
-  await expect(user.getByRole('heading', { name: 'Một vài thông tin trước khi bắt đầu.' })).toBeVisible();
-  await user.screenshot({ path: 'test-results/access-onboarding.png', fullPage: true });
-  await user.getByLabel('Tên liên hệ').fill('Bình Nguyễn');
-  await user.getByLabel('Số điện thoại / Zalo').fill('0902345678');
-  await user.getByLabel('Mục đích sử dụng').fill('Chuẩn bị hồ sơ HSK cho nhóm học viên');
-  await user.getByRole('checkbox').check();
-  await user.getByRole('button', { name: 'Lưu thông tin', exact: true }).click();
   await expect(user.getByRole('heading', { name: 'Yêu cầu của bạn đang chờ duyệt.' })).toBeVisible();
+  await expect(user.getByRole('textbox')).toHaveCount(0);
+  await expect(user.getByRole('checkbox')).toHaveCount(0);
   await user.screenshot({ path: 'test-results/access-pending.png', fullPage: true });
+  await user.setViewportSize({ width: 390, height: 844 });
+  expect(await user.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await user.screenshot({ path: 'test-results/access-pending-mobile.png', fullPage: true });
+  await user.emulateMedia({ colorScheme: 'dark' }); await user.reload();
+  await expect(user.getByRole('heading', { name: 'Yêu cầu của bạn đang chờ duyệt.' })).toBeVisible();
+  await user.screenshot({ path: 'test-results/access-pending-dark-mobile.png', fullPage: true });
+  await user.emulateMedia({ colorScheme: 'light' });
+  await user.setViewportSize({ width: 1440, height: 1000 }); await user.reload();
+
 
   await page.getByLabel('Tìm người dùng').fill('binh@example.test');
   await page.getByLabel('Làm mới danh sách').click();
@@ -70,6 +75,34 @@ try {
   await expect(user.getByRole('heading', { name: 'Quản lý các phiên' })).toBeVisible();
   await expect(user.locator('table')).toContainText('Chrome thử An');
   await expect(user.locator('option[value=live]')).toBeDisabled();
+  const memberStore = app.repository.store(users[1]);
+  await memberStore.connected(paired.sessionId, false);
+  // Refresh the manager snapshot after this fixture-only disconnect.
+  app.app.runtimes.get(users[1])!.coordinator.changed();
+  await expect(user.locator('table')).toContainText('Mất kết nối');
+  await expect(user.getByRole('button', { name: 'Hủy liên kết Chrome thử An', exact: true })).toBeEnabled();
+  await user.getByRole('button', { name: 'Hủy liên kết Chrome thử An', exact: true }).click();
+  await expect(user.getByRole('dialog')).toContainText('Hồ sơ, ảnh, lịch sử');
+  await user.screenshot({ path: 'test-results/access-unlink-confirm.png', fullPage: true });
+  await user.getByRole('button', { name: 'Giữ liên kết', exact: true }).click();
+  expect((await memberStore.session(paired.sessionId)).linked).toBe(true);
+  await user.getByRole('button', { name: 'Chi tiết', exact: true }).click();
+  await user.getByRole('button', { name: 'Hủy liên kết', exact: true }).click();
+  await expect(user.getByRole('region', { name: 'Xác nhận hủy liên kết' })).toBeVisible();
+  await user.screenshot({ path: 'test-results/access-unlink-detail.png', fullPage: true });
+  await user.getByRole('button', { name: 'Giữ liên kết', exact: true }).click();
+  await user.getByRole('button', { name: 'Đóng chi tiết', exact: true }).first().click();
+  await user.getByRole('button', { name: 'Hủy liên kết Chrome thử An', exact: true }).click();
+  await user.getByRole('dialog').getByRole('button', { name: 'Hủy liên kết', exact: true }).click();
+  await expect(user.locator('table')).toContainText('Đã hủy liên kết');
+  await user.getByRole('button', { name: 'Chi tiết', exact: true }).click();
+  await expect(user.getByRole('dialog')).toContainText('Đã hủy liên kết');
+  await expect(user.getByRole('button', { name: 'Liên kết lại', exact: true })).toBeEnabled();
+  expect((await memberStore.session(paired.sessionId)).profile?.values.fullName).toBe('Chrome thử An');
+  await user.getByRole('button', { name: 'Đóng chi tiết', exact: true }).first().click();
+  await expect(user.locator('table')).toContainText('Đã hủy liên kết');
+  await expect(user.getByRole('button', { name: 'Hủy liên kết Chrome thử An', exact: true })).toHaveCount(0);
+  await user.screenshot({ path: 'test-results/access-unlinked.png', fullPage: true });
   await user.goto(`${app.config.origin}/admin`);
   await expect(user.getByRole('heading', { name: 'Chỉ dành cho quản trị viên' })).toBeVisible();
   expect(await user.evaluate(async () => (await fetch('/api/admin/accounts')).status)).toBe(403);
@@ -104,5 +137,5 @@ try {
   await user.emulateMedia({ colorScheme: 'dark' }); await user.reload();
   await user.screenshot({ path: 'test-results/access-account-dark.png', fullPage: true });
   expect(errors).toEqual([]);
-  console.log('PASS: admin light/dark/mobile, search, account detail, onboarding, pending, approval, quotas, pre-approval, audit, member/admin separation and account lock. Synthetic fixtures only.');
+  console.log('PASS: admin light/dark/mobile, search, account detail, Google-only pending and approval, offline unlink, quotas, pre-approval, audit, member/admin separation and account lock. Synthetic fixtures only.');
 } catch(error) { for(const context of browser.contexts()) for(const page of context.pages()) { console.log('FAIL PAGE',page.url(),(await page.locator('body').innerText()).slice(0,6000)); await page.screenshot({path:`test-results/access-failure-${browser.contexts().indexOf(context)}.png`,fullPage:true}); } throw error; } finally { await browser.close(); await app.close(); }

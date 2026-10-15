@@ -1,12 +1,15 @@
 # Quản lý người dùng và quyền truy cập
 
-Bản cloud có đăng nhập Google, bổ sung thông tin liên hệ, xét duyệt tài khoản
+Bản cloud có đăng nhập Google, xét duyệt tài khoản
 và trang `/admin`. Bản local tiếp tục dùng dữ liệu và cơ chế kết nối cũ.
 
 ## Cập nhật hệ thống đang chạy
 
 1. Trong Supabase SQL Editor, chạy **một lần** migration
    `supabase/migrations/202610150001_user_access.sql`, sau migration cloud cũ.
+   Sau đó chạy `supabase/migrations/202610150002_google_approval_only.sql`
+   để bỏ điều kiện thông tin liên hệ trong RLS. Nếu đã chạy migration 001,
+   chỉ cần chạy thêm migration 002; không chạy lại migration 001.
    Migration giữ nguyên hồ sơ, ảnh, lượt chạy và khóa gửi. Tài khoản hiện có
    được đưa vào danh sách chờ duyệt; không tự động cấp quyền cho người dùng cũ.
 2. Trong biến môi trường backend/Render, đặt
@@ -23,8 +26,8 @@ và trang `/admin`. Bản local tiếp tục dùng dữ liệu và cơ chế k�
    chép đè **trong thư mục Chrome đang nạp**, rồi Reload. Không Remove extension
    hoặc xóa dữ liệu. Backend mới từ chối client cũ chưa hỗ trợ `accessPolicy:1`.
 6. Trong `/admin`, duyệt từng người, đặt giới hạn, hạn dùng và quyền Live.
-   Tài khoản phải có email Google đã xác minh và đủ thông tin liên hệ mới dùng
-   được sản phẩm. Admin được miễn bước bổ sung liên hệ.
+   Tài khoản có email Google đã xác minh được dùng ngay sau khi duyệt.
+   Không yêu cầu tên liên hệ, số điện thoại, mục đích hoặc bước xác nhận thêm.
 
 Đây là thay đổi cần migration **và** cập nhật extension; hướng dẫn cập nhật
 website không đổi giao thức trước đây không đủ cho bản này. Việc chạy migration
@@ -33,15 +36,15 @@ mới đã hoạt động. Không rollback về backend cũ nếu cần duy trì
 
 ## Cách vận hành
 
-- **Chờ duyệt:** người dùng đăng nhập, hoàn tất tên liên hệ, điện thoại/Zalo,
-  mục đích và xác nhận dùng thông tin cho xét duyệt/hỗ trợ. Họ không được đọc
+- **Chờ duyệt:** người dùng đăng nhập Google rồi chờ quản trị viên duyệt,
+  không điền thêm biểu mẫu. Họ không được đọc
   hồ sơ cloud, tạo mã liên kết, nhập dữ liệu hoặc chạy profile.
 - **Hoạt động:** chỉ dùng theo quyền và hạn được cấp. `/account` hiển thị quyền
-  của chính tài khoản; người dùng có thể sửa thông tin liên hệ tại đó.
+  của chính tài khoản và thông tin Google dùng để nhận diện.
 - **Khóa / từ chối / hết hạn:** chặn các thao tác sản phẩm. Đăng nhập, đăng xuất
-  và xem/sửa thông tin tài khoản vẫn được phép. Khóa không xóa dữ liệu.
+  và xem thông tin tài khoản vẫn được phép. Khóa không xóa dữ liệu.
 - **Cấp quyền trước:** dành cho email chưa có tài khoản, không gửi email mời.
-  Người dùng vẫn đăng nhập Google và bổ sung thông tin. Quyền được nhận một lần
+  Người dùng đăng nhập Google là có quyền sử dụng ngay. Quyền được nhận một lần
   khi email xác minh khớp; đăng nhập lại không mở khóa tài khoản bị khóa/từ chối.
 - **Thay đổi quyền:** xóa mã liên kết chưa dùng. Khóa, từ chối, hết hạn, tắt
   Live hoặc giảm số chạy đồng thời sẽ hủy vé WebSocket chưa dùng, ngắt kênh
@@ -51,8 +54,12 @@ mới đã hoạt động. Không rollback về backend cũ nếu cần duy trì
   được kiểm tra định kỳ tối đa khoảng 5 giây; quyền gửi được kiểm tra trong
   transaction ngay trước khi cấp. Một thao tác đã được Google nhận không thể
   bị thu hồi; trạng thái gửi chưa rõ và khóa chống gửi lại được giữ.
-- **Thu hồi extension:** hủy token của đúng profile. Hồ sơ và lịch sử vẫn giữ;
-  người dùng phải liên kết lại bằng mã mới. Không ảnh hưởng profile khác.
+- **Hủy liên kết:** người dùng chọn **Hủy liên kết** ở dòng profile hoặc trong
+  **Chi tiết**, rồi xác nhận. Dùng được cả khi Chrome đang offline. Hệ thống
+  hủy token và mã liên kết lại chưa dùng của đúng profile, hiển thị
+  **Đã hủy liên kết**. Hồ sơ, ảnh, lịch sử và khóa chống gửi lại vẫn giữ;
+  chọn **Liên kết lại** để tạo mã mới. Không ảnh hưởng profile khác.
+  Admin cũng có thể thu hồi extension trong chi tiết tài khoản.
 - **Giới hạn profile:** tính cả profile đã nhập hoặc đã thu hồi. Hạ giới hạn
   không xóa profile cũ; người dùng không thêm được khi đã đạt/vượt giới hạn.
 - **Chạy đồng thời:** áp dụng cho Start và Resume, cộng cả các lượt Test/Live
@@ -73,8 +80,10 @@ lượt 100 và 200 mục mới nhất.
 
 Google identity cung cấp mã định danh, email xác minh, tên và ảnh đại diện nếu
 có. Backend kiểm tra trạng thái xác minh từ identity trả bởi Supabase Auth,
-không dùng `user_metadata` có thể sửa để cấp quyền. Điện thoại/Zalo là tự khai,
-**chưa xác minh OTP**. Hệ thống lưu ngày đăng ký, lần đăng nhập và hoạt động gần
+không dùng `user_metadata` có thể sửa để cấp quyền. Không yêu cầu người dùng
+nhập thông tin liên hệ bổ sung; các trường liên hệ từ phiên bản cũ được giữ
+để tránh mất dữ liệu, không còn là điều kiện truy cập. Hệ thống lưu ngày
+đăng ký, lần đăng nhập và hoạt động gần
 nhất, số profile, số lượt Test/Live, giới hạn và nhật ký quản trị. Không thêm
 quyền Gmail/Drive, không thu mật khẩu hoặc cookie Google.
 
@@ -98,6 +107,6 @@ npm run test:access-ui
 ```
 
 Các bài dùng tài khoản, database và form giả. `test:access-ui` chụp ảnh sáng/tối,
-mobile, onboarding và trang quản trị trong `test-results/access-*.png`. Không
+mobile, chờ duyệt, hủy liên kết và trang quản trị trong `test-results/access-*.png`. Không
 thay thế nghiệm thu OAuth/migration/deploy thật. Không chạy fixture hoặc dùng
 tài khoản giả trong project Supabase production.

@@ -20,7 +20,6 @@ export function assertAccess(account?: Account): asserts account is Account {
   if (!account.emailVerified) throw new CloudError('Email Google chưa được xác minh.', 403, 'ACCESS_DENIED');
   const messages = { pending: 'Tài khoản đang chờ quản trị viên duyệt.', blocked: 'Tài khoản đã bị khóa.', rejected: 'Yêu cầu sử dụng chưa được chấp thuận.', expired: 'Quyền sử dụng đã hết hạn. Liên hệ quản trị viên để gia hạn.' };
   if (account.status !== 'active') throw new CloudError(messages[account.status], 403, 'ACCESS_DENIED');
-  if (account.role !== 'admin' && !account.profileComplete) throw new CloudError('Hoàn tất thông tin liên hệ trước khi sử dụng.', 403, 'ACCESS_DENIED');
 }
 export async function requireAccount(db: SqlConnection, owner: string, lock = false) {
   const row = (await db.query(`SELECT * FROM hanu.accounts WHERE user_id=$1${lock ? ' FOR UPDATE' : ''}`, [owner])).rows[0];

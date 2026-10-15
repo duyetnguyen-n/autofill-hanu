@@ -22,6 +22,7 @@ export async function databaseFixture() {
     INSERT INTO auth.users VALUES('${users[0]}'),('${users[1]}');`);
   await db.exec(await readFile('supabase/migrations/202610130001_cloud.sql', 'utf8'));
   await db.exec(await readFile('supabase/migrations/202610150001_user_access.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202610150002_google_approval_only.sql', 'utf8'));
   // Existing tests opt into approved synthetic accounts; new access tests remove
   // these grants explicitly to exercise the default pending state.
   await db.exec(`INSERT INTO hanu.accounts(user_id,email,email_verified,name,status,contact_name,phone,purpose,consent_at,max_profiles,max_concurrent,live_enabled)

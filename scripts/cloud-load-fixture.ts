@@ -33,6 +33,7 @@ export async function loadFixture(databaseUrl?: string) {
     CREATE SCHEMA storage; CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);`);
     await pg.query(await readFile('supabase/migrations/202610130001_cloud.sql', 'utf8'));
     await pg.query(await readFile('supabase/migrations/202610150001_user_access.sql', 'utf8'));
+    await pg.query(await readFile('supabase/migrations/202610150002_google_approval_only.sql', 'utf8'));
     const blobs = new Map<string, Buffer>();
     const objects: PrivateObjects = {
       async put(path, bytes) { blobs.set(path, Buffer.from(bytes)); },

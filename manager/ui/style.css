@@ -28,3 +28,5 @@
 .login-skeleton{width:260px;height:36px;background:#edf4ef;border-radius:6px}
 .account-email{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--colorNeutralForeground2)}
 @media(max-width:760px){.login-page{grid-template-columns:1fr}.login-story{padding:28px 24px;border-right:0;border-bottom:1px solid #dae5dc}.login-copy{padding:38px 0 18px}.login-copy h1{font-size:30px}.login-footnote{display:none}.login-panel{padding:40px 24px 60px}.account-email{max-width:130px}.top-actions{flex-wrap:wrap}}
+
+.profile-unlink-confirm{border-left:3px solid var(--danger);background:var(--danger-bg);padding:16px;margin-bottom:24px;border-radius:0 7px 7px 0}.drawer-content .profile-unlink-confirm h3{margin:0 0 8px}.profile-unlink-confirm p{font-size:12px;line-height:1.65;color:var(--muted)}.profile-unlink-confirm .access-form-actions{margin-top:16px}

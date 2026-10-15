@@ -96,3 +96,31 @@ it('logout closes the browser session and invalidates unused tickets while linke
   expect((await f.api('auth/logout', 0, {})).status).toBe(200); expect(await closed).toBe(1008);
   expect((await f.api('state', 0)).status).toBe(401); expect(a.ws.readyState).toBe(WebSocket.OPEN);
 });
+
+
+it('unlinks offline profiles, invalidates pending relink codes and preserves data through a new link', async () => {
+  const f = await setup(), a = await f.pair();
+  await a.store.connected(a.sessionId, false);
+  const other = await f.pair();
+  const snapshot = await a.store.session(a.sessionId);
+  const run = { runId: 'retained-run', sessionId: a.sessionId, status: 'completed' } as any;
+  await f.pool.query('INSERT INTO hanu.groups(owner,id,data) VALUES($1,$2,$3)', [users[0], run.runId, JSON.stringify({ id: run.runId, members: [a.sessionId], mode: 'live' })]);
+  await a.store.saveRun(a.sessionId, run);
+  await f.pool.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,'retained-form','retained-run','received')", [users[0], a.sessionId]);
+  const oldCode = await f.repository.pairCode(users[0], a.sessionId);
+  expect(snapshot.linked).toBe(true);
+  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(200);
+  expect(await f.repository.authenticate(a.sessionId, extension, a.token)).toBeUndefined();
+  await expect(f.repository.pair(crypto.randomUUID(), extension, oldCode)).rejects.toMatchObject({ status: 401 });
+  const state = await (await f.api('state')).json();
+  expect(state.sessions.find((s: any) => s.id === a.sessionId)).toMatchObject({ linked: false, connected: false, profile: snapshot.profile });
+  expect(await a.store.history(a.sessionId)).toEqual([run]);
+  expect(await a.store.blocked(a.sessionId, 'retained-form')).toBe(true);
+  expect(await f.repository.authenticate(other.sessionId, extension, other.token)).toBe(users[0]);
+  const newCode = await f.repository.pairCode(users[0], a.sessionId);
+  const relink = await f.repository.pair(crypto.randomUUID(), extension, newCode);
+  expect(relink.sessionId).toBe(a.sessionId);
+  expect(await a.store.session(a.sessionId)).toMatchObject({ linked: true, profile: snapshot.profile });
+  expect(await a.store.history(a.sessionId)).toEqual([run]);
+  expect(await a.store.blocked(a.sessionId, 'retained-form')).toBe(true);
+});

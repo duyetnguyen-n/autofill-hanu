@@ -350,6 +350,7 @@ export async function serveCloud(options: {
               // Closing the socket halts the client, revocation prevents HELLO.
               const peer = coordinator.peers.get(id);
               peer?.send(JSON.stringify({ type: 'REVOKED' })); peer?.close(1008, 'Unlinked');
+              if (peer) await coordinator.disconnect(id, peer);
               coordinator.runBuffer?.halt(id);await coordinator.runBuffer?.flush(id);coordinator.runBuffer?.forget(id);
               await repository.revoke(user.id, id); coordinator.changed(); return json(res, { ok: true });
             }

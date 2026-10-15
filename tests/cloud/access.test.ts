@@ -29,7 +29,7 @@ async function connect(origin: string, path: string, hello: object) {
   return { ws, messages };
 }
 
-it('creates pending users, keeps approval server-owned, and requires a verified, complete profile', async () => {
+it('lets verified Google users enter immediately after approval without contact information', async () => {
   const f = await http();
   await f.pool.query('DELETE FROM hanu.accounts WHERE user_id=$1', [users[1]]);
   const me = await (await f.api('auth/me', 1)).json();
@@ -40,10 +40,19 @@ it('creates pending users, keeps approval server-owned, and requires a verified,
   expect((await f.api('admin/accounts', 1)).status).toBe(403);
   expect((await f.api('account', 1, { ...profile, role: 'admin', status: 'active' }, 'PATCH')).status).toBe(400);
   expect((await f.api('account', 1, { ...profile, consent: false }, 'PATCH')).status).toBe(400);
-  expect((await f.api('account', 1, profile, 'PATCH')).status).toBe(200);
-  expect((await f.api('state', 1)).status).toBe(403);
   expect((await update(f)).status).toBe(200);
   expect((await f.api('state', 1)).status).toBe(200);
+  expect(await (await f.api('auth/me', 1)).json()).toMatchObject({ profileComplete: false, contactName: '', phone: '', purpose: '' });
+  expect((await f.api('pair', 1, {})).status).toBe(200);
+  const paired = await f.pair(users[1]);
+  await f.db.exec(`SET ROLE authenticated; SET request.jwt.claim.sub='${users[1]}'`);
+  try { expect((await f.db.query('SELECT id FROM hanu.sessions')).rows).toEqual([{ id: paired.sessionId }]); }
+  finally { await f.db.exec('RESET ROLE; RESET request.jwt.claim.sub'); }
+  await f.pool.query('UPDATE hanu.accounts SET email_verified=false WHERE user_id=$1', [users[1]]);
+  await expect(requireAccount(f.pool, users[1])).rejects.toMatchObject({ status: 403 });
+  await f.db.exec(`SET ROLE authenticated; SET request.jwt.claim.sub='${users[1]}'`);
+  try { expect((await f.db.query('SELECT id FROM hanu.sessions')).rows).toEqual([]); }
+  finally { await f.db.exec('RESET ROLE; RESET request.jwt.claim.sub'); }
   const events = await (await f.api('admin/events')).json();
   expect(events).toContainEqual(expect.objectContaining({ action: 'update_access', targetEmail: 'binh@example.test', actorEmail: 'an@example.test' }));
 }, 20000);
@@ -67,9 +76,7 @@ it('consumes pre-approvals only on a verified first login and never reactivates 
   const accounts = new Accounts(f.pool);
   expect(await accounts.identify(identity(1))).toMatchObject({ status: 'active', maxProfiles: 8, maxConcurrent: 4, profileComplete: false });
   expect(await accounts.grants()).toEqual([]);
-  await expect(requireAccount(f.pool, users[1])).rejects.toMatchObject({ status: 403 });
-  await accounts.profile(users[1], profile);
-  expect(await requireAccount(f.pool, users[1])).toMatchObject({ status: 'active' });
+  expect(await requireAccount(f.pool, users[1])).toMatchObject({ status: 'active', profileComplete: false, phone: '', purpose: '' });
   await f.pool.query("UPDATE hanu.accounts SET status='blocked' WHERE user_id=$1", [users[1]]);
   expect((await f.api('admin/grants', 0, grant)).status).toBe(409);
   expect(await accounts.identify({ ...identity(1), sessionKey: 'returning' })).toMatchObject({ status: 'blocked' });

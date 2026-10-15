@@ -209,3 +209,29 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - Sau lượt hai, dừng tự động và quay lại từng trang của 4 tab Chrome truy cập được. Đối chiếu 14 trường/profile với hồ sơ trên quản lý: họ tên, loại/số giấy tờ, email, ngày sinh, điện thoại, giới tính, quốc tịch, tiếng mẹ đẻ, thời gian học, phương thức chuyển khoản, số/chủ tài khoản và ngân hàng đều khớp; tên tệp khớp upload và hai trang cam kết đã chọn. Profile contact chỉ kiểm tra qua nhật ký quản lý; công cụ trình duyệt không thấy tab của profile này. Trong lúc chuẩn bị test đã thử xóa hai ô ngân hàng của DN, Google chặn Quay lại vì required; đã điền lại đúng giá trị hồ sơ rồi đối chiếu lại, không coi đây là lỗi autofill.
 - test:final-question-ui chạy lại qua: chỉ profile đã tới câu hỏi được áp dụng/Tiếp tục, profile đang chạy/lỗi upload/offline giữ nguyên; profile tới muộn áp dụng ở lượt bấm sau. Đây là fixture local, không phải trả lời câu xác thực trên Google thật. Google thật vẫn Test, để trống xác thực, không Gửi.
 - Các trang khác còn dữ liệu bản nháp; chưa test bản nháp trống hoàn toàn, 24 profile hoặc tải tranh suất. Báo cáo không chứa giá trị hồ sơ: test-results/navigation-restored-google-20261015.json; ảnh quản lý: test-results/navigation-restored-google-20261015.jpg. Extension hiện tại là bản khôi phục đã Reload; không cần build/Reload thêm vì lượt này không sửa runtime sau kiểm thử.
+
+
+## Đăng nhập chỉ cần xét duyệt và hủy liên kết profile — 15/10/2026
+
+- Bỏ biểu mẫu thông tin liên hệ, bước xác nhận và điều kiện hoàn tất liên hệ
+  trong CloudGate, API và RLS. Tài khoản Google đã xác minh dùng được ngay khi
+  admin duyệt; chờ duyệt, khóa, từ chối, hết hạn và quota vẫn được kiểm tra.
+  Giữ dữ liệu liên hệ cũ để tương thích; không điền dữ liệu giả để vượt điều kiện.
+- Thêm Hủy liên kết ở dòng profile và Chi tiết, có xác nhận, dùng được cả khi
+  offline. Trạng thái liên kết lấy từ cột revoked trong database, tách khỏi
+  trạng thái kết nối. Hủy token và mã liên kết lại chưa dùng; giữ hồ sơ, ảnh,
+  lịch sử và khóa gửi. Liên kết lại dùng đúng profile cũ với token mới.
+- Typecheck và build:cloud-server qua. Vitest 293 ca / 39 file qua với
+  --maxWorkers=4, gồm ca duyệt không có thông tin liên hệ qua HTTP/RLS,
+  email chưa xác minh bị chặn, offline unlink, mã cũ bị vô hiệu, giữ lịch sử/
+  khóa gửi khi liên kết lại và không ảnh hưởng token profile khác.
+- test:access-ui và test:cloud-ui qua. Fixture kiểm tra chờ duyệt không có form,
+  duyệt vào thẳng manager, hủy liên kết qua dòng profile, xác nhận trong Chi tiết,
+  hủy thao tác, trạng thái offline/unlinked, nút liên kết lại, light/dark/mobile.
+  Ảnh tại test-results/access-pending*.png và access-unlink*.png. Dữ liệu giả;
+  không đăng nhập Google hay gửi form thật trong lượt kiểm thử này.
+- Đã áp dụng 202610150002_google_approval_only.sql vào Supabase đang cấu hình
+  và xác minh function vẫn giữ điều kiện active, email_verified, expires_at.
+  Số hàng trước/sau không đổi: 3 account, 7 profile, 5 attachment, 94 run,
+  0 khóa gửi. Backend/UI mới chưa commit, push hoặc deploy Render trong lượt này.
+  Không cần cập nhật extension vì không đổi giao thức kết nối.
