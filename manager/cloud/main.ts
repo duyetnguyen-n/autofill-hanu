@@ -10,7 +10,7 @@ import { AttentionQueue } from '../server/attention';
 import { RunBuffer } from '../server/run-buffer';
 import { PROTOCOL_VERSION } from '../../src/protocol';
 import { CloudRepository, CloudError, LeaseBusyError, MAX_ATTACHMENT_BYTES, type PostgresStore } from './postgres-store';
-import { checkCloudDatabase } from './readiness';
+import { checkCloudDatabase, cloudStartupError } from './readiness';
 import { supabaseAuth, type WebAuth, type WebUser } from './auth';
 import { cloudConfig, databasePool, type CloudConfig } from './config';
 import { supabaseObjects } from './storage';
@@ -531,5 +531,5 @@ if (process.argv.includes('--serve-cloud')) {
     const app = await serveCloud({ config, repository });
     console.log(`HANU Cloud listening on ${config.host}:${config.port} (${config.origin})`);
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void app.close().finally(() => pool.end()).then(() => process.exit()); });
-  } catch (error) { await pool.end(); console.error(error instanceof CloudError ? error.message : 'Không khởi động được. Kiểm tra .env.cloud, chứng chỉ PostgreSQL và migration.'); process.exitCode = 1; }
+  } catch (error) { await pool.end(); console.error(cloudStartupError(error)); process.exitCode = 1; }
 }

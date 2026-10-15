@@ -1,5 +1,23 @@
 # Kiểm thử HANU Coordinator 1.3.1 (2026-10-12)
 
+## Sửa deploy thiếu migration quản lý người dùng - 15/10/2026
+
+- Kiểm tra project thật xác nhận thiếu `hanu.accounts`. Đã chạy migration
+  `202610150001_user_access.sql` thành công; bật RLS và giữ nguyên dữ liệu cũ.
+  Số lượng trước/sau: 2 tài khoản Auth, 7 profile, 5 attachment, 94 lượt chạy,
+  0 khóa gửi. Không claim/release lease hoặc khởi động coordinator từ máy local.
+- Đã cấp `nguyentheduyet.mtp@gmail.com` role `admin`, trạng thái `active`, dựa
+  trên Google identity có email khớp và `email_verified=true`. Đã ghi sự kiện
+  quản trị; không giả lập đăng nhập hoặc thay đổi cookie người dùng.
+- `cloud:check` qua với database thật: bảng HANU/RLS/bucket private, Google
+  provider/public key và Storage/backend key. Website `/healthz` và `/readyz`
+  trả 200 nhưng `/admin` còn 404 ở lúc kiểm tra, cho thấy bản cũ vẫn phục vụ;
+  cần thử lại deploy commit mới trên Render.
+- Sửa log startup để giữ nguyên chẩn đoán `CloudReadinessError` an toàn, ghi rõ
+  file migration bị thiếu và tiếp tục che raw error có thể chứa credentials.
+  `typecheck` qua; 8 ca readiness/rolling deploy qua, gồm regression test từ
+  chối thiếu migration trước khi claim lease/recovery và che thông tin nhạy cảm.
+
 ## Quản lý người dùng và trang quản trị - 15/10/2026
 
 - `npm run typecheck`: qua. `npm test -- --maxWorkers=4`: 290 ca trong 39 file
