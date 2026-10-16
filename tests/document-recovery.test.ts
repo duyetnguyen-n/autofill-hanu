@@ -39,11 +39,11 @@ it.each([true,false])('reconciles a submitted document without clicking Submit a
 
 it('resumes after Stop while the previous execution is still awaiting foreground',async()=>{
   document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Submit</button>';
-  let width=0,reject!:(e:Error)=>void;
+  let width=0,reject!:(e:Error)=>void,acquires=0;
   vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(()=>({width,height:40} as DOMRect));
   Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:()=>{}});
   const messages:any[]=[];const profile=emptyProfile();profile.values.fullName='RESUMED TEST';
-  vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:typeof listener)=>listener=fn},sendMessage:async(m:any)=>{messages.push(m);if(m.type==='GET_PROFILE')return profile;if(m.type==='PAGE_ATTENTION_ACQUIRE')return new Promise((_r,j)=>reject=j);return {ok:true};}}});
+  vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:typeof listener)=>listener=fn},sendMessage:async(m:any)=>{messages.push(m);if(m.type==='GET_PROFILE')return profile;if(m.type==='PAGE_ATTENTION_ACQUIRE'&&++acquires===1)return new Promise((_r,j)=>reject=j);return {ok:true,token:'new-lease'};}}});
   await import('../src/content');
   listener({type:'RUN_CURRENT_PAGE',mode:'test',runId:'run'});
   await vi.waitFor(()=>expect(reject).toBeTypeOf('function'));

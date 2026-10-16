@@ -167,11 +167,17 @@ export class PostgresStore implements DataStore {
     await this.read(session);
     return (await this.pool.query('SELECT data FROM hanu.runs WHERE owner=$1 AND session=$2 ORDER BY created_at DESC LIMIT 100', [this.owner, session])).rows.map(r => r.data);
   }
-  async beginGroup(g: GroupView, sessions: SessionView[]) {
+  async beginGroup(g: GroupView, sessions: SessionView[], append=false) {
     await transaction(this.pool, async db => {
       await this.assertLease(db);
       const account = await requireAccount(db, this.owner, true);
       assertLive(account, g.mode);
+      if(!append&&g.members.length){const owned=(await db.query('SELECT id FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[])',[this.owner,g.members])).rows;if(owned.length!==g.members.length)throw new CloudError('Không tìm thấy profile.',404);}
+      if(append){
+        const row=(await db.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2 FOR UPDATE',[this.owner,g.id])).rows[0];
+        const current=row?.data as GroupView|undefined;
+        if(!current||current.paused||current.stopped||current.requestSignature!==g.requestSignature||sessions.some(s=>!current.members.includes(s.id)))throw new CloudError('Nhóm đã dừng hoặc thay đổi; không bắt đầu profile.',409);
+      }
       await assertCapacity(db, account, sessions.map(s => s.id));
       // Lock in a stable order to avoid deadlocks between overlapping starts.
       const ids = sessions.map(s => s.id);
@@ -186,7 +192,7 @@ export class PostgresStore implements DataStore {
         if (blocked.has(current.id)) throw new CloudError('Form đã có khóa gửi. Xác minh trước khi chạy lại.', 409);
         requested.lastSeen = current.lastSeen;
       }
-      await db.query('INSERT INTO hanu.groups(owner,id,data) VALUES($1,$2,$3)', [this.owner, g.id, JSON.stringify(g)]);
+      if(!append)await db.query('INSERT INTO hanu.groups(owner,id,data) VALUES($1,$2,$3)', [this.owner, g.id, JSON.stringify(g)]);
       await db.query(`INSERT INTO hanu.runs(owner,session,id,data,seq)
         SELECT $1,p.session,p.id,p.data,p.seq FROM jsonb_to_recordset($2::jsonb) AS p(session text,id text,data jsonb,seq integer)
         ON CONFLICT(owner,session,id) DO UPDATE SET data=EXCLUDED.data,seq=EXCLUDED.seq WHERE hanu.runs.seq<=EXCLUDED.seq`,
@@ -197,6 +203,11 @@ export class PostgresStore implements DataStore {
       const versions = new Map(updated.map(row => [row.id,row.version]));
       for (const s of sessions) { this.versions.set(s,versions.get(s.id));this.baselines.set(s,structuredClone(s)); }
     });
+  }
+  async recordStartResult(id:string,result:import('../../src/protocol').StartResult){
+    await this.pool.query(`UPDATE hanu.groups SET data=jsonb_set(data,'{startResults}',
+      COALESCE((SELECT jsonb_agg(item) FROM jsonb_array_elements(COALESCE(data->'startResults','[]'::jsonb)) item WHERE item->>'id'!=$3),'[]'::jsonb)||$4::jsonb)
+      WHERE owner=$1 AND id=$2`,[this.owner,id,result.id,JSON.stringify([result])]);
   }
   async authorizeResume(id: string) {
     await transaction(this.pool, async db => {

@@ -42,7 +42,8 @@ export interface ControlReceipt {
   updatedAt:string;
   error?:string;
 }
-export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string; requestId?:string; requestSignature?:string; restartOf?:string }
+export interface StartResult {id:string;ok:boolean;error?:string}
+export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string; requestId?:string; requestSignature?:string; restartOf?:string; startResults?:StartResult[] }
 export function canonicalFormId(url: string): string | undefined {
   try {
     const u = new URL(url);

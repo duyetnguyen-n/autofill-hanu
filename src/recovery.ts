@@ -1,10 +1,12 @@
 import type {BlockingIssue,ManualAnswer,RunState} from './shared';
 
 export const MAX_RECOVERY_ATTEMPTS=3;
+export const NAVIGATION_SLOW_MS=5000;
+export const NAVIGATION_LIMIT_MS=25000;
 export const recoveryDelay=(attempt:number,random=Math.random()):number=>
   [2000,5000,12000][Math.max(0,Math.min(attempt-1,2))]+Math.floor(Math.max(0,Math.min(random,1))*1500);
 
-export interface PageHealth {issue?:BlockingIssue;retryable?:boolean}
+export interface PageHealth {issue?:BlockingIssue;retryable?:boolean;ready?:boolean}
 export function classifyPage(input:{text:string;title?:string;hasQuestions:boolean;hasNavigation:boolean;captcha:boolean;online:boolean}):PageHealth {
   if(input.captcha)return {issue:{reason:'captcha',message:'Google yêu cầu xác thực. Hãy tự xử lý rồi bấm Tiếp tục; extension giữ nguyên lượt.'}};
   if(!input.online)return {issue:{reason:'network',message:'Mất kết nối mạng. Đang chờ thử lại có giới hạn.'},retryable:true};

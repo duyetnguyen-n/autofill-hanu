@@ -317,7 +317,7 @@ export async function serveCloud(options: {
           if (value.replaceSessionId !== undefined && typeof value.replaceSessionId !== 'string') throw new CloudError('Profile liên kết lại không hợp lệ.');
           return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
         }
-        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); await Promise.all((await store.sessions()).map(s => coordinator.runBuffer?.flush(s.id))); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId)); }
+        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId)); }
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
         if (group && req.method === 'POST') { await body(req); return json(res, await coordinator.groupControl(group[1], group[2].toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP')); }

@@ -1,14 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ExtensionMessage, RunState } from '../src/shared';
 
-afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+afterEach(() => { vi.useRealTimers();vi.unstubAllGlobals(); vi.resetModules(); });
 const formUrl = 'https://docs.google.com/forms/d/e/test-form/viewform';
 async function setup(sidePanel?: object) {
   let clicked: (tab: { id: number; url: string }) => void;
   let message: (msg: ExtensionMessage, sender: object, respond: (value: unknown) => void) => void;
+  let updated:(id:number,change:object,tab:object)=>void;
   const data: Record<string, unknown> = {};
   const create = vi.fn(async () => ({}));
-  const sendMessage = vi.fn(async () => ({ ok: true }));
+  const sendMessage = vi.fn(async (_id?:number,_message?:any) => ({ ok: true }));
   vi.stubGlobal('chrome', {
     sidePanel,
     action: { onClicked: { addListener: (fn: typeof clicked) => { clicked = fn; } } },
@@ -16,7 +17,7 @@ async function setup(sidePanel?: object) {
     tabs: {
       get: vi.fn(async (id: number) => ({ id, url: formUrl })),
       query: vi.fn(async () => [{ id: 99 }]), sendMessage,
-      onUpdated: { addListener: vi.fn() }, onRemoved: { addListener: vi.fn() }
+      onUpdated: { addListener: (fn:typeof updated)=>updated=fn }, onRemoved: { addListener: vi.fn() }
     },
     runtime: {
       getURL: (path: string) => `chrome-extension://test/${path}`,
@@ -33,8 +34,46 @@ async function setup(sidePanel?: object) {
   const ask = (msg: ExtensionMessage, sender = {}) => new Promise<unknown>(resolve => message(msg, sender, resolve));
   const run: RunState = { tabId: 7, formId: 'test-form', mode: 'test', status: 'waiting_manual', filled: [], skipped: [], logs: [], submitAttempted: false, updatedAt: '' };
   data['run:7'] = run;
-  return { click: () => clicked({ id: 7, url: formUrl }), create, ask, data, run, sendMessage };
+  return { click: () => clicked({ id: 7, url: formUrl }), updated:(change:object)=>updated(7,change,{url:formUrl}),create, ask, data, run, sendMessage };
 }
+
+it('detects a document that stays loading after the original content script disappears',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'loading',contentEpoch:'old',status:'running'});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(5000);
+  expect(f.data['run:7']).toMatchObject({status:'running',activity:{phase:'navigating'}});
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',blockingIssue:{reason:'navigation'},recovery:{attempt:1,automatic:true}});
+  expect(chrome.tabs.reload).toBeUndefined();await f.ask({type:'STOP_RUN',tabId:7});
+});
+it.each(['stop','new-document'] as const)('cancels the predecessor watchdog after %s',async action=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'loading',contentEpoch:'old',status:'running'});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(5000);
+  if(action==='stop')await f.ask({type:'STOP_RUN',tabId:7});
+  else await f.ask({type:'CLAIM_DOCUMENT',epoch:'new'}, {tab:{id:7,url:formUrl},url:formUrl});
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(f.data['run:7']).toMatchObject({status:action==='stop'?'idle':'running'});expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
+});
+it('keeps an uncertain submit locked when the response document hangs',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'sending',contentEpoch:'old',status:'submitting',submitAttempted:true});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(25000);
+  expect(f.data['run:7']).toMatchObject({status:'submit_uncertain',submitAttempted:true,blockingIssue:{reason:'submit_uncertain'}});
+  expect((f.data['run:7'] as RunState).recovery?.automatic).not.toBe(true);
+});
+it('acknowledges a durable Stop even if the renderer never answers HALT, and rejects its late navigation event',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'frozen',contentEpoch:'old',status:'running'});
+  f.sendMessage.mockImplementation(async(_id,m:any)=>m.type==='HALT_RUN'?new Promise<{ok:boolean}>(()=>{}):{ok:true});
+  const stopped=f.ask({type:'STOP_RUN',tabId:7});await vi.advanceTimersByTimeAsync(500);
+  await expect(stopped).resolves.toMatchObject({status:'idle'});
+  await expect(f.ask({type:'FORM_EVENT',runId:'frozen',epoch:'old',event:{type:'activity',phase:'navigating',message:'late Next'}},{tab:{id:7,url:formUrl},url:formUrl})).resolves.toMatchObject({ok:false});
+});
+it('rechecks the current upload on Resume instead of skipping an old blocked file card',async()=>{
+  const f=await setup();Object.assign(f.run,{runId:'reload-upload',contentEpoch:'new',blockingIssue:{reason:'file_upload',questionId:'photo',message:'Upload failed'}});
+  await expect(f.ask({type:'RESUME_RUN',tabId:7})).resolves.toMatchObject({status:'running'});
+  expect(f.sendMessage).toHaveBeenCalledWith(7,expect.objectContaining({type:'RUN_CURRENT_PAGE',skipQuestionId:undefined}));
+});
 
 it('uses action behavior on Chrome 114/115 without calling missing sidePanel.open', async () => {
   const setPanelBehavior = vi.fn(async () => {});

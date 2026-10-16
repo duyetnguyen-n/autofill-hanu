@@ -531,9 +531,8 @@ async function chooseDropdownWithKeyboard(trigger: HTMLElement, option: Element,
 async function waitForDropdownChoice(trigger: HTMLElement, value: string, aliases: string[],attempts=60): Promise<Element | undefined> {
   // Forms asynchronously mounts a popup inside the trigger; other controls
   // can use a detached popup. Neither should match the hidden template copy.
-  const deadline=Date.now()+attempts*60;
-  for (let attempt = 0; attempt < attempts&&Date.now()<deadline; attempt += 1) {
-    if (!active) return undefined;
+  let found:Element|undefined;
+  await waitForCondition(()=>{
     const popupSelector = '[jsname="V68bde"], .exportSelectPopup, .OA0qNb';
     const relatedIds = `${trigger.getAttribute("aria-controls") ?? ""} ${trigger.getAttribute("aria-owns") ?? ""}`.trim().split(/\s+/);
     const owned = relatedIds.map(id => document.getElementById(id)).filter((el): el is HTMLElement => Boolean(el));
@@ -547,14 +546,13 @@ async function waitForDropdownChoice(trigger: HTMLElement, value: string, aliase
     const candidates = roots.flatMap(root => Array.from(root.querySelectorAll<HTMLElement>('[role="option"], [data-value]')))
       .filter(el => visible(el) && el.getAttribute('aria-disabled') !== 'true');
     const choice = exactChoice(candidates, value, aliases);
-    if (choice) return choice;
+    if (choice){found=choice;return true;}
 
     const textChoice = visibleTextChoice(roots, value, aliases);
-    if (textChoice) return textChoice;
-
-    await new Promise((resolve) => window.setTimeout(resolve, 60));
-  }
-  return undefined;
+    if (textChoice){found=textChoice;return true;}
+    return false;
+  },attempts*60,60);
+  return found;
 }
 
 function uploadedFileMatches(question: Question, name?: string): boolean {
@@ -693,7 +691,7 @@ async function fillQuestion(question: Question, rule: FieldRule, profile: Profil
     // A commitment may be represented as a radio group instead of a single
     // checkbox. Prefer its explicit affirmative wording; only fall back to
     // the first option for a single-option checkbox style control.
-    const choice = wantsBoolean ? exactChoice(options, value, aliases) ?? options[0] : exactChoice(options, value, aliases);
+    const choice = wantsBoolean ? exactChoice(options, value, aliases) ?? (options.length===1?options[0]:undefined) : exactChoice(options, value, aliases);
     if (!choice) return false;
     if(rule.key==='sharedFinalQuestion'&&question.kind==='checkbox'){
       for(const other of options.filter(o=>o!==choice&&checked(o))){
@@ -760,6 +758,7 @@ function matchesProfile(question: Question, rule: FieldRule, profile: Profile, v
     const selected = controlsIn(question.element, 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]').filter(checked);
     if(rule.key==='sharedFinalQuestion'&&selected.length!==1)return false;
     const wantsBoolean = rule.key!=="sharedFinalQuestion" && /^(true|1|co|yes|dong y)$/i.test(normalize(value));
+    if(wantsBoolean&&controlsIn(question.element,'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]').length===1)return selected.length===1;
     return wantsBoolean
       ? (aliases.length > 0 ? selected.some((option) => choiceMatchesValue(option, value, aliases)) : selected.length > 0)
       : selected.some((option) => choiceMatchesValue(option, value, aliases));
@@ -927,7 +926,8 @@ async function emit(event: FormEvent): Promise<void> {
 }
 
 export function pageHealth():PageHealth {
-  return classifyPage({text:document.body.innerText??document.body.textContent??'',title:document.title,hasQuestions:!!document.querySelector('[role=\"listitem\"], [data-item-id]')||questions().length>0,hasNavigation:!!button('next')||!!button('submit'),captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false});
+  const hasNavigation=!!button('next')||!!button('submit');
+  return {...classifyPage({text:document.body.innerText??document.body.textContent??'',title:document.title,hasQuestions:!!document.querySelector('[role=\"listitem\"], [data-item-id]')||questions().length>0,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false}),ready:hasNavigation||completedPage()};
 }
 
 export function pageAccount():{email?:string;error?:string;health?:PageHealth}{
@@ -993,6 +993,12 @@ async function execute(depth = 0): Promise<void> {
     return;
   }
 
+  // document_end avoids waiting for unrelated resources. Hydrated controls
+  // still have to exist before scanning; DOM mutations wake this immediately.
+  if(!button('next')&&!button('submit')&&!await waitFor(()=>Boolean(button('next')||button('submit')||completedPage()||pageHealth().issue),100)){
+    if(!active)return;active=false;await emit({type:'transient_error',reason:'navigation',message:'Nội dung form chưa sẵn sàng sau khi dựng trang. Chưa bấm Tiếp.'});return;
+  }
+
   if(!await ensurePageReady()){
     if(!active)return;
     active=false;await emit({type:'transient_error',reason:'navigation',message:'Form chưa có vùng hiển thị hoặc câu hỏi chưa tải xong. Chưa bấm Tiếp.'});return;
@@ -1040,10 +1046,9 @@ async function execute(depth = 0): Promise<void> {
       await emit({type:'progress',message:`Đã kiểm tra và điền câu hỏi cuối dùng chung: ${question.label}`,filled:question.id});return;
     }
     if (question.id === manualSkipQuestionId) {
-      manuallyHandled.add(question.id);
       manualSkipQuestionId = undefined;
-      await emit({ type: "progress", message: `Đã giữ nguyên câu bạn vừa xử lý thủ công: ${question.label}`, skipped: question.id });
-      return;
+      // Compatibility with older controllers: a skip hint cannot bypass the
+      // current page's required/value checks, especially after a reload.
     }
     const rule = findRule(question, profile);
     const savedValue = rule ? profile.values[rule.key] : customValue(question, profile);
@@ -1193,8 +1198,8 @@ async function execute(depth = 0): Promise<void> {
   const invalid=pageQuestions.find(q=>questionError(q));
   if(invalid){await blockForCorrection(`Google Forms báo lỗi: ${questionError(invalid)}`,invalid);return;}
   const mismatched=pageQuestions.find(q=>{
-    if(!['text','date','textarea'].includes(q.kind)||manuallyHandled.has(q.id)||isVerificationQuestion(q))return false;
-    const rule=findRule(q,profile),value=rule&&profile.values[rule.key];
+    if(manuallyHandled.has(q.id)||isVerificationQuestion(q))return false;
+    const rule=q===sharedTarget?{key:'sharedFinalQuestion',label:q.label,aliases:[q.label],kind:q.kind as ControlKind}:findRule(q,profile),value=q===sharedTarget?finalQuestion?.value:rule&&profile.values[rule.key];
     return Boolean(rule&&compatible(rule,q.kind)&&profileHasValue(rule,value,profile)&&!matchesProfile(q,rule,profile,value??''));
   });
   if(mismatched){await blockForCorrection(`Giá trị đã thay đổi sau khi điền: ${mismatched.label}`,mismatched);return;}
@@ -1235,7 +1240,9 @@ async function execute(depth = 0): Promise<void> {
     if(!await ensurePageReady()||!active)return false;
     const missing=questions().find(q=>q.required&&!manuallyHandled.has(q.id)&&!isFilled(q));
     if(missing){await blockForCorrection(`Câu bắt buộc chưa hoàn tất: ${missing.label}`,missing);return false;}
-    const before=pageFingerprint();next.click();
+    const before=pageFingerprint();
+    await emit({type:'activity',phase:'navigating',message:'Đã điền và đối chiếu trang; đang chờ Google chuyển trang.'});
+    if(!active)return false;next.click();
     if(await waitForPageChange(before))return true;
     // The first Next request may still be in flight. Never click it twice on
     // a timeout; recovery reopens the safe GET URL and inspects the new document.
@@ -1259,7 +1266,9 @@ async function execute(depth = 0): Promise<void> {
 function requestExecute(depth = 0): void {
   if (executionInFlight) return;
   executionInFlight = true;
-  void execute(depth).catch(async (error) => {
+  // One independent renderer lease per document avoids repeated debugger
+  // attach/detach for each control. Nested upload/menu/Next retain all checks.
+  void withAttention('Điền và đối chiếu trang form',()=>execute(depth)).catch(async (error) => {
     if(!active)return;
     active = false;
     await emit({ type: "failed", message: error instanceof Error ? error.message : String(error) });

@@ -337,7 +337,7 @@ describe("compiled content-script behavior", () => {
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) }));
   });
 
-  it("continues after Resume explicitly skips a file card the user handled in Google Picker", async () => {
+  it("rejects an old upload skip hint after reload, then resumes when the current card actually has a file", async () => {
     document.body.innerHTML = `
       <div role="listitem" data-item-id="identity-file-question">
         <div role="heading">ẢNH MẶT TRƯỚC GTTT CỦA THÍ SINH | 身份证件图 *</div>
@@ -368,6 +368,11 @@ describe("compiled content-script behavior", () => {
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "block" }) }));
 
     listeners[0]({ type: "RUN_CURRENT_PAGE", mode: "test", skipQuestionId: "identity-file-question" });
+    await new Promise((resolve) => window.setTimeout(resolve,30));
+    expect(sent).not.toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'page_advanced'})}));
+    expect(next.isConnected).toBe(true);
+    document.querySelector('[data-item-id="identity-file-question"]')!.insertAdjacentHTML('beforeend','<button aria-label="Remove file">×</button>');
+    listeners[0]({type:'RUN_CURRENT_PAGE',mode:'test'});
     await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "ready_to_submit" }) })),{timeout:2000});
 
     expect(sent).toContainEqual(expect.objectContaining({ type: "FORM_EVENT", event: expect.objectContaining({ type: "page_advanced" }) }));

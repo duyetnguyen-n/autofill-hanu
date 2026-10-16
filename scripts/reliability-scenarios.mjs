@@ -17,6 +17,26 @@ export async function reliabilityScenarios(x){
   steps.clear();faultPolicies.clear();documentRequests.length=0;
  };
  const start=()=>app.coordinator.start(profiles.map(p=>p.id),fixtureUrl,'test',undefined,randomUUID());
+ await checkpoint('simultaneous-hung-document-captcha-upload-error-and-healthy-profiles',async()=>{
+  if(profiles.length<4)return;
+  await reset();faultPolicies.set(0,{hangNext:true,resetOnRecovery:true});faultPolicies.set(1,{captcha:true});faultPolicies.set(2,{uploadError:true});
+  const began=Date.now();await start();
+  await wait(async()=>{const ss=await sessions();return profiles.slice(3).every(p=>ss.find(s=>s.id===p.id)?.run?.status==='ready_to_submit');},20000);
+  const healthyMs=Date.now()-began;
+  await wait(async()=>(await session(profiles[1])).run?.blockingIssue?.reason==='captcha'&&['file_upload','validation'].includes((await session(profiles[2])).run?.blockingIssue?.reason),15000);
+  const uploadErrorReason=(await session(profiles[2])).run?.blockingIssue?.reason;
+  await wait(async()=>(await session(profiles[0])).run?.status==='ready_to_submit',45000);
+  const recoveryMs=Date.now()-began,requests=documentRequests.filter(r=>r.index===0),getAfterHang=requests.find((r,i)=>i>0&&r.method==='GET');
+  assert(getAfterHang,'A hung POST document must recover through a safe GET');
+  assert.equal(requests.filter(r=>r.method==='POST'&&r.step===0&&r.at<getAfterHang.at).length,1);
+  assert.equal((await session(profiles[1])).run.blockingIssue.reason,'captcha');
+  // Fix only the synthetic failed upload. Its frozen profile and all already
+  // finished peers stay intact; CAPTCHA is still waiting for human action.
+  faultPolicies.delete(2);await profiles[2].eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.tabs.update(r.tabId,{url:${JSON.stringify(fixtureUrl)}});})()`);
+  await sleep(600);await app.coordinator.control(profiles[2].id,'RESUME');
+  await wait(async()=>(await session(profiles[2])).run?.status==='ready_to_submit');
+  faultResults.push({case:'mixed-fault-timing',passed:true,healthyProfiles:profiles.length-3,healthyMs,hungRecoveryMs:recoveryMs,uploadErrorReason});
+ });
  await checkpoint('500-503-429-bounded-recovery-and-profile-isolation',async()=>{
   await reset();faultPolicies.set(0,{statuses:[500,503,429]});await start();await complete('ready_to_submit');
   assert.equal(faultPolicies.get(0).statuses.length,0);

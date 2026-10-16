@@ -19,7 +19,8 @@ export interface DataStore {
   saveGroup(group: GroupView): Result<void>;
   saveRun(session: string, run: RunState): Result<void>;
   history(session: string): Result<RunState[]>;
-  beginGroup(group: GroupView, sessions: SessionView[]): Result<void>;
+  beginGroup(group: GroupView, sessions: SessionView[], append?:boolean): Result<void>;
+  recordStartResult(group:string,result:import('../../src/protocol').StartResult):Result<void>;
   authorizeResume?(id: string): Result<void>;
   cancelResume?(id: string, runId: string): Result<void>;
   acceptProgress(id: string, run: RunState): Result<boolean>;

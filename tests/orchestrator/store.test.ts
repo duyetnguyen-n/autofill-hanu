@@ -45,10 +45,12 @@ describe('durable coordinator state',()=>{
     const s=store.session(members[0]);await c.acceptState(s.id,{...s.run!,eventSeq:1,finalQuestion:undefined});expect(store.session(s.id).run?.finalQuestion).toEqual(q);
     const locked=store.session(members[1]);locked.run!.submitAttempted=true;store.saveSession(locked);expect(await c.setFinalQuestion(members,q)).toEqual([{id:members[0],ok:true},expect.objectContaining({id:members[1],ok:false,skipped:true})]);
   });
-  it('requires support in every extension before starting any shared-answer run',async()=>{
+  it('blocks only the unsupported member while supported extensions start a shared-answer run',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),starts:any[]=[];for(const id of members){const s=store.session(id);s.run!.status='idle';store.saveSession(s);c.peers.set(id,{} as any);}
     c.command=async(id,kind)=>{if(kind==='START')starts.push(id);return {capabilities:id===members[0]?['sharedFinalQuestion']:[]};};
-    await expect(c.start(members,store.group('group').url,'test',{label:'Câu cuối',value:'2026'})).rejects.toThrow('Reload');expect(starts).toEqual([]);expect(store.sessions().every(s=>s.run?.status==='idle')).toBe(true);
+    const group=await c.start(members,store.group('group').url,'test',{label:'Câu cuối',value:'2026'});
+    expect(group.startResults).toEqual([{id:members[0],ok:true},{id:members[1],ok:false,error:expect.stringContaining('Reload')}]);
+    expect(starts).toEqual([members[0]]);expect(store.session(members[1]).run?.status).toBe('idle');
   });
   it('resumes a persisted answer without waiting for a slower profile acknowledgement',async()=>{
     const {store,members}=setup(2),c=new Coordinator(store),resumed:string[]=[],q={label:'Câu cuối',value:'A'};

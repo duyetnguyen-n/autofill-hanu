@@ -265,33 +265,41 @@ export class Coordinator {
     finalQuestion=finalQuestion?structuredClone(finalQuestion):undefined;
     if(finalQuestion?.formId&&canonicalFormId(url)&&finalQuestion.formId!==canonicalFormId(url))throw new Error('Câu hỏi cuối đã chọn thuộc form khác. Đọc lại câu hỏi hoặc nhập nội dung cho form này.');
     if(!allowedFormUrl(url)||!['test','live'].includes(mode))throw new Error('Link Google Forms hoặc chế độ không hợp lệ.');if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)throw new Error('Chọn các profile khác nhau.');
-    await Promise.all(ids.map(id=>this.runBuffer?.flush(id)));
-    if(finalQuestion)await Promise.all(ids.map(async id=>{const result=await this.command(id,'PING',{},undefined,5000),s=await this.store.session(id);if(!result?.capabilities?.includes('sharedFinalQuestion'))throw new Error(`${s.name}: Reload hoặc cập nhật extension để dùng đáp án câu hỏi cuối chung.`);if(result.execution)throw new Error(`${s.name}: còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.`);}));
-    const attachmentHashes=new Map<string,Record<string,string>>();const sessions=await Promise.all(ids.map(id=>this.store.session(id)));
-    // Preflight small batches concurrently, without exhausting the PG pool.
-    for(let offset=0;offset<sessions.length;offset+=4)await Promise.all(sessions.slice(offset,offset+4).map(async s=>{if(!this.peers.has(s.id)||!s.synced||!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error(`${s.name}: cần kết nối, đồng bộ và gán email Google.`);const form=canonicalFormId(url);if(form&&await this.store.blocked(s.id,form)||!form&&s.run?.submitAttempted&&s.run.status!=='idle')throw new Error(`${s.name}: xác minh khóa gửi trước khi chạy form này.`);if(s.execution)throw new Error(`${s.name}: còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.`);if(s.run&&!['idle','completed','ready_to_submit','failed','submit_uncertain'].includes(s.run.status))throw new Error(`${s.name}: hãy dừng lượt hiện tại trước.`);const hashes:Record<string,string>={};for(const a of Object.values(s.profile.attachments))if(a){const info=await this.store.attachmentInfo(s.id,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}attachmentHashes.set(s.id,hashes);}));
-    const unchanged=()=>ids.every(id=>(this.intents.get(id)??0)===intents.get(id));
-    if(!unchanged())throw new Error('Đã hủy Bắt đầu vì có lệnh Dừng hoặc Tạm dừng mới.');
     const id=randomUUID();const group={id,url,mode,members:ids,paused:false,createdAt:new Date().toISOString(),requestId,requestSignature,restartOf};
-    for(const s of sessions){const run:RunState={runId:id,sessionId:s.id,managed:true,profileSnapshot:s.profile,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.run=run;s.error=undefined;}await this.store.beginGroup(group,sessions);this.runBuffer?.begin(sessions,group);this.changed();
-    // Wait for dispatch, never for another profile's page load. The group gate
-    // is rechecked after async preflight so Stop cannot release a late Start.
-    const failed=async(session:string,error:unknown)=>{
+    // Persist the group gate before preparation. Each member then crosses its
+    // own fenced transaction and dispatches immediately, without a batch barrier.
+    await this.store.beginGroup(group,[]);this.changed();
+    const failed=async(session:string,error:unknown,undispatched=false)=>{
       if(this.runBuffer?.matches(session,id))this.runBuffer.halt(session);await this.runBuffer?.flush(session);
       const current=await this.store.session(session);
-      if(current.run?.runId!==id||!['running','submitting'].includes(current.run.status)||(await this.store.group(id)).paused&&!current.run.submitAttempted)return;
-      current.error=(error as Error).message;current.run.status=current.run.submitAttempted?'submit_uncertain':'failed';
+      if(current.run?.runId!==id||!['running','submitting'].includes(current.run.status)||!undispatched&&(await this.store.group(id)).paused&&!current.run.submitAttempted)return;
+      current.error=undispatched?undefined:(error as Error).message;current.run.status=current.run.submitAttempted?'submit_uncertain':undispatched?'idle':'failed';
       await this.store.saveRun(session,current.run);await this.store.saveSession(current);this.runBuffer?.refresh(session,current);this.changed();
     };
-    await Promise.all(sessions.map(async s=>{
+    const results=await Promise.all(ids.map(member=>(async()=>{
       try{
-        const latest=await this.store.session(s.id);
-        if((this.intents.get(s.id)??0)!==intents.get(s.id)){await failed(s.id,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'));return;}
-        if(latest.run?.runId!==id||latest.run.status!=='running'||(await this.store.group(id)).paused)return;
-        if(this.runBuffer?.has(s.id)&&!this.runBuffer.allowed(s.id,id))return;
-        void this.command(s.id,'START',{url,mode,finalQuestion,revision:s.revision,expectedEmail:s.expectedEmail,attachmentHashes:attachmentHashes.get(s.id)!},id,120000).catch(error=>failed(s.id,error)).catch(this.unavailable);
-      }catch(error){await failed(s.id,error).catch(this.unavailable);}
-    }));return group;
+        await this.runBuffer?.flush(member);
+        if(finalQuestion){const result=await this.command(member,'PING',{},undefined,5000);if(!result?.capabilities?.includes('sharedFinalQuestion'))throw new Error('Reload hoặc cập nhật extension để dùng đáp án câu hỏi cuối chung.');if(result.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');}
+        const s=await this.store.session(member);
+        if(!this.peers.has(member)||!s.synced||!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error('Cần kết nối, đồng bộ và gán email Google.');
+        const form=canonicalFormId(url);
+        if(form&&await this.store.blocked(member,form)||!form&&s.run?.submitAttempted&&s.run.status!=='idle')throw new Error('Xác minh khóa gửi trước khi chạy form này.');
+        if(s.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');
+        if(s.run&&!['idle','completed','ready_to_submit','failed','submit_uncertain'].includes(s.run.status))throw new Error('Hãy dừng lượt hiện tại trước.');
+        const hashes:Record<string,string>={};
+        await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.store.attachmentInfo(member,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}));
+        if((this.intents.get(member)??0)!==intents.get(member))throw new Error('Đã hủy Bắt đầu vì có lệnh Dừng hoặc Tạm dừng mới.');
+        s.run={runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
+        await this.store.beginGroup(group,[s],true);this.runBuffer?.begin([s],group);this.changed();
+        const gate=await this.store.group(id);this.runBuffer?.groupGate(gate);
+        if((this.intents.get(member)??0)!==intents.get(member)||gate.paused){await failed(member,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'),true);return {id:member,ok:false,error:'Đã dừng trước khi mở form.'};}
+        if(this.runBuffer?.has(member)&&!this.runBuffer.allowed(member,id))return {id:member,ok:false,error:'Lượt đã dừng.'};
+        void this.command(member,'START',{url,mode,finalQuestion,revision:s.revision,expectedEmail:s.expectedEmail,attachmentHashes:hashes},id,120000).catch(error=>failed(member,error)).catch(this.unavailable);
+        return {id:member,ok:true};
+      }catch(error){await failed(member,error).catch(this.unavailable);return {id:member,ok:false,error:(error as Error).message};}
+    })().then(async result=>{await this.store.recordStartResult(id,result);this.changed();return result;})));
+    if(results.length===1&&!results[0].ok)throw new Error(results[0].error);
+    return {...await this.store.group(id),startResults:results};
   }
   async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'=false) {
     if(kind!=='RESUME')this.intents.set(id,(this.intents.get(id)??0)+1);

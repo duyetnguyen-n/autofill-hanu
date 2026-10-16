@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HSK Google Forms Autofill",
   "description": "Điền nhanh Google Forms HSK từ một hồ sơ cục bộ với cơ chế tạm dừng an toàn.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "minimum_chrome_version": "114",
   "permissions": [
     "storage",
@@ -31,7 +31,7 @@
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ]
 }

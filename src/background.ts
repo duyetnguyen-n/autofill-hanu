@@ -2,7 +2,7 @@ import { attachmentReference, blobToDataUrl, clearAttachments, dataUrlToBlob, ge
 import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState, validateFinalQuestion } from "./shared";
 import { assignPickerFile, PickerUploadResult } from "./picker-upload";
 import { createNativeClient } from './native-client';
-import {automaticRecoveryAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,validCorrections,type PageHealth} from './recovery';
+import {automaticRecoveryAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
 import { cloudOrigin } from './coordinator-transport';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 
@@ -15,6 +15,48 @@ function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.th
 async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
 const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:parkManaged,reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
 const recoveryTimers=new Map<string,ReturnType<typeof setTimeout>>();
+interface NavigationWatch {token:string;tabId:number;runId:string;epoch?:string;started:number;timer?:ReturnType<typeof setTimeout>}
+const navigationWatches=new Map<number,NavigationWatch>();
+function cancelNavigationWatch(tabId:number){
+  const watch=navigationWatches.get(tabId);if(!watch)return;
+  navigationWatches.delete(tabId);clearTimeout(watch.timer);
+  void chrome.storage.local.remove(`navigation:${watch.token}`).catch(()=>{});
+  if(chrome.alarms?.clear)void chrome.alarms.clear(`hanu-navigation:${watch.token}`);
+}
+async function armNavigationWatch(tabId:number){
+  const run=await getRun(tabId);
+  if(!run?.runId||!['running','submitting'].includes(run.status)||run.recoveryRequired||interruptedRuns.has(run.runId))return;
+  if(navigationWatches.get(tabId)?.runId===run.runId)return;
+  cancelNavigationWatch(tabId);
+  const watch:NavigationWatch={token:crypto.randomUUID(),tabId,runId:run.runId,epoch:run.contentEpoch,started:Date.now()};
+  navigationWatches.set(tabId,watch);
+  await chrome.storage.local.set({[`navigation:${watch.token}`]:{...watch}});
+  if(navigationWatches.get(tabId)!==watch)return;
+  watch.timer=setTimeout(()=>void checkNavigationWatch(watch).catch(()=>{}),NAVIGATION_SLOW_MS);
+  if(chrome.alarms?.create)void chrome.alarms.create(`hanu-navigation:${watch.token}`,{when:watch.started+NAVIGATION_LIMIT_MS});
+}
+async function checkNavigationWatch(watch:NavigationWatch){
+  if(navigationWatches.get(watch.tabId)?.token!==watch.token)return;
+  const run=await getRun(watch.tabId),tab=await chrome.tabs.get(watch.tabId).catch(()=>undefined);
+  if(!run||run.runId!==watch.runId||!tab||!['running','submitting'].includes(run.status)||run.recoveryRequired||interruptedRuns.has(watch.runId)||run.contentEpoch!==watch.epoch){cancelNavigationWatch(watch.tabId);return;}
+  // A completed HTTP load can still have a stuck in-document Next. Conversely,
+  // a newly claimed document owns recovery and cancels the predecessor's timer.
+  if(tab.status!=='loading'&&run.activity?.phase!=='navigating'&&!run.submitAttempted){cancelNavigationWatch(watch.tabId);return;}
+  if(Date.now()-watch.started>=NAVIGATION_LIMIT_MS){
+    cancelNavigationWatch(watch.tabId);
+    const lease=pageAttention.get(watch.tabId)?.token;
+    const blocked=await blockPageProblem(watch.runId,{issue:{reason:'navigation',message:'Google chưa hoàn tất tải/chuyển trang sau 25 giây. Không bấm Tiếp lần hai.'},retryable:true},watch.tabId,watch.epoch);
+    if(blocked&&lease)await releasePageAttention(watch.tabId,lease);
+    return;
+  }
+  await writeState(async()=>{
+    const current=await getRun(watch.tabId);
+    if(navigationWatches.get(watch.tabId)!==watch||current?.runId!==watch.runId||current.contentEpoch!==watch.epoch||!['running','submitting'].includes(current.status)||current.recoveryRequired)return;
+    current.activity={phase:'navigating',message:current.submitAttempted?'Google đang trả kết quả Gửi chậm. Giữ khóa, không gửi lại.':'Google đang tải/chuyển trang chậm. Các profile khác vẫn chạy; chưa bấm Tiếp lại.',at:now()};
+    await writeRunNow(current);
+  });
+  if(navigationWatches.get(watch.tabId)===watch)watch.timer=setTimeout(()=>void checkNavigationWatch(watch).catch(()=>{}),Math.max(1,NAVIGATION_LIMIT_MS-(Date.now()-watch.started)));
+}
 const pageAttention=new Map<number,{token:string;epoch:string;run:RunState;timer?:ReturnType<typeof setInterval>}>();
 interface RenderGuard {token:string;cancelled:boolean;attached:boolean;ready:Promise<void>;finish:()=>void}
 const renderGuards=new Map<number,RenderGuard>();
@@ -94,6 +136,15 @@ async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE
 function now(): string {
   return new Date().toISOString();
 }
+async function haltDocument(tabId:number){
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  // A frozen renderer must not hold the durable control/recovery queue open.
+  await Promise.race([chrome.tabs.sendMessage(tabId,{type:'HALT_RUN'}).catch(()=>{}),new Promise<void>(resolve=>timer=setTimeout(resolve,500))]).finally(()=>clearTimeout(timer));
+}
+async function observePage<T>(work:Promise<T>):Promise<T>{
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  return Promise.race([work,new Promise<never>((_resolve,reject)=>timer=setTimeout(()=>reject(new Error('Không đọc được trang đang bị treo.')),750))]).finally(()=>clearTimeout(timer));
+}
 
 function isFormsUrl(url?: string): boolean {
   try{const u=new URL(url??'');return u.protocol==='https:'&&u.hostname==='docs.google.com'&&u.pathname.startsWith('/forms/');}catch{return false;}
@@ -117,6 +168,7 @@ async function writeRunNow(run:RunState):Promise<void>{
     const managed=run.managed?await getManaged():undefined;
     const ownsManaged=run.managed&&(!managed||managed.runId===run.runId||lease?.runId===run.runId);
     await chrome.storage.local.set({ [`${RUN_PREFIX}${run.tabId}`]: run, ...(ownsManaged ? {managedRun:run} : {}) });
+    if(!['running','submitting'].includes(run.status)||run.recoveryRequired)cancelNavigationWatch(run.tabId);
     if(lease?.runId===run.runId)await chrome.storage.local.set({executionLease:{runId:run.runId,tabId:run.tabId,active:!endedExecution(run)}});
     native.state(run);
     // Panel notifications must not hold the storage or request queue open.
@@ -142,7 +194,7 @@ async function repairLeaseNow():Promise<RunState|undefined>{
  // page-health handler parks it or schedules a bounded safe GET.
  if(tab&&/^(?:chrome-error:|https:\/\/(?:accounts\.google\.com\/|(?:www\.)?google\.com\/sorry))/i.test(tab.url??''))return run;
  if(!opening&&(!tab||run.formId&&canonicalFormId(tab.url??tab.pendingUrl??'')!==run.formId)){
-   if(tab)await chrome.tabs.sendMessage(run.tabId,{type:'HALT_RUN'}).catch(()=>undefined);
+   if(tab)await haltDocument(run.tabId);
    const stopped=addLog({...run,status:run.submitAttempted?'submit_uncertain':'idle',recoveryRequired:false,blockingIssue:run.submitAttempted?run.blockingIssue:undefined},'warning','Tab của lượt đã đóng hoặc chuyển sang form khác. Đã dừng lượt và giải phóng profile.');
    await writeRunNow(stopped);return;
  }
@@ -192,6 +244,7 @@ async function recoverPage(tabId:number,runId:string){
   }
 }
 if(chrome.alarms?.onAlarm)chrome.alarms.onAlarm.addListener(alarm=>{
+  if(alarm.name.startsWith('hanu-navigation:')){const token=alarm.name.slice('hanu-navigation:'.length);void chrome.storage.local.get(`navigation:${token}`).then(async data=>{const watch=data[`navigation:${token}`] as NavigationWatch|undefined;if(!watch)return;if(!navigationWatches.has(watch.tabId))navigationWatches.set(watch.tabId,watch);await checkNavigationWatch(watch);}).catch(()=>{});return;}
   if(!alarm.name.startsWith('hanu-recovery:'))return;
   void getManaged().then(run=>{if(run?.runId===alarm.name.slice('hanu-recovery:'.length))return recoverPage(run.tabId,run.runId);}).catch(()=>{});
 });
@@ -200,9 +253,10 @@ class PageProblem extends Error {
   constructor(public health:PageHealth){super(health.issue?.message??'Không đọc được trạng thái Google Forms.');}
 }
 
-async function blockPageProblem(runId:string,health:PageHealth,tabId?:number):Promise<RunState|undefined>{
+async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,expectedEpoch?:string):Promise<RunState|undefined>{
   const result=await writeState(async()=>{
-    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||current.status!=='running'||interruptedRuns.has(runId))return;
+    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!['running','submitting'].includes(current.status)||interruptedRuns.has(runId))return;
+    if(expectedEpoch!==undefined&&current.contentEpoch!==expectedEpoch)return;
     if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:'submit_uncertain',message:'Google chưa xác nhận sau khi khóa gửi. Không tự tải lại hoặc gửi lại.'};}
     else if(health.retryable&&health.issue&&['network','server_error','navigation'].includes(health.issue.reason)){
       const next=transientState(current,health.issue.reason as 'network'|'server_error'|'navigation',health.issue.message);await writeRunNow(next);return next;
@@ -212,7 +266,7 @@ async function blockPageProblem(runId:string,health:PageHealth,tabId?:number):Pr
     }
     await writeRunNow(current);return current;
   });
-  if(result){await chrome.tabs.sendMessage(result.tabId,{type:'HALT_RUN'}).catch(()=>{});scheduleRecovery(result);}
+  if(result){scheduleRecovery(result);await haltDocument(result.tabId);}
   return result;
 }
 
@@ -229,7 +283,12 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
   await saveRun(preparing);
   try{
     let tab=await chrome.tabs.get(run.tabId);await valid();
-    if(tab.status==='loading'){await waitForForm(run.tabId,run.runId);await valid();tab=await chrome.tabs.get(run.tabId);}
+    if(tab.status==='loading'){
+      // Only a due bounded recovery may abandon an unresolved non-submit
+      // navigation. Open the original GET URL, never reload its POST document.
+      if(recovering&&run.url&&allowedFormUrl(run.url))await chrome.tabs.update(run.tabId,{url:run.url});
+      await waitForForm(run.tabId,run.runId);await valid();tab=await chrome.tabs.get(run.tabId);
+    }
     const actual=canonicalFormId(tab.url??'');
     if(actual&&actual!==run.formId||!actual&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))throw new PageProblem({issue:{reason:'account',message:'Tab đã chuyển sang trang khác. Mở đúng form rồi Tiếp tục hoặc Chạy lại.'}});
     const health=actual?await sendToForm<PageHealth>(run.tabId,{type:'PAGE_HEALTH'}).catch(()=>({issue:{reason:'network' as const,message:'Không đọc được trang Google Forms.'},retryable:true})):({issue:{reason:'network' as const,message:'Trang tải lỗi.'},retryable:true});
@@ -240,7 +299,9 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
       await chrome.tabs.update(run.tabId,{url:run.url});await waitForForm(run.tabId,run.runId);await valid();
       const again=await sendToForm<PageHealth>(run.tabId,{type:'PAGE_HEALTH'});if(again.issue)throw new PageProblem(again);
     }
-    if(run.managed)await checkAccount(run.tabId,run.expectedEmail!);await valid();
+    // resumeRun performs the account check on this current document immediately
+    // before dispatch. Repeating it here adds another browser/server round trip.
+    await valid();
     const current=run.managed?await getManaged():await getRun(run.tabId);if(!current)return;
     current.recoveryRequired=false;current.activity=undefined;if(current.recovery)current.recovery.automatic=false;
     await saveRun(current);await valid();return resumeRun(run.tabId);
@@ -251,14 +312,27 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
 }
 
 async function sendToForm<T>(tabId: number, command: ExtensionMessage): Promise<T> {
-  try {
-    return await chrome.tabs.sendMessage(tabId, command) as T;
-  } catch {
-    // A static content script is not attached to tabs that were already open
-    // when the extension was loaded/reloaded. Inject once, then retry.
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-    return await chrome.tabs.sendMessage(tabId, command) as T;
+  const readOnly=['PAGE_HEALTH','PAGE_ACCOUNT','PAGE_RUN_STATUS','SCAN_FORM'].includes(command.type);
+  for(let attempt=0;attempt<(readOnly?4:1);attempt++){
+    try{
+      let reply:T;
+      try{const work=chrome.tabs.sendMessage(tabId,command);reply=await(readOnly?observePage(work):work) as T;if(readOnly&&reply===undefined)throw new Error('Không đọc được phản hồi từ trang đang chuyển.');}
+      catch{
+        // A tab opened before an extension reload has no static script. Inject
+        // once; document claims still fence any predecessor racing navigation.
+        if(attempt===0){const work=chrome.scripting.executeScript({target:{tabId},files:['content.js']});await(readOnly?observePage(work):work);}
+        const work=chrome.tabs.sendMessage(tabId,command);reply=await(readOnly?observePage(work):work) as T;
+      }
+      if(readOnly&&reply===undefined)throw new Error('Không đọc được phản hồi từ trang đang chuyển.');
+      return reply;
+    }catch(error){
+      // Only repeat observations. A missing side-effect acknowledgement must
+      // never reissue Next, upload or a control command.
+      if(!readOnly||attempt===3)throw error;
+      await new Promise(resolve=>setTimeout(resolve,75));
+    }
   }
+  throw new Error('Không đọc được trang form.');
 }
 
 async function inputAllowed(tabId:number,scope:{runId?:string;epoch?:string},epoch:number){
@@ -403,7 +477,7 @@ async function haltRun(tabId:number,status:'idle'|'paused'):Promise<RunState|und
     const next=addLog({...current,activity:undefined,recovery:current.recovery?{...current.recovery,automatic:false}:undefined,status:current.submitAttempted?'submit_uncertain':status,recoveryRequired:false,blockingIssue:current.submitAttempted?current.blockingIssue:undefined},'info',status==='idle'?'Đã dừng. Giữ dữ liệu và khóa gửi của lượt.':'Đã tạm dừng theo yêu cầu.');
     await writeRunNow(next);return next;
   });
-  await chrome.tabs.sendMessage(tabId,{type:'HALT_RUN'}).catch(()=>undefined);
+  await haltDocument(tabId);
   await releasePageAttention(tabId);return run;
 }
 async function pauseRun(tabId:number){return haltRun(tabId,'paused');}
@@ -427,10 +501,9 @@ async function resumeRun(tabId: number,automatic=false): Promise<RunState | unde
     const next=addLog({...latest,status:'running',blockingIssue:undefined,updatedAt:now()},'info',automatic?'Dữ liệu đã được sửa hợp lệ; đang tự tiếp tục.':'Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.');
     await writeRunNow(next);return next;
   });
-  // Some controls (notably the Google file picker) do not expose their value
-  // back to a content script. The user explicitly resumes after handling it,
-  // so advance past this exact card once and let Google Forms validate Next.
-  await runOnTab(tabId, run.mode, current.blockingIssue?.reason === "file_upload" ? current.blockingIssue.questionId : undefined);
+  // A reload may have erased the upload that used to block this run. Resume
+  // re-reads the current card; an old blockingQuestion is never proof of a file.
+  await runOnTab(tabId, run.mode);
   return run;
 }
 
@@ -449,7 +522,7 @@ async function autoResumePage(message:Extract<ExtensionMessage,{type:'AUTO_RESUM
 async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:string;epoch?:string}): Promise<void> {
   return writeState(async()=>{
   const current = await getRun(tabId);
-  if (!current || current.status === "idle" || current.status === "paused") return;
+  if (!current || current.status === "idle" || current.status === "paused") throw new Error('Lượt đã dừng hoặc tạm dừng; bỏ thao tác trang cũ.');
   if(current.runId&&(scope?.runId!==current.runId||scope?.epoch!==current.contentEpoch))throw new Error('Sự kiện thuộc lượt/trang cũ.');
   if(current.managed&&!native.isConnected()&&event.type!=='completed')throw new Error('App mất kết nối; dừng để đối chiếu.');
   if(current.status==='completed'&&event.type!=='completed')return;
@@ -479,6 +552,8 @@ async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:
     run = addLog({ ...run, pageFingerprint: event.fingerprint, status: "running" }, "info", "Đã chuyển sang trang tiếp theo.");
   }
   await writeRunNow(run);
+  if(event.type==='activity'&&event.phase==='navigating')void armNavigationWatch(tabId);
+  if(event.type==='page_advanced')cancelNavigationWatch(tabId);
   if(event.type==='transient_error')scheduleRecovery(run);
   });
 }
@@ -534,6 +609,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (chrome.sidePanel?.setOptions) {
     void chrome.sidePanel.setOptions({ tabId, path: "sidepanel.html", enabled: true }).catch(() => undefined);
   }
+  if(changeInfo.status==='loading')void armNavigationWatch(tabId).catch(()=>{});
   if(changeInfo.status==='complete')void inspectLoadedDocument(tabId).catch(()=>{});
 });
 
@@ -556,6 +632,7 @@ async function inspectLoadedDocument(tabId:number):Promise<void>{
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  cancelNavigationWatch(tabId);
   void releasePageAttention(tabId);
   void writeState(async()=>{const run=await getRun(tabId);if(run&&!endedExecution(run)){cancelRecovery(run.runId);if(run.runId)interruptedRuns.add(run.runId);run.status=run.submitAttempted?'submit_uncertain':'idle';run.activity=undefined;if(run.recovery)run.recovery.automatic=false;run.recoveryRequired=false;run.blockingIssue=run.submitAttempted?run.blockingIssue:undefined;run.logs.push({at:now(),level:'warning',message:'Tab đăng ký đã đóng. Đã dừng lượt và giải phóng profile.'});await writeRunNow(run);}});
 });
@@ -597,7 +674,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if(message.type==='NATIVE_OPEN_MANAGER'){const url=cloudOrigin()||(await native.request('OPEN_MANAGER')).url;await chrome.tabs.create({url,active:true});return sendResponse({ok:true});}
       if(message.type==='CLAIM_DOCUMENT'){
         if(sender.tab?.id===undefined||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
+        formReadiness.get(sender.tab.id)?.();
         const run=await getRun(sender.tab.id);
+        if(run?.contentEpoch!==message.epoch)cancelNavigationWatch(sender.tab.id);
         if(pageAttention.get(sender.tab.id)?.epoch!==message.epoch)await releasePageAttention(sender.tab.id);
         if(run&&run.formId===canonicalFormId(sender.url??sender.tab.url??'')){
           if(cloudOrigin()&&!run.managed&&!endedExecution(run)){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
@@ -703,8 +782,24 @@ async function checkAccount(tabId:number,expected:string){
   if(result.error)throw new PageProblem(result.health??{issue:{reason:'account',message:result.error}});
   if(!result.email||result.email.trim().toLowerCase()!==expected.trim().toLowerCase())throw new Error(result.email?'Tài khoản trên form không khớp nick đã gán.':'Không xác định được tài khoản trên form.');
 }
+const formReadiness=new Map<number,()=>void>();
 async function waitForForm(tabId:number,runId?:string):Promise<string>{
-  for(let i=0;i<240;i++){if(runId&&interruptedRuns.has(runId))throw new Error('Lượt đã dừng.');const tab=await chrome.tabs.get(tabId);const id=canonicalFormId(tab.url??'');if(tab.status==='complete'&&tab.url?.startsWith('https://accounts.google.com/'))throw new PageProblem({issue:{reason:'account',message:'Cần đăng nhập Google.'}});if(tab.status==='complete'&&/https:\/\/(?:www\.)?google\.com\/sorry/.test(tab.url??''))throw new PageProblem({issue:{reason:'captcha',message:'Google yêu cầu xác thực. Hãy xử lý trong trình duyệt rồi Tiếp tục.'}});if(tab.status==='complete'&&id)return id;await new Promise(r=>setTimeout(r,250));}
+  const deadline=Date.now()+NAVIGATION_LIMIT_MS;
+  while(Date.now()<deadline){
+    if(runId&&interruptedRuns.has(runId))throw new Error('Lượt đã dừng.');
+    const tab=await chrome.tabs.get(tabId),id=canonicalFormId(tab.url??'');
+    if(tab.status==='complete'&&tab.url?.startsWith('https://accounts.google.com/'))throw new PageProblem({issue:{reason:'account',message:'Cần đăng nhập Google.'}});
+    if(tab.status==='complete'&&/https:\/\/(?:www\.)?google\.com\/sorry/.test(tab.url??''))throw new PageProblem({issue:{reason:'captcha',message:'Google yêu cầu xác thực. Hãy xử lý trong trình duyệt rồi Tiếp tục.'}});
+    if(id){
+      if(tab.status==='complete')return id;
+      // DOM readiness, rather than every image/analytics request finishing,
+      // permits account checks and filling. A stalled content reply is bounded.
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      const health=await Promise.race([chrome.tabs.sendMessage(tabId,{type:'PAGE_HEALTH'}).catch(()=>undefined),new Promise<undefined>(r=>timer=setTimeout(()=>r(undefined),500))]).finally(()=>clearTimeout(timer)) as PageHealth|undefined;
+      if(health?.ready||health?.issue)return id;
+    }
+    await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);if(formReadiness.get(tabId)===finish)formReadiness.delete(tabId);resolve();};const timer=setTimeout(finish,125);formReadiness.set(tabId,finish);});
+  }
   throw new Error('Không tải được Google Form.');
 }
 async function startManaged(command:Command,sessionId:string){
@@ -746,7 +841,10 @@ async function startManaged(command:Command,sessionId:string){
   await saveRun(run);
   try{
     if(await hasLocalLock(run.formId))throw new Error('Form có khóa gửi chưa giải quyết.');
-    await native.request('CHECK_FORM',run);await checkAccount(run.tabId,run.expectedEmail!);
+    // Both are observations; join both before any form input. Neither check
+    // needs the other's result, so they can share the same network interval.
+    const checks=await Promise.allSettled([native.request('CHECK_FORM',run),checkAccount(run.tabId,run.expectedEmail!)]);
+    for(const result of checks)if(result.status==='rejected')throw result.reason;
     if(interruptedRuns.has(run.runId!))return getManaged();
     run=(await getManaged())!;run.recoveryRequired=false;await saveRun(run);await runOnTab(run.tabId,run.mode);return run;
   }catch(e){return blockPageProblem(run.runId!,e instanceof PageProblem?e.health:{issue:{reason:'account',message:(e as Error).message}});}
@@ -760,7 +858,7 @@ async function parkManaged(){
     run.activity=run.status==='waiting_manual'?{phase:'waiting_user',message:run.blockingIssue?.message??'Cần kiểm tra form trước khi tiếp tục.',at:now()}:{phase:'reconnecting',message:native.isConnected()?'Đã kết nối. Bấm Tiếp tục để đối chiếu trang trước khi chạy.':'Mất kết nối bộ điều phối. Đang nối lại; lượt được giữ để đối chiếu.',at:now()};
     run.recoveryRequired=true;await writeRunNow(run);return run;
   });
-  if(run?.tabId!==undefined&&run.tabId>=0){await chrome.tabs.sendMessage(run.tabId,{type:'HALT_RUN'}).catch(()=>undefined);await releasePageAttention(run.tabId);}
+  if(run?.tabId!==undefined&&run.tabId>=0){await haltDocument(run.tabId);await releasePageAttention(run.tabId);}
 }
 async function reconcileManaged(){await parkManaged();const run=await getManaged();if(run){native.state(run);return {run,tab:await chrome.tabs.get(run.tabId).catch(()=>undefined)};}return {run:null};}
 async function focusManaged(){

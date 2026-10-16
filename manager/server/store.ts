@@ -80,13 +80,15 @@ export class Store implements DataStore {
     else {s.execution=undefined;s.error='Mất kết nối. Mở lại profile và đối chiếu trước khi tiếp tục.';if(s.run&&!['completed','idle','ready_to_submit'].includes(s.run.status)){s.run.status=s.run.submitAttempted?'submit_uncertain':'paused';s.run.recoveryRequired=true;this.saveRun(id,s.run);}}
     this.saveSession(s);
   });}
-  beginGroup(group:GroupView,sessions:SessionView[]){this.transaction(()=>{
+  beginGroup(group:GroupView,sessions:SessionView[],append=false){this.transaction(()=>{
+    if(append){const current=this.group(group.id);if(current.paused||current.stopped||current.requestSignature!==group.requestSignature||sessions.some(s=>!current.members.includes(s.id)))throw new Error('Nhóm đã dừng hoặc thay đổi; không bắt đầu profile.');}
     for(const requested of sessions){const current=this.session(requested.id);
       if(!current.connected||!current.synced||current.execution||current.conflict||current.revision!==requested.revision||!isDeepStrictEqual(current.profile,requested.profile)||current.run&&!['idle','completed','ready_to_submit','failed','submit_uncertain'].includes(current.run.status))throw new Error('Profile vừa thay đổi hoặc đang có lượt chạy. Đọc lại trạng thái.');
       const form=canonicalFormId(group.url);if(form&&this.blocked(current.id,form))throw new Error('Form có khóa gửi. Xác minh trước khi chạy lại.');
     }
-    this.saveGroup(group);for(const s of sessions){this.saveRun(s.id,s.run!);this.saveSession(s);}
+    if(!append)this.saveGroup(group);for(const s of sessions){this.saveRun(s.id,s.run!);this.saveSession(s);}
   });}
+  recordStartResult(id:string,result:import('../../src/protocol').StartResult){this.transaction(()=>{const g=this.group(id);g.startResults=[...(g.startResults??[]).filter(r=>r.id!==result.id),result];this.saveGroup(g);});}
   acceptProgress(id:string,run:RunState){return this.transaction(()=>{
     const s=this.session(id);
     if(!run||!s.run||run.runId!==s.run.runId||run.sessionId!==id||!Number.isSafeInteger(run.eventSeq)||(run.eventSeq??0)<=(s.run.eventSeq??0)||s.run.submitAttempted&&!run.submitAttempted)return false;
