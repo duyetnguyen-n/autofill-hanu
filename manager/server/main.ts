@@ -47,7 +47,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="hanu-local-backup.json"');return json(exportArchive(store));}
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
-        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion));}
+        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion,b.requestId));}
         if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion,b.resume===true));}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
@@ -61,7 +61,8 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
             if(action==='pull')return json(await coordinator.pull(id));
             if(action==='push'){const b=await body(req);return json(await coordinator.push(id,b.force===true));}
             if(action==='use-extension'){const s=store.session(id);if(!s.conflict)throw new Error('Không có xung đột.');await coordinator.importDocument(id,s.conflict);return json(store.session(id));}
-            if(['pause','resume','stop'].includes(action??''))return json(await coordinator.control(id,action!.toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
+            if(action==='restart'){const b=await body(req);return json(await coordinator.restart(id,b.expectedRunId,b.requestId));}
+            if(['pause','resume','stop'].includes(action??'')){const b=await body(req);return json(await coordinator.control(id,action!.toUpperCase() as 'PAUSE'|'RESUME'|'STOP',b.expectedRunId));}
             if(action==='reconcile')return json(await coordinator.command(id,'RECONCILE',{},store.session(id).run?.runId));
             if(action==='resolve'){const b=await body(req);if(!['received','not_received'].includes(b.result))throw new Error('Kết quả xác minh không hợp lệ.');await coordinator.resolve(id,b.result);return json({ok:true});}
             if(action==='attachment'){const b=await body(req);if(typeof b.base64!=='string'||typeof b.name!=='string'||typeof b.mimeType!=='string')throw new Error('Tệp không hợp lệ.');const bytes=Buffer.from(b.base64,'base64'),attachmentId=randomBytes(16).toString('hex');store.saveAttachment(id,attachmentId,bytes,digest(bytes));const s=store.session(id);if(!s.profile)throw new Error('Đọc hồ sơ trước khi thêm ảnh.');s.profile.attachments[String(b.key??'identityDocument')]={id:attachmentId,name:b.name,type:b.mimeType,size:bytes.length,updatedAt:new Date().toISOString()};s.synced=false;store.saveSession(s);coordinator.changed();return json(s);}

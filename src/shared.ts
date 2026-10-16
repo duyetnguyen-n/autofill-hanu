@@ -78,11 +78,28 @@ export interface Profile {
 }
 
 export interface BlockingIssue {
-  reason: "unknown_required" | "unsupported" | "verification" | "captcha" | "file_upload" | "validation" | "submit_uncertain";
+  reason: "unknown_required" | "unsupported" | "verification" | "captcha" | "file_upload" | "validation" | "submit_uncertain" | "network" | "server_error" | "navigation" | "account" | "form_closed";
   message: string;
   questionId?: string;
   questionLabel?: string;
   candidates?: string[];
+}
+
+export interface RunActivity {
+  phase:'opening'|'checking_account'|'filling'|'navigating'|'uploading'|'retrying'|'waiting_user'|'reconnecting';
+  message:string;
+  at:string;
+}
+export interface RecoveryPlan {
+  reason:'network'|'server_error'|'navigation';
+  attempt:number;
+  retryAt?:string;
+  automatic:boolean;
+}
+export interface ManualAnswer {
+  label:string;
+  kind:Exclude<ControlKind,'file'>;
+  values:string[];
 }
 
 export interface RunLogEntry {
@@ -92,6 +109,9 @@ export interface RunLogEntry {
 }
 
 export interface RunState {
+  activity?:RunActivity;
+  recovery?:RecoveryPlan;
+  corrections?:Record<string,ManualAnswer>;
   finalQuestion?: FinalQuestion;
   runId?: string;
   sessionId?: string;
@@ -138,30 +158,35 @@ export type ExtensionMessage =
   | { type: "REQUEST_SUBMIT"; runId?: string; epoch?: string }
   | { type: "AUTO_RESUME"; runId?: string; epoch: string }
   | { type: "PAGE_ACCOUNT" }
+  | { type: "PAGE_HEALTH" }
   | { type: "PAGE_RUN_STATUS" }
   | { type: "PAGE_ATTENTION_ACQUIRE"; runId?:string; epoch:string; purpose:string }
   | { type: "PAGE_ATTENTION_RELEASE"; token:string }
   | { type: "GET_PANEL_STATE"; tabId?: number }
   | { type: "GET_RUN_FOR_TAB" }
-  | { type: "TRUSTED_CLICK"; x: number; y: number }
-  | { type: "TRUSTED_KEYS"; keys: string[] }
+  | { type: "TRUSTED_CLICK"; x: number; y: number; runId?:string; epoch?:string }
+  | { type: "TRUSTED_KEYS"; keys: string[]; runId?:string; epoch?:string }
   | { type: "SAVE_PROFILE"; profile: Profile }
   | { type: "SAVE_ATTACHMENT"; attachmentKey: string; name: string; mimeType: string; dataUrl: string }
   | { type: "GET_ATTACHMENT"; attachmentId: string }
-  | { type: "UPLOAD_STORED_FILE"; attachmentId: string; pickerUrl: string; requestId: string; checkOnly?: boolean }
+  | { type: "UPLOAD_STORED_FILE"; attachmentId: string; pickerUrl: string; requestId: string; checkOnly?: boolean; runId?:string; epoch?:string }
   | { type: "CLEAR_ALL_DATA" }
   | { type: "START_RUN"; tabId: number; mode: RunMode }
+  | { type: "RESTART_RUN"; tabId:number; runId?:string; operationId?:string }
   | { type: "PAUSE_RUN"; tabId: number }
   | { type: "RESUME_RUN"; tabId: number }
   | { type: "STOP_RUN"; tabId: number }
   | { type: "SCAN_FORM"; tabId: number }
   | { type: "SAVE_MAPPING"; tabId: number; questionId: string; ruleKey: string }
-  | { type: "RUN_CURRENT_PAGE"; mode: RunMode; skipQuestionId?: string; runId?: string; epoch?: string; finalQuestion?:FinalQuestion }
+  | { type: "RUN_CURRENT_PAGE"; mode: RunMode; skipQuestionId?: string; runId?: string; epoch?: string; finalQuestion?:FinalQuestion; corrections?:Record<string,ManualAnswer> }
   | { type: "HALT_RUN" }
   | { type: "FORM_EVENT"; event: FormEvent; runId?: string; epoch?: string }
   | { type: "GET_PROFILE" };
 
 export type FormEvent =
+  | { type: "activity"; phase:RunActivity['phase']; message:string }
+  | { type: "transient_error"; reason:RecoveryPlan['reason']; message:string }
+  | { type: "corrections"; answers:Record<string,ManualAnswer> }
   | { type: "progress"; message: string; filled?: string; skipped?: string }
   | { type: "block"; issue: BlockingIssue }
   | { type: "ready_to_submit" }

@@ -51,10 +51,10 @@ it('opens a controller bound to the original form tab when Side Panel is unavail
   expect(await fixture.ask({ type: 'GET_PANEL_STATE', tabId: 7 })).toEqual(expect.objectContaining({ tabId: 7 }));
 });
 
-it('persists running before resuming after manual completion', async () => {
+it('does not resurrect a correction wait from a late progress event', async () => {
   const fixture = await setup();
   await fixture.ask({ type: 'FORM_EVENT', event: { type: 'progress', message: 'Manual completion' } }, { tab: { id: 7, url:formUrl } });
-  expect(fixture.data['run:7']).toEqual(expect.objectContaining({ status: 'running' }));
+  expect(fixture.data['run:7']).toEqual(expect.objectContaining({ status: 'waiting_manual' }));
 });
 
 it('does not resume a paused run from a late progress event', async () => {
@@ -87,4 +87,29 @@ it('does not reuse a running session on a different form in the same tab', async
   fixture.run.status = 'running';
   expect(await fixture.ask({ type: 'GET_RUN_FOR_TAB' }, { tab: { id: 7, url: formUrl.replace('test-form', 'other-form') } })).toBeUndefined();
   expect(await fixture.ask({ type: 'GET_RUN_FOR_TAB' }, { tab: { id: 7, url: formUrl } })).toEqual(fixture.run);
+});
+
+it('keeps a transient retry scoped and lets Stop cancel it immediately',async()=>{
+  const f=await setup();f.run.status='running';f.run.runId='retry';f.run.contentEpoch='page';
+  const sender={tab:{id:7,url:formUrl},url:formUrl};
+  await f.ask({type:'FORM_EVENT',runId:'retry',epoch:'page',event:{type:'transient_error',reason:'server_error',message:'503 Service Unavailable'}},sender);
+  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',recovery:{attempt:1,automatic:true},activity:{phase:'retrying'}});
+  await f.ask({type:'STOP_RUN',tabId:7});
+  expect(f.data['run:7']).toMatchObject({status:'idle',recovery:{automatic:false}});
+  await f.ask({type:'FORM_EVENT',runId:'retry',epoch:'page',event:{type:'progress',message:'late callback'}},sender);
+  expect(f.data['run:7']).toMatchObject({status:'idle'});
+});
+it('never schedules a reload after a send reservation has been persisted',async()=>{
+  const f=await setup();Object.assign(f.run,{status:'submitting',submitAttempted:true});
+  await f.ask({type:'FORM_EVENT',event:{type:'transient_error',reason:'server_error',message:'500'}},{tab:{id:7,url:formUrl},url:formUrl});
+  expect(f.data['run:7']).toMatchObject({status:'submit_uncertain',submitAttempted:true,blockingIssue:{reason:'submit_uncertain'}});
+  expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
+});
+it('checkpoints a valid manual answer in its run while rejecting stale document events',async()=>{
+  const f=await setup();f.run.runId='manual';f.run.contentEpoch='new-page';
+  const event={type:'corrections' as const,answers:{phone:{label:'Phone',kind:'text' as const,values:['0911111111']}}},sender={tab:{id:7,url:formUrl},url:formUrl};
+  expect(await f.ask({type:'FORM_EVENT',runId:'manual',epoch:'old-page',event},sender)).toMatchObject({ok:false});
+  await f.ask({type:'FORM_EVENT',runId:'manual',epoch:'new-page',event},sender);
+  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',corrections:event.answers});
+  expect(f.data.profile).toBeUndefined();
 });

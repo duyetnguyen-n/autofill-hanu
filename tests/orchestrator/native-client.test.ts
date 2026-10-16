@@ -36,3 +36,31 @@ it('reports standalone execution ownership on heartbeat without leaking its prof
  const pairing=f.client.pair('ABCDEF123456');await vi.waitFor(()=>expect(f.ports).toHaveLength(1));const port=f.ports[0];port.messages.forEach((fn:any)=>fn({type:'PAIRED',token:'token'}));await pairing;
  f.client.heartbeat();await vi.waitFor(()=>expect(port.sent.find((m:any)=>m.type==='EXECUTION')?.execution).toEqual(execution));expect(port.sent.find((m:any)=>m.type==='EXECUTION')).not.toHaveProperty('profile');
 });
+
+async function connectedFixture(){
+ const f=fixture(),pairing=f.client.pair('ABCDEF123456');await vi.waitFor(()=>expect(f.ports).toHaveLength(1));
+ const port=f.ports[0];port.messages.forEach((fn:any)=>fn({type:'PAIRED',token:'token'}));await pairing;
+ const deliver=(kind:string,commandId:string)=>port.messages.forEach((fn:any)=>fn({type:'COMMAND',protocol:1,sessionId:f.storage.coordinatorIdentity.sessionId,kind,commandId,runId:'run',payload:{}}));
+ return {...f,port,deliver};
+}
+it('acknowledges Stop while Start is still awaiting a page and preserves both command journal entries',async()=>{
+ const f=await connectedFixture();let finish!:()=>void;
+ f.adapter.start.mockImplementation(()=>new Promise<void>(r=>finish=r));f.adapter.control.mockResolvedValue({status:'idle'});
+ f.deliver('START','slow-start');await vi.waitFor(()=>expect(f.adapter.start).toHaveBeenCalledOnce());
+ f.deliver('STOP_PROFILE','stop-now');
+ await vi.waitFor(()=>expect(f.port.sent).toContainEqual(expect.objectContaining({type:'RESULT',commandId:'stop-now',ok:true})));
+ expect(f.port.sent.some((m:any)=>m.commandId==='slow-start'&&m.type==='RESULT')).toBe(false);
+ finish();await vi.waitFor(()=>expect(f.storage.nativeJournal['slow-start']?.done).toBe(true));
+ expect(f.storage.nativeJournal['stop-now'].done).toBe(true);
+});
+it('cancels queued pre-Stop commands and does not interrupt a new run when an acknowledged Stop is replayed',async()=>{
+ const f=await connectedFixture();let finish!:()=>void;
+ f.adapter.start.mockImplementation(()=>new Promise<void>(r=>finish=r));f.adapter.control.mockResolvedValue({status:'idle'});
+ f.deliver('START','slow');await vi.waitFor(()=>expect(f.adapter.start).toHaveBeenCalledOnce());
+ f.deliver('START','queued');f.deliver('STOP_PROFILE','stop');
+ await vi.waitFor(()=>expect(f.port.sent).toContainEqual(expect.objectContaining({commandId:'stop',ok:true})));
+ finish();await vi.waitFor(()=>expect(f.port.sent).toContainEqual(expect.objectContaining({commandId:'queued',ok:false})));
+ expect(f.adapter.start).toHaveBeenCalledOnce();const interrupted=f.adapter.disconnected.mock.calls.length;
+ f.deliver('STOP_PROFILE','stop');await vi.waitFor(()=>expect(f.port.sent.filter((m:any)=>m.commandId==='stop'&&m.ok)).toHaveLength(2));
+ expect(f.adapter.disconnected).toHaveBeenCalledTimes(interrupted);expect(f.adapter.control).toHaveBeenCalledOnce();
+});

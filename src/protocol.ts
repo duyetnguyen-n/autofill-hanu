@@ -9,10 +9,18 @@ export interface Command {
   runId?: string; kind: CommandKind; payload: Record<string, unknown>;
 }
 export interface ProfileDocument { profile: Profile; revision: number }
-export interface ExecutionView {runId?:string;tabId:number;mode:RunMode;status:RunState['status'];managed:boolean;tabOpen:boolean;active?:boolean;message?:string;startedAt?:string;updatedAt:string}
+export interface ExecutionView {runId?:string;tabId:number;mode:RunMode;status:RunState['status'];managed:boolean;tabOpen:boolean;active?:boolean;eventSeq?:number;message?:string;startedAt?:string;updatedAt:string}
+export function currentExecution(run:RunState|undefined,execution:ExecutionView|null,sourceRunId?:string):boolean {
+  if(sourceRunId&&run?.runId&&sourceRunId!==run.runId)return false;
+  if(!execution||!run)return true;
+  if(execution.managed&&execution.runId!==run.runId)return false;
+  if(execution.runId!==run.runId)return true;
+  if(execution.eventSeq!==undefined&&execution.eventSeq<(run.eventSeq??0))return false;
+  return !(['idle','completed','failed','ready_to_submit'].includes(run.status)&&['running','submitting','paused','waiting_manual'].includes(execution.status));
+}
 export function sameExecution(a:ExecutionView|null|undefined,b:ExecutionView|null|undefined):boolean{
   if(a==null||b==null)return a==null&&b==null;
-  const fields:Record<keyof ExecutionView,true>={runId:true,tabId:true,mode:true,status:true,managed:true,tabOpen:true,active:true,message:true,startedAt:true,updatedAt:true};
+  const fields:Record<keyof ExecutionView,true>={runId:true,tabId:true,mode:true,status:true,managed:true,tabOpen:true,active:true,eventSeq:true,message:true,startedAt:true,updatedAt:true};
   return (Object.keys(fields) as (keyof ExecutionView)[]).every(key=>a[key]===b[key]);
 }
 export interface SessionView {
@@ -23,8 +31,18 @@ export interface SessionView {
   managerDraft?: boolean;
   lastSeen: string; profile?: Profile; revision: number; synced: boolean;
   conflict?: ProfileDocument; error?: string; run?: RunState; execution?:ExecutionView|null;
+  control?: ControlReceipt;
 }
-export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string }
+export interface ControlReceipt {
+  commandId:string;
+  kind:'START'|'PAUSE'|'RESUME'|'STOP'|'STOP_PROFILE';
+  runId?:string;
+  state:'pending'|'acknowledged'|'failed'|'uncertain';
+  requestedAt:string;
+  updatedAt:string;
+  error?:string;
+}
+export interface GroupView { id: string; mode: RunMode; url: string; members: string[]; paused: boolean; stopped?:boolean; createdAt: string; requestId?:string; requestSignature?:string; restartOf?:string }
 export function canonicalFormId(url: string): string | undefined {
   try {
     const u = new URL(url);

@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
-import type { SessionView, GroupView } from '../../src/protocol';
+import {isDeepStrictEqual} from 'node:util';
+import {canonicalFormId} from '../../src/protocol';
+import type { SessionView, GroupView,ControlReceipt } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import type { DataStore } from './data-store';
 
@@ -28,6 +30,12 @@ export class Store implements DataStore {
   sessions(): SessionView[] { this.rebuildCache(); return structuredClone([...this.sessionCache.values()]); }
   session(id: string): SessionView { this.rebuildCache(); const cached = this.sessionCache.get(id); if (cached) return structuredClone(cached); const r = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as {data:string}|undefined; if (!r) throw new Error('Không tìm thấy profile.'); const parsed = JSON.parse(r.data); this.sessionCache.set(id, parsed); return structuredClone(parsed); }
   saveSession(s: SessionView, token?: string) { if (token) this.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(s.id,digest(token),JSON.stringify(s)); else this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(s),s.id);this.sessionCache.set(s.id,structuredClone(s)); }
+  saveControl(id:string,receipt:ControlReceipt,initial:boolean){
+    const s=this.session(id);if(initial&&s.control&&s.control.requestedAt>receipt.requestedAt)return;
+    if(!initial&&s.control?.commandId!==receipt.commandId||receipt.runId&&s.run?.runId!==receipt.runId)return;
+    s.control=structuredClone(receipt);this.saveSession(s);
+    this.audit(id,receipt.runId,`control_${receipt.state}`,`${receipt.kind} ${receipt.commandId}${receipt.error?`: ${receipt.error}`:''}`);
+  }
   authenticate(id: string, token: string): boolean { const row = this.db.prepare('SELECT token FROM sessions WHERE id=?').get(id) as {token:string}|undefined; return !!row && row.token === digest(token); }
   pairCode() { const code = randomBytes(6).toString('hex').toUpperCase(); this.db.prepare('INSERT INTO pairing VALUES(?,?)').run(digest(code),Date.now()+300000); return code; }
   pair(id: string, code: string) { return this.transaction(() => {
@@ -42,6 +50,7 @@ export class Store implements DataStore {
   saveGroup(g: GroupView) { this.db.prepare('INSERT OR REPLACE INTO groups VALUES(?,?)').run(g.id,JSON.stringify(g)); }
   groups(): GroupView[] { return (this.db.prepare('SELECT data FROM groups ORDER BY rowid DESC').all() as {data:string}[]).map(r=>JSON.parse(r.data)); }
   group(id: string) { const r=this.db.prepare('SELECT data FROM groups WHERE id=?').get(id) as {data:string}|undefined; if (!r) throw new Error('Không tìm thấy lượt nhóm.'); return JSON.parse(r.data) as GroupView; }
+  groupForRequest(requestId:string){const row=this.db.prepare("SELECT data FROM groups WHERE json_extract(data,'$.requestId')=? LIMIT 1").get(requestId) as {data:string}|undefined;return row?JSON.parse(row.data) as GroupView:undefined;}
   saveRun(session: string, run: RunState) { this.db.prepare('INSERT OR REPLACE INTO runs VALUES(?,?,?,?)').run(run.runId!,session,JSON.stringify(run),run.eventSeq ?? 0); }
   history(session: string) { return (this.db.prepare('SELECT data FROM runs WHERE session=? ORDER BY rowid DESC').all(session) as {data:string}[]).map(r=>JSON.parse(r.data) as RunState); }
   blocked(session: string, form: string) { return !!this.db.prepare("SELECT run FROM locks WHERE session=? AND form=? AND resolution!='not_received'").get(session,form); }
@@ -71,7 +80,13 @@ export class Store implements DataStore {
     else {s.execution=undefined;s.error='Mất kết nối. Mở lại profile và đối chiếu trước khi tiếp tục.';if(s.run&&!['completed','idle','ready_to_submit'].includes(s.run.status)){s.run.status=s.run.submitAttempted?'submit_uncertain':'paused';s.run.recoveryRequired=true;this.saveRun(id,s.run);}}
     this.saveSession(s);
   });}
-  beginGroup(group:GroupView,sessions:SessionView[]){this.transaction(()=>{this.saveGroup(group);for(const s of sessions){this.saveRun(s.id,s.run!);this.saveSession(s);}});}
+  beginGroup(group:GroupView,sessions:SessionView[]){this.transaction(()=>{
+    for(const requested of sessions){const current=this.session(requested.id);
+      if(!current.connected||!current.synced||current.execution||current.conflict||current.revision!==requested.revision||!isDeepStrictEqual(current.profile,requested.profile)||current.run&&!['idle','completed','ready_to_submit','failed','submit_uncertain'].includes(current.run.status))throw new Error('Profile vừa thay đổi hoặc đang có lượt chạy. Đọc lại trạng thái.');
+      const form=canonicalFormId(group.url);if(form&&this.blocked(current.id,form))throw new Error('Form có khóa gửi. Xác minh trước khi chạy lại.');
+    }
+    this.saveGroup(group);for(const s of sessions){this.saveRun(s.id,s.run!);this.saveSession(s);}
+  });}
   acceptProgress(id:string,run:RunState){return this.transaction(()=>{
     const s=this.session(id);
     if(!run||!s.run||run.runId!==s.run.runId||run.sessionId!==id||!Number.isSafeInteger(run.eventSeq)||(run.eventSeq??0)<=(s.run.eventSeq??0)||s.run.submitAttempted&&!run.submitAttempted)return false;

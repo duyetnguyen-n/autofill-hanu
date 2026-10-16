@@ -1,5 +1,5 @@
 import type { DataStore } from './data-store';
-import { sameExecution, canonicalFormId, type GroupView, type SessionView, type ExecutionView } from '../../src/protocol';
+import { currentExecution, sameExecution, canonicalFormId, type GroupView, type SessionView, type ExecutionView } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import { validCloudProgress } from '../cloud/progress';
 
@@ -80,9 +80,10 @@ export class RunBuffer {
     if (!['running', 'submitting'].includes(run.status)) entry.halted = true;
     return true;
   }
-  execution(id: string, execution: ExecutionView | null) {
+  execution(id: string, execution: ExecutionView | null, sourceRunId?:string) {
     const entry = this.entries.get(id);
     if (!entry) return false;
+    if (!currentExecution(entry.session.run,execution,sourceRunId)) return false;
     if (!sameExecution(entry.session.execution,execution)) {
       entry.session.execution = structuredClone(execution);
       entry.executionDirty = true;
@@ -143,6 +144,7 @@ export class RunBuffer {
     })();
     entry.flushing = work;
     try { await work; }
+    catch(error){if(this.entries.get(id)===entry){if(run)entry.runDirty=true;if(execution!==undefined)entry.executionDirty=true;}throw error;}
     finally { entry.flushing = undefined; }
     if (entry.runDirty || entry.executionDirty) await this.flush(id);
   }

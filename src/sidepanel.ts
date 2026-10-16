@@ -1,5 +1,6 @@
 import "./sidepanel.css";
 import {cloudOrigin} from './coordinator-transport';
+import {runStatusLabel} from './run-presentation';
 import { HSK_RULES } from "./rules";
 import { AttachmentRef, CustomField, FieldRule, FormQuestionSummary, Profile, RunMode, RunState } from "./shared";
 
@@ -10,6 +11,8 @@ const $ = <T extends Element>(_: { new (): T }, selector: string): T => {
 };
 
 let profile: Profile;
+let savedProfileJson='';
+const pendingButtons=new Set<string>();
 let run: RunState | undefined;
 let tabId: number | undefined;
 let audit: FormQuestionSummary[] = [];
@@ -157,7 +160,11 @@ function renderAudit(): void {
 function renderRun(): void {
   const status = run?.status ?? "idle";
   const badge = $(HTMLSpanElement, "#stateBadge");
-  badge.textContent = stateLabels[status];
+  badge.textContent = run&&(run.blockingIssue?.reason||run.recovery||run.recoveryRequired||run.activity)?runStatusLabel(run):stateLabels[status];
+  const restart=$(HTMLButtonElement,'#restartRun');restart.hidden=!run?.runId;restart.disabled=!!run?.submitAttempted||pendingButtons.has('restartRun');
+  const start=$(HTMLButtonElement,'#startRun');start.disabled=pendingButtons.has('startRun')||!!run&&['running','paused','waiting_manual','submitting'].includes(run.status);
+  start.title=start.disabled?'Lượt hiện tại còn giữ profile. Dùng Tiếp tục hoặc Chạy lại.':'';
+  $(HTMLButtonElement,'#resumeRun').disabled=!run||!!run.submitAttempted||pendingButtons.has('resumeRun');
   badge.className = `badge ${status}`;
 
   const list = $(HTMLOListElement, "#runLog");
@@ -214,13 +221,17 @@ async function send<T>(message: unknown): Promise<T> {
 }
 
 async function saveProfile(): Promise<void> {
-  profile = readProfileFromForm();
+  const next=readProfileFromForm();
+  if(JSON.stringify(next)===savedProfileJson)return;
+  profile=next;
   await send({ type: "SAVE_PROFILE", profile });
+  savedProfileJson=JSON.stringify(profile);
 }
 
 async function refresh(): Promise<void> {
   const state = await send<{ profile: Profile; run?: RunState; tabId?: number }>({ type: "GET_PANEL_STATE", tabId: targetTabId });
   profile = state.profile;
+  savedProfileJson=JSON.stringify(profile);
   run = state.run;
   tabId = state.tabId;
   $(HTMLSelectElement, "#runMode").value = run?.mode ?? "test";
@@ -260,29 +271,32 @@ $(HTMLButtonElement, "#addCustomField").addEventListener("click", () => {
   profile.customFields.push({ id: crypto.randomUUID(), label: "", value: "", aliases: [] });
   renderCustomFields();
 });
-$(HTMLButtonElement, "#startRun").addEventListener("click", async () => {
-  await saveProfile();
-  if (tabId === undefined) throw new Error("Không tìm thấy tab đang mở.");
-  updateRun(await send<RunState>({ type: "START_RUN", tabId, mode: $(HTMLSelectElement, "#runMode").value as RunMode }));
-});
-$(HTMLButtonElement, "#pauseRun").addEventListener("click", async () => {
-  if (tabId === undefined) return;
-  updateRun(await send<RunState | undefined>({ type: "PAUSE_RUN", tabId }));
-});
-$(HTMLButtonElement, "#resumeRun").addEventListener("click", async () => {
-  await saveProfile();
-  if (tabId === undefined) return;
-  updateRun(await send<RunState | undefined>({ type: "RESUME_RUN", tabId }));
-});
-$(HTMLButtonElement, "#stopRun").addEventListener("click", async () => {
-  if (tabId === undefined) return;
-  updateRun(await send<RunState | undefined>({ type: "STOP_RUN", tabId }));
-});
+let panelActionEpoch=0;
+function panelControl(id:string,work:()=>Promise<RunState|undefined>){
+  const button=$(HTMLButtonElement,`#${id}`);
+  button.addEventListener('click',()=>{
+    const epoch=++panelActionEpoch,label=button.textContent;
+    pendingButtons.add(id);
+    button.disabled=true;button.textContent='Đang chờ xác nhận…';
+    $(HTMLElement,'#actionStatus').textContent=`Đã gửi lệnh ${label}. Đang chờ bộ điều phối xác nhận.`;
+    void work().then(next=>{updateRun(next);if(epoch===panelActionEpoch)$(HTMLElement,'#actionStatus').textContent=`Đã nhận phản hồi ${label}.`;}).catch(error=>{
+      if(epoch!==panelActionEpoch)return;
+      $(HTMLElement,'#actionStatus').textContent=(error as Error).message;
+      const item=document.createElement('li');item.className='error';item.textContent=`${label}: ${(error as Error).message}`;$(HTMLOListElement,'#runLog').prepend(item);
+    }).finally(()=>{pendingButtons.delete(id);button.textContent=label;button.disabled=false;renderRun();});
+  });
+}
+panelControl('startRun',async()=>{await saveProfile();if(tabId===undefined)throw new Error('Không tìm thấy tab form.');return send<RunState>({type:'START_RUN',tabId,mode:$(HTMLSelectElement,'#runMode').value as RunMode});});
+panelControl('restartRun',async()=>{await saveProfile();if(tabId===undefined||!run?.runId)throw new Error('Chưa có lượt để chạy lại.');return send<RunState>({type:'RESTART_RUN',tabId,runId:run.runId,operationId:crypto.randomUUID()});});
+panelControl('pauseRun',async()=>tabId===undefined?undefined:send<RunState>({type:'PAUSE_RUN',tabId}));
+panelControl('resumeRun',async()=>tabId===undefined?undefined:send<RunState>({type:'RESUME_RUN',tabId}));
+panelControl('stopRun',async()=>tabId===undefined?undefined:send<RunState>({type:'STOP_RUN',tabId}));
 $(HTMLButtonElement, "#saveMapping").addEventListener("click", async () => {
   const issue = run?.blockingIssue;
   if (tabId === undefined || !issue?.questionId) return;
   const result = await send<{ profile: Profile }>({ type: "SAVE_MAPPING", tabId, questionId: issue.questionId, ruleKey: $(HTMLSelectElement, "#mappingRule").value });
   profile = result.profile;
+  savedProfileJson=JSON.stringify(profile);
   await send({ type: "RESUME_RUN", tabId });
 });
 $(HTMLInputElement, "#identityFile").addEventListener("change", async (event) => {
@@ -295,6 +309,7 @@ $(HTMLInputElement, "#identityFile").addEventListener("change", async (event) =>
     reader.readAsDataURL(file);
   });
   const result = await send<{ profile: Profile }>({ type: "SAVE_ATTACHMENT", attachmentKey: "identityDocument", name: file.name, mimeType: file.type, dataUrl });
+  savedProfileJson=JSON.stringify(result.profile);
   profile = { ...readProfileFromForm(), attachments: { ...profile.attachments, identityDocument: result.profile.attachments.identityDocument } };
   renderAttachment();
 });

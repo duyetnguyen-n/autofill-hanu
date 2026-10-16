@@ -1,4 +1,4 @@
-import type { GroupView, SessionView } from '../../src/protocol';
+import type { GroupView, SessionView,ControlReceipt } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 
 type Result<T> = T | Promise<T>;
@@ -9,10 +9,13 @@ export interface DataStore {
   sessions(): Result<SessionView[]>;
   session(id: string): Result<SessionView>;
   saveSession(session: SessionView): Result<void>;
+  saveControl?(session:string,receipt:ControlReceipt,initial:boolean):Result<void>;
+  acknowledgeStop?(id:string,runId:string|undefined,result:unknown):Result<SessionView>;
   touch(id: string): Result<void>;
   connected(id: string, value: boolean): Result<void>;
   groups(): Result<GroupView[]>;
   group(id: string): Result<GroupView>;
+  groupForRequest?(requestId:string):Result<GroupView|undefined>;
   saveGroup(group: GroupView): Result<void>;
   saveRun(session: string, run: RunState): Result<void>;
   history(session: string): Result<RunState[]>;

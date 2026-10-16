@@ -48,7 +48,7 @@ it('a fresh document releases its predecessor’s lease before claiming the run'
 it('keeps rendering enabled through trusted input, then resets and detaches on release',async()=>{
  const f=await fixture();const attach=vi.fn(async()=>{}),detach=vi.fn(async()=>{}),sendCommand=vi.fn(async()=>{});Object.assign(chrome,{debugger:{attach,detach,sendCommand}});
  await f.ask(f.acquire);expect(sendCommand).toHaveBeenCalledWith({tabId:7},'Emulation.setFocusEmulationEnabled',{enabled:true});
- expect(await f.ask({type:'TRUSTED_CLICK',x:10,y:10})).toMatchObject({dispatched:true});expect(attach).toHaveBeenCalledOnce();expect(detach).not.toHaveBeenCalled();
+ expect(await f.ask({type:'TRUSTED_CLICK',x:10,y:10,runId:'run',epoch:'document'})).toMatchObject({dispatched:true});expect(attach).toHaveBeenCalledOnce();expect(detach).not.toHaveBeenCalled();
  await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});expect(sendCommand).toHaveBeenCalledWith({tabId:7},'Emulation.setFocusEmulationEnabled',{enabled:false});expect(detach).toHaveBeenCalledOnce();
 });
 it('cleans up a debugger attachment if Chromium rejects the rendering command',async()=>{
@@ -77,3 +77,15 @@ it('Stop during renderer setup detaches the pending debugger and prevents a late
 });
 it.each([false,true])('Start restores the window and waits for an occluded account header (occluded=%s)',async occluded=>{const f=await fixture();f.data['run:7'].status='idle';f.data.managedRun.status='idle';f.data.profile={values:{},customFields:[],attachments:{},mappings:{}};f.data.profileRevision=1;vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,windowId:1,url:f.sender.url,status:'complete'} as any);Object.assign(chrome.windows,{getLastFocused:vi.fn(async()=>({id:1,state:'minimized'}))});Object.assign(chrome.tabs,{create:vi.fn(async()=>({id:7,windowId:1})),sendMessage:vi.fn(async(_id,m:any)=>m.type==='PAGE_ACCOUNT'&&!occluded?{email:'fixture@example.test'}:{ok:true})});native.request.mockImplementation(async(kind:string)=>{if(kind==='ATTENTION_FOCUSED'){occluded=false;return {focused:true};}return {token:'lease'};});const result=await adapter.start({type:'COMMAND',protocol:1,sessionId:'session',commandId:'command',runId:'new-run',kind:'START',payload:{url:f.sender.url,mode:'test',revision:1,expectedEmail:'fixture@example.test'}},'session');expect(result.status).toBe('running');expect(f.update).toHaveBeenCalledWith(1,{state:'normal',focused:false});expect(f.update.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(chrome.tabs.create).mock.invocationCallOrder[0]);});
 
+it('rejects trusted input from a stale document or a stopped run before touching Chrome',async()=>{
+ const f=await fixture(),sendCommand=vi.fn(async()=>{});Object.assign(chrome,{debugger:{attach:vi.fn(async()=>{}),detach:vi.fn(async()=>{}),sendCommand}});
+ expect(await f.ask({type:'TRUSTED_CLICK',x:10,y:10,runId:'run',epoch:'old'})).toMatchObject({dispatched:false});
+ f.data['run:7'].status='idle';expect(await f.ask({type:'TRUSTED_KEYS',keys:['Enter'],runId:'run',epoch:'document'})).toMatchObject({dispatched:false});
+ expect(sendCommand).not.toHaveBeenCalled();
+});
+it('releases a pending mouse press outside the control if Stop arrives before mouse-up',async()=>{
+ const f=await fixture(),sendCommand=vi.fn(async(_target:any,method:string,params:any)=>{if(method==='Input.dispatchMouseEvent'&&params.type==='mousePressed')f.data['run:7'].status='idle';});
+ Object.assign(chrome,{debugger:{attach:vi.fn(async()=>{}),detach:vi.fn(async()=>{}),sendCommand}});
+ await f.ask({type:'TRUSTED_CLICK',x:10,y:10,runId:'run',epoch:'document'});
+ expect(sendCommand).toHaveBeenCalledWith({tabId:7},'Input.dispatchMouseEvent',expect.objectContaining({type:'mouseReleased',x:-1,y:-1}));
+});

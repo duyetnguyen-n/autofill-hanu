@@ -14,7 +14,7 @@ async function fixture(width=640,restore=false,late=false,validation=false,trans
   const sent:any[]=[];vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:async(m:any)=>{sent.push(m);if(m.type==='FORM_EVENT'&&m.event.type==='page_advanced')advancedAt=Date.now();if(m.type==='GET_PROFILE')return {values:{firstCommitment:'true'},customFields:[],attachments:{},mappings:{}};if(m.type==='PAGE_ATTENTION_ACQUIRE'){if(restore)width=640;return {ok:true,token:'foreground'};}return m.type==='GET_RUN_FOR_TAB'?undefined:{ok:true};}}});
   await import('../src/content');listener({type:'RUN_CURRENT_PAGE',mode:'test'},{},()=>{});if(stopAt)setTimeout(()=>listener({type:'HALT_RUN'},{},()=>{}),stopAt);await vi.runAllTimersAsync();return {clicks,sent,advancedDelay:advancedAt-clickedAt,checked:document.querySelector('[role="radio"]')?.getAttribute('aria-checked')};
 }
-it('never clicks Next while the required card has zero width',async()=>{const f=await fixture(0);expect(f.clicks).not.toHaveBeenCalled();expect(f.checked).toBe('false');expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'block',issue:expect.objectContaining({message:expect.stringContaining('Chưa bấm Tiếp')})})}));});
+it('never clicks Next while the required card has zero width',async()=>{const f=await fixture(0);expect(f.clicks).not.toHaveBeenCalled();expect(f.checked).toBe('false');expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'transient_error',reason:'navigation',message:expect.stringContaining('Chưa bấm Tiếp')})}));});
 it('restores layout before scanning, fills the previously zero-width card and advances',async()=>{const f=await fixture(0,true);expect(f.checked).toBe('true');expect(f.clicks).toHaveBeenCalledOnce();expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:{type:'ready_to_submit'}}));expect(f.sent).toContainEqual({type:'PAGE_ATTENTION_RELEASE',token:'foreground'});});
 it('waits for a required question whose controls are mounted after the document load',async()=>{const f=await fixture(640,false,true);expect(f.checked).toBe('true');expect(f.clicks).toHaveBeenCalledOnce();expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:{type:'ready_to_submit'}}));});
 it('reports the real Vietnamese validation text with “một” and does not retry Next',async()=>{const f=await fixture(640,false,false,true);expect(f.clicks).toHaveBeenCalledOnce();expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'block',issue:expect.objectContaining({message:'Google Forms báo lỗi: Đây là một câu hỏi bắt buộc'})})}));});
@@ -34,4 +34,9 @@ it('keeps Stop authoritative when a delayed page appears after cancellation',asy
  expect(f.clicks).toHaveBeenCalledOnce();
  expect(f.sent.some(m=>m.type==='TRUSTED_CLICK'||m.type==='FORM_EVENT'&&['ready_to_submit','block','page_advanced'].includes(m.event.type))).toBe(false);
  expect(f.sent).toContainEqual({type:'PAGE_ATTENTION_RELEASE',token:'foreground'});
+});
+it('does not click Next again when its original request exceeds the navigation budget',async()=>{
+ const f=await fixture(640,false,false,false,false,75000);
+ expect(f.clicks).toHaveBeenCalledOnce();expect(f.sent.some(m=>m.type==='TRUSTED_CLICK')).toBe(false);
+ expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'transient_error',reason:'navigation'})}));
 });

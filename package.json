@@ -1,6 +1,6 @@
 {
   "name": "hanu-hsk-autofill",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -35,7 +35,8 @@
     "test:cloud-controls": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=3 --controls",
     "test:cloud-load": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/cloud-load-test.ts",
     "cloud:load-server": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/cloud-load-server.ts",
-    "bench:fixture": "node scripts/run-node24.mjs scripts/benchmark.mjs"
+    "bench:fixture": "node scripts/run-node24.mjs scripts/benchmark.mjs",
+    "test:cloud-reliability": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=2 --faults"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",

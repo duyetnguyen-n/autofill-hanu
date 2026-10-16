@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { digest } from '../server/store';
 import type { DataStore } from '../server/data-store';
-import type { GroupView, SessionView } from '../../src/protocol';
+import type { GroupView, SessionView,ControlReceipt } from '../../src/protocol';
 import type { RunState } from '../../src/shared';
 import { canonicalFormId } from '../../src/protocol';
 import { validCloudProgress } from './progress';
@@ -99,6 +99,32 @@ export class PostgresStore implements DataStore {
     const result = await this.pool.query("UPDATE hanu.sessions SET data=jsonb_set(data,'{lastSeen}',to_jsonb($3::text)) WHERE owner=$1 AND id=$2 AND NOT revoked", [this.owner, id, new Date().toISOString()]);
     if (!result.rowCount) throw new CloudError('Profile đã bị ngắt liên kết.', 401);
   }
+  async saveControl(id:string,receipt:ControlReceipt,initial:boolean){
+    await transaction(this.pool,async db=>{
+      await this.assertLease(db);const s=await this.read(id,db,true);
+      if(initial&&s.control&&s.control.requestedAt>receipt.requestedAt)return;
+    if(!initial&&s.control?.commandId!==receipt.commandId||receipt.runId&&s.run?.runId!==receipt.runId)return;
+      s.control=structuredClone(receipt);await this.write(s,db);
+      await db.query('INSERT INTO hanu.audit(owner,session,run,kind,message) VALUES($1,$2,$3,$4,$5)',[this.owner,id,receipt.runId,`control_${receipt.state}`,`${receipt.kind} ${receipt.commandId}${receipt.error?`: ${receipt.error}`:''}`]);
+    });
+  }
+  async acknowledgeStop(id:string,runId:string|undefined,result:any){
+    return transaction(this.pool,async db=>{
+      await this.assertLease(db);const s=await this.read(id,db,true);
+      if(s.run?.runId!==runId)return s;
+      if(s.run){
+        const ack=result?.run??(result?.runId===runId?result:undefined);
+        s.run.submitAttempted=!!(s.run.submitAttempted||ack?.submitAttempted);
+        s.run.status=s.run.submitAttempted?'submit_uncertain':'idle';s.run.recoveryRequired=false;s.run.activity=undefined;
+        if(s.run.recovery)s.run.recovery.automatic=false;
+        if(!s.run.submitAttempted)s.run.blockingIssue=undefined;
+        s.run.eventSeq=Math.max(s.run.eventSeq??0,ack?.eventSeq??0);s.run.updatedAt=new Date().toISOString();
+        if(s.run.submitAttempted&&s.run.formId)await db.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,$3,$4,'local_reserved') ON CONFLICT DO NOTHING",[this.owner,id,s.run.formId,runId]);
+        await this.writeRun(id,s.run,db);
+      }
+      s.error=undefined;s.execution=result?.execution??null;await this.write(s,db);return s;
+    });
+  }
   async connected(id: string, value: boolean) {
     await transaction(this.pool, async db => {
       const s = await this.read(id, db, true);
@@ -119,6 +145,7 @@ export class PostgresStore implements DataStore {
   async groups(): Promise<GroupView[]> {
     return (await this.pool.query('SELECT data FROM hanu.groups WHERE owner=$1 ORDER BY created_at DESC,id DESC LIMIT 100', [this.owner])).rows.map(r => r.data);
   }
+  async groupForRequest(requestId:string):Promise<GroupView|undefined>{return (await this.pool.query("SELECT data FROM hanu.groups WHERE owner=$1 AND data->>'requestId'=$2 LIMIT 1",[this.owner,requestId])).rows[0]?.data;}
   async group(id: string): Promise<GroupView> {
     const row = (await this.pool.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2', [this.owner, id])).rows[0];
     if (!row) throw new CloudError('Không tìm thấy lượt nhóm.', 404);

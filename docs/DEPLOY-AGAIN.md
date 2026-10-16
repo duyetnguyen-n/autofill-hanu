@@ -16,6 +16,11 @@ rồi build `npm run build:cloud-extension`, chép đè đúng thư mục extens
 nạp và Reload trong từng Chrome profile. Không Remove extension hoặc xóa dữ liệu.
 Bản này cần cập nhật extension vì sửa cả background, content và nút điều khiển.
 
+**v1.4.0 — điều khiển và phục hồi có giới hạn (16/10/2026):** xem
+[RELIABILITY.md](RELIABILITY.md). Deploy backend rồi build/Reload extension trong
+mỗi profile; giữ nguyên ID và dữ liệu. Không cần migration mới. Sau cập nhật,
+lượt bị gián đoạn cần Tiếp tục để đối chiếu; không tự gửi lại.
+
 Website: https://hanu-autofill.onrender.com
 
 [Render của dịch vụ](https://dashboard.render.com/web/srv-db74o9qd0e5s73b25jng/deploys)

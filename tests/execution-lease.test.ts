@@ -24,7 +24,7 @@ it('requires server-managed runs in cloud builds, including legacy local Resume 
   const f=await fixture();
   nativeRequest.mockResolvedValueOnce({run:{runId:'server-run',managed:true,status:'running'}});
   expect(await f.ask({type:'START_RUN',tabId:1,mode:'test'})).toMatchObject({runId:'server-run',managed:true,status:'running'});
-  expect(nativeRequest).toHaveBeenCalledWith('START',undefined,{url,mode:'test'});
+  expect(nativeRequest).toHaveBeenCalledWith('START',undefined,expect.objectContaining({url,mode:'test',operationId:expect.any(String)}));
   expect(f.data['run:1']).toBeUndefined();
   const legacy:RunState={runId:'legacy-local',tabId:1,formId:'lease-fixture',mode:'live',status:'paused',contentEpoch:'old-page',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:''};
   f.data['run:1']=legacy;

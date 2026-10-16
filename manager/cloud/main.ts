@@ -317,7 +317,7 @@ export async function serveCloud(options: {
           if (value.replaceSessionId !== undefined && typeof value.replaceSessionId !== 'string') throw new CloudError('Profile liên kết lại không hợp lệ.');
           return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
         }
-        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); await Promise.all((await store.sessions()).map(s => coordinator.runBuffer?.flush(s.id))); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion)); }
+        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); await Promise.all((await store.sessions()).map(s => coordinator.runBuffer?.flush(s.id))); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId)); }
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
         if (group && req.method === 'POST') { await body(req); return json(res, await coordinator.groupControl(group[1], group[2].toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP')); }
@@ -343,7 +343,8 @@ export async function serveCloud(options: {
             if (action === 'pull') return json(res, await coordinator.pull(id));
             if (action === 'push') return json(res, await coordinator.push(id, value.force === true));
             if (action === 'use-extension') { if (!s.conflict) throw new CloudError('Không có xung đột.'); await coordinator.importDocument(id, s.conflict); return json(res, await store.session(id)); }
-            if (['pause', 'resume', 'stop'].includes(action)) return json(res, await coordinator.control(id, action.toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP'));
+            if (action === 'restart') return json(res, await coordinator.restart(id, value.expectedRunId, value.requestId));
+            if (['pause', 'resume', 'stop'].includes(action)) return json(res, await coordinator.control(id, action.toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP', value.expectedRunId));
             if (action === 'reconcile') return json(res, await coordinator.command(id, 'RECONCILE', {}, s.run?.runId));
             if (action === 'resolve') { if (!['received', 'not_received'].includes(value.result)) throw new CloudError('Kết quả xác minh không hợp lệ.'); await coordinator.resolve(id, value.result); return json(res, { ok: true }); }
             if (action === 'unlink') {
@@ -450,7 +451,7 @@ export async function serveCloud(options: {
           // Resume checks its form before returning its command RESULT. A load
           // failure may also wait for PAUSE while START is checking its form.
           // Those checks must be able to finish while this message is waiting.
-          const waitsForCommand = m.type === 'LOAD_FAILURE' || m.type === 'REQUEST' && ['CONTROL', 'AUTO_RESUME'].includes(m.kind);
+          const waitsForCommand = m.type === 'LOAD_FAILURE' || m.type === 'REQUEST' && ['CONTROL', 'AUTO_RESUME', 'RECOVER', 'RESTART'].includes(m.kind);
           if (waitsForCommand) waitingForExtension = true;
           try {
             if (m.type === 'LOAD_FAILURE') await current!.coordinator.failure(id!, m.runId);

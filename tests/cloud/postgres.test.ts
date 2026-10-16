@@ -178,3 +178,12 @@ it('does not treat PostgreSQL JSON key ordering as a conflict on legacy unsynced
   expect(imported.synced).toBe(true); expect(imported.conflict).toBeUndefined();
   expect(imported.profile).toEqual(legacy.profile);
 });
+
+it('commits Stop atomically against the latest checkpoint and never stops a replacement run',async()=>{
+ const f=await setup(),{members,group,c}=await start(f),{store,sessionId:id}=members[0];
+ const current=await store.session(id);current.run!.eventSeq=10;current.run!.status='waiting_manual';current.run!.blockingIssue={reason:'network',message:'offline'};await store.saveSession(current);
+ const stopped=await store.acknowledgeStop(id,group.id,{run:{...current.run,eventSeq:5},execution:null});
+ expect(stopped.run).toMatchObject({status:'idle',eventSeq:10,blockingIssue:undefined});expect(stopped.execution).toBeNull();
+ const replacement=await c.start([id],group.url,'test');
+ expect((await store.acknowledgeStop(id,group.id,{execution:null})).run).toMatchObject({runId:replacement.id,status:'running'});
+});

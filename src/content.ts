@@ -1,7 +1,8 @@
 import { HSK_RULES, getRule } from "./rules";
 import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize, matchesFinalQuestionLabel } from "./shared";
+import {classifyPage,type PageHealth} from './recovery';
 import {canonicalFormId} from './protocol';
-import type {FinalQuestion} from './shared';
+import type {FinalQuestion,ManualAnswer} from './shared';
 import type { PickerUploadResult } from "./picker-upload";
 
 let active = false;
@@ -18,6 +19,7 @@ let attentionToken:string|undefined;
 let attentionHeld=false;
 let activeFinalQuestion:FinalQuestion|undefined;
 const manualCorrections=new Map<HTMLElement,string>();
+let savedCorrections:Record<string,ManualAnswer>={};
 
 async function releaseAttention(){const token=attentionToken;attentionToken=undefined;attentionHeld=false;if(token)await chrome.runtime.sendMessage({type:'PAGE_ATTENTION_RELEASE',token} satisfies ExtensionMessage).catch(()=>{});}
 async function withAttention<T>(purpose:string,work:()=>Promise<T>):Promise<T|undefined>{
@@ -372,7 +374,7 @@ function exactChoice(elements: Element[], wanted: string, aliases: string[] = []
 
 async function trustedClick(element: Element): Promise<boolean> {
   const { x, y } = pointerCoordinates(element);
-  const result = await chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y } satisfies ExtensionMessage)
+  const result = await chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y,runId:boundRunId,epoch:documentEpoch } satisfies ExtensionMessage)
     .catch(() => undefined) as { dispatched?: boolean } | undefined;
   return Boolean(result?.dispatched);
 }
@@ -518,8 +520,9 @@ async function chooseDropdownWithKeyboard(trigger: HTMLElement, option: Element,
   // DOM key events if the browser blocks debugger access.
   const keys = ["Home", ...Array.from({ length: offset }, () => "ArrowDown"), "Enter"];
   (option as HTMLElement).focus();
-  const result = await chrome.runtime.sendMessage({ type: "TRUSTED_KEYS", keys } satisfies ExtensionMessage)
+  const result = await chrome.runtime.sendMessage({ type: "TRUSTED_KEYS", keys,runId:boundRunId,epoch:documentEpoch } satisfies ExtensionMessage)
     .catch(() => undefined) as { dispatched?: boolean } | undefined;
+  if (!active) return;
   if (!result?.dispatched) {
     keys.forEach((key) => dispatchKeyboardEvent(document.activeElement instanceof HTMLElement ? document.activeElement : trigger, key));
   }
@@ -628,7 +631,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   const pickerReadyDeadline = Date.now() + 20000;
   for (let attempt = 0; attempt < 80 && active && Date.now() < pickerReadyDeadline; attempt += 1) {
     if (!picker.isConnected || !visible(picker)) break;
-    const result = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId } satisfies ExtensionMessage)
+    const result = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId,runId:boundRunId,epoch:documentEpoch } satisfies ExtensionMessage)
       .catch(error => ({ state: "error", error: error instanceof Error ? error.message : String(error) })) as PickerUploadResult | { ok: false; error: string };
     if (!active) return false;
     if (result && (("state" in result && result.state === "error") || ("ok" in result && result.ok === false))) {
@@ -657,7 +660,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
       return active;
     }
     if (!closed && attempt % 2 === 0) {
-      const status = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId, checkOnly: true } satisfies ExtensionMessage)
+      const status = await chrome.runtime.sendMessage({ type: "UPLOAD_STORED_FILE", attachmentId: reference.id, pickerUrl: picker.src, requestId,runId:boundRunId,epoch:documentEpoch, checkOnly: true } satisfies ExtensionMessage)
         .catch(error => ({ state: "error", error: error instanceof Error ? error.message : String(error) })) as PickerUploadResult | { ok: false; error: string };
       if (!active) return false;
       if (status && (("state" in status && status.state === "error") || ("ok" in status && status.ok === false))) {
@@ -799,6 +802,39 @@ function answerFingerprint(question:Question):string{
   }));
 }
 
+function correctionKey(question:Question):string{return stableQuestionId(question.element)??`label:${normalize(question.label)}`;}
+function rememberAnswer(question:Question):ManualAnswer|undefined{
+  if(isVerificationQuestion(question)||question.kind==='file'||question.kind==='unknown')return;
+  let values:string[]=[];
+  if(['text','textarea','date'].includes(question.kind))values=[question.element.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea')?.value??''];
+  else if(question.kind==='checkbox'||question.kind==='radio')values=controlsIn(question.element,'input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]').filter(checked).map(el=>choiceValues(el)[0]??'');
+  else{
+    const select=question.element.querySelector<HTMLSelectElement>('select');
+    const hidden=question.element.querySelector<HTMLInputElement>('input[type="hidden"][name^="entry."]');
+    if(select)values=[select.value];else if(hidden)values=[hidden.value];
+    else values=Array.from(question.element.querySelectorAll('[role="option"][aria-selected="true"]')).filter(el=>!isPlaceholderChoice(el)).map(el=>choiceValues(el)[0]??'');
+  }
+  if(!values.length||values.some(v=>!v||v.length>10000)||values.length>30)return;
+  return {label:question.label,kind:question.kind,values};
+}
+async function restoreAnswer(question:Question,answer:ManualAnswer,profile:Profile):Promise<boolean>{
+  if(isVerificationQuestion(question)||answer.kind!==question.kind||normalize(answer.label)!==normalize(question.label))return false;
+  if(question.kind==='checkbox'){
+    const options=controlsIn(question.element,'input[type="checkbox"],[role="checkbox"]');
+    const wanted=answer.values.map(value=>exactChoice(options,value));if(wanted.some(v=>!v))return false;
+    for(const option of options){
+      if(!active)return false;
+      if(checked(option)!==wanted.includes(option)){
+        const toggle=async()=>{pointerClick(option as HTMLElement);if(await waitFor(()=>checked(option)===wanted.includes(option)))return true;if(!active)return false;await trustedClick(option);return waitFor(()=>checked(option)===wanted.includes(option));};
+        if(!await (document.hidden?withAttention('Khôi phục lựa chọn đã sửa',toggle):toggle()))return false;
+      }
+    }
+    return true;
+  }
+  const rule:FieldRule={key:'manualCorrection',kind:answer.kind,label:question.label,aliases:[question.label]};
+  return fillQuestion(question,rule,profile,answer.values[0]);
+}
+
 function questionError(question:Question):string|undefined{
   const invalid=controlsIn(question.element,'input:not([type="hidden"]),textarea,select,[aria-invalid="true"]').find(node=>
     visible(node)&&(node.getAttribute('aria-invalid')==='true'||
@@ -838,10 +874,17 @@ function armAutoResume(question: Question,wholePage=false): void {
       if(wholePage&&(!edited||current.some(q=>q.required&&!isFilled(q))))return;
       // Preserve only answers changed by the user on this page, never write the
       // correction back to their saved profile or let a later run inherit it.
-      for(const q of current)if(isFilled(q)&&!questionError(q)&&initial.get(q.element)!==answerFingerprint(q))manualCorrections.set(q.element,answerFingerprint(q));
+      const answers:Record<string,ManualAnswer>={};
+      for(const q of current)if(isFilled(q)&&!questionError(q)&&initial.get(q.element)!==answerFingerprint(q)){
+        manualCorrections.set(q.element,answerFingerprint(q));const answer=rememberAnswer(q);if(answer)answers[correctionKey(q)]=answer;
+      }
       resumed = true;
       attempts++;
-      void Promise.resolve(chrome.runtime.sendMessage({type:'AUTO_RESUME',runId,epoch:documentEpoch} satisfies ExtensionMessage)).then(async reply=>{
+      void (async()=>{
+        if(Object.keys(answers).length){await emit({type:'corrections',answers});savedCorrections={...savedCorrections,...answers};}
+        if(cancelled||generation!==runRequestGeneration||runId!==boundRunId||submitAttempted)return {ok:false};
+        return chrome.runtime.sendMessage({type:'AUTO_RESUME',runId,epoch:documentEpoch} satisfies ExtensionMessage);
+      })().then(async reply=>{
         if(generation!==runRequestGeneration||runId!==boundRunId||submitAttempted)return;
         if(reply?.ok===false){await recover();return;}
         if(!cancelled)cancelManualResume?.();
@@ -883,7 +926,12 @@ async function emit(event: FormEvent): Promise<void> {
   if(result?.ok===false){active=false;throw new Error(result.error);}
 }
 
-export function pageAccount():{email?:string;error?:string}{
+export function pageHealth():PageHealth {
+  return classifyPage({text:document.body.innerText??document.body.textContent??'',title:document.title,hasQuestions:!!document.querySelector('[role=\"listitem\"], [data-item-id]')||questions().length>0,hasNavigation:!!button('next')||!!button('submit'),captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false});
+}
+
+export function pageAccount():{email?:string;error?:string;health?:PageHealth}{
+  const health=pageHealth();if(health.issue)return {error:health.issue.message,health};
   const text=document.body.innerText??document.body.textContent??'';
   if(/you need permission|bạn cần có quyền|access denied|quyền truy cập bị từ chối/i.test(text))return {error:'Google chặn truy cập form.'};
   if(/no longer accepting responses|không còn nhận câu trả lời|form.*closed/i.test(text))return {error:'Form đã đóng.'};
@@ -937,6 +985,8 @@ async function execute(depth = 0): Promise<void> {
     await emit({ type: "completed", message: "Google Forms đã xác nhận nhận phản hồi." });
     return;
   }
+  const health=pageHealth();
+  if(health.issue){active=false;if(health.retryable&&['network','server_error','navigation'].includes(health.issue.reason))await emit({type:'transient_error',reason:health.issue.reason as 'network'|'server_error'|'navigation',message:health.issue.message});else await emit({type:'block',issue:health.issue});return;}
   if (hasUnsatisfiedCaptcha()) {
     active = false;
     await emit({ type: "block", issue: { reason: "captcha", message: "Phát hiện CAPTCHA chưa hoàn tất. Hãy tự giải rồi bấm Tiếp tục." } });
@@ -945,7 +995,7 @@ async function execute(depth = 0): Promise<void> {
 
   if(!await ensurePageReady()){
     if(!active)return;
-    active=false;await emit({type:'block',issue:{reason:'validation',message:'Form chưa có vùng hiển thị hoặc câu hỏi chưa tải xong. Chưa bấm Tiếp; hãy kiểm tra cửa sổ Chrome rồi bấm Tiếp tục.'}});return;
+    active=false;await emit({type:'transient_error',reason:'navigation',message:'Form chưa có vùng hiển thị hoặc câu hỏi chưa tải xong. Chưa bấm Tiếp.'});return;
   }
 
   const profile = await chrome.runtime.sendMessage({ type: "GET_PROFILE" } satisfies ExtensionMessage) as Profile;
@@ -969,6 +1019,13 @@ async function execute(depth = 0): Promise<void> {
     if (!active) return;
     question.element.style.outline = "";
     delete question.element.dataset.hanuBlocking;
+    const savedAnswer=savedCorrections[correctionKey(question)];
+    if(savedAnswer&&!manualCorrections.has(question.element)&&!isVerificationQuestion(question)){
+      if(!await restoreAnswer(question,savedAnswer,profile)){
+        if(!active)return;await blockForCorrection(`Không khôi phục được đáp án đã sửa: ${question.label}. Kiểm tra lại câu hỏi này.`,question);return;
+      }
+      manualCorrections.set(question.element,answerFingerprint(question));
+    }
     if(manualCorrections.get(question.element)===answerFingerprint(question)&&isFilled(question)&&!questionError(question)){
       manuallyHandled.add(question.id);
       await emit({type:'progress',message:`Giữ nguyên đáp án bạn vừa sửa: ${question.label}`,skipped:question.id});return;
@@ -1180,16 +1237,16 @@ async function execute(depth = 0): Promise<void> {
     if(missing){await blockForCorrection(`Câu bắt buộc chưa hoàn tất: ${missing.label}`,missing);return false;}
     const before=pageFingerprint();next.click();
     if(await waitForPageChange(before))return true;
-    if(!active||validationError()||!next.isConnected||next.getAttribute('aria-disabled')==='true')return false;
-    // Retry only Next, never Submit, and only when there is no validation error.
-    return await trustedClick(next)?waitForPageChange(before,7_000):false;
+    // The first Next request may still be in flight. Never click it twice on
+    // a timeout; recovery reopens the safe GET URL and inspects the new document.
+    return false;
   });
   if (!active) return;
   // Google Forms can retain an old aria-alert in the DOM after the next page
   // renders. A changed page is authoritative; only validate on a failed move.
   const error = changed ? undefined : validationError();
   if (!changed) {
-    await blockForCorrection(error ? `Google Forms báo lỗi: ${error}` : "Google chưa chuyển trang sau khi bấm Tiếp. Kiểm tra kết nối rồi bấm Tiếp tục.");
+    if(error)await blockForCorrection(`Google Forms báo lỗi: ${error}`);else {active=false;await emit({type:'transient_error',reason:'navigation',message:'Google chưa chuyển trang sau khi bấm Tiếp.'});}
     return;
   }
   await emit({ type: "page_advanced", fingerprint: pageFingerprint() });
@@ -1212,8 +1269,12 @@ function requestExecute(depth = 0): void {
   });
 }
 
+const contentGlobal=globalThis as typeof globalThis&{__hanuContentRuntime?:unknown};
+if(contentGlobal.__hanuContentRuntime!==chrome.runtime){
+contentGlobal.__hanuContentRuntime=chrome.runtime;
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
-  if(message.type==='PAGE_RUN_STATUS'){sendResponse({runId:boundRunId,active,epoch:documentEpoch});return;}
+  if(message.type==='PAGE_RUN_STATUS'){sendResponse({runId:boundRunId,active,inFlight:executionInFlight,epoch:documentEpoch});return;}
+  if(message.type==='PAGE_HEALTH'){sendResponse(pageHealth());return;}
   if(message.type==='PAGE_ACCOUNT'){sendResponse(pageAccount());return;}
   if (message.type === "SCAN_FORM") {
     sendResponse({ questions: scanCurrentForm() });
@@ -1230,9 +1291,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   if (message.type === "RUN_CURRENT_PAGE") {
     cancelManualResume?.();
     const generation=++runRequestGeneration;
-    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
-    void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(()=>{
-      if(generation!==runRequestGeneration)return;
+    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;savedCorrections=message.corrections??{};active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
+    void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(response=>{
+      if(generation!==runRequestGeneration||response?.ok===false||response?.run&&(response.run.runId!==message.runId||response.run.status!=='running'||response.run.recoveryRequired))return;
       if(executionInFlight){active=false;pendingStart=start;void releaseAttention();}else start();
     });
     sendResponse?.({ ok: true });
@@ -1247,7 +1308,7 @@ document.documentElement.dataset.hanuRecovery='claiming:2026-10-13';
 void Promise.resolve(chrome.runtime.sendMessage({ type: "CLAIM_DOCUMENT",epoch:documentEpoch } satisfies ExtensionMessage))
   .then(response=>response?.run??chrome.runtime.sendMessage({ type: "GET_RUN_FOR_TAB" } satisfies ExtensionMessage))
   .then(async (run: RunState | undefined) => {
-    activeFinalQuestion=run?.finalQuestion;
+    activeFinalQuestion=run?.finalQuestion;savedCorrections=run?.corrections??{};
     document.documentElement.dataset.hanuRecovery=run?`${run.status}:${run.recoveryRequired?'recovery-required':'available'}`:'no-run';
     // Submit can also replace the document. Recover the acknowledgement with
     // the existing lock; never execute the form or request another submit.
@@ -1264,3 +1325,5 @@ void Promise.resolve(chrome.runtime.sendMessage({ type: "CLAIM_DOCUMENT",epoch:d
     requestExecute();
   })
   .catch(() => {document.documentElement.dataset.hanuRecovery='failed';});
+
+}

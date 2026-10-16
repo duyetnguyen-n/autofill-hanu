@@ -9,6 +9,7 @@ interface Adapter {
   control(command:Command):Promise<unknown>;
   focus():Promise<unknown>;
   disconnected():Promise<void>;
+  interrupt?(command:Command):Promise<void>;
   reconcile():Promise<unknown>;
   execution?():Promise<ExecutionView|null>;
 }
@@ -19,6 +20,8 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   const connector:Connector=options.connector??(cloud?websocketConnector(origin):()=>chrome.runtime.connectNative(NATIVE_HOST));
   let port:CoordinatorPort|undefined,identity:Identity,connected=false,error='',pairCode:string|undefined,stopped=false;
   let queue=Promise.resolve(),reconnectTimer:ReturnType<typeof setTimeout>|undefined;
+  let interrupts=Promise.resolve(),commandEpoch=0,lastStateRunId:string|undefined;
+  let journalWrites=Promise.resolve();
   let executionQueue=Promise.resolve();
   let identityLoading:Promise<void>|undefined;
   let connecting=false,attempt=0,generation=0;
@@ -28,7 +31,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   let pairing:{resolve:()=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}|undefined;
   const requests=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
   const send=(m:Record<string,unknown>)=>{if(!port)throw new Error('Cầu nối chưa kết nối.');port.postMessage({...m,protocol:PROTOCOL_VERSION,sessionId:identity.sessionId});};
-  function reportExecution(){if(!adapter.execution)return;executionQueue=executionQueue.then(async()=>{if(!connected)return;const execution=await adapter.execution!();if(connected)send({type:'EXECUTION',execution});}).catch(()=>undefined);}
+  function reportExecution(){if(!adapter.execution)return;executionQueue=executionQueue.then(async()=>{if(!connected)return;const sourceRunId=lastStateRunId;const execution=await adapter.execution!();if(connected&&sourceRunId===lastStateRunId)send({type:'EXECUTION',execution,sourceRunId});}).catch(()=>undefined);}
   async function status(){await ensureIdentity();return {sessionId:identity.sessionId,extensionId:chrome.runtime.id,paired:!!identity.token,connected,error,cloud,origin};}
   async function ensureIdentity(){if(identity)return;identityLoading??=(async()=>{const s=await chrome.storage.local.get(identityKey);identity=s[identityKey]??{sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});})();await identityLoading;}
   function pairingError(message:string){error=message;if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error(message));pairing=undefined;}pairCode=undefined;}
@@ -59,18 +62,41 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     }
     if(m.type==='REPLY'){const p=requests.get(m.requestId);if(p){clearTimeout(p.timer);requests.delete(m.requestId);m.ok?p.resolve(m):p.reject(new Error(m.error));}return;}
     if(m.type!=='COMMAND'||m.protocol!==PROTOCOL_VERSION||m.sessionId!==identity.sessionId||!connected)return;
-    // Interrupt a running page immediately even if another command is awaiting a load.
-    if(['PAUSE','STOP','STOP_PROFILE'].includes(m.kind))void adapter.disconnected();
-    const version=generation;
-    queue=queue.then(async()=>{if(!connected||port!==current||version!==generation)return;try{const result=await execute(m);if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:true,result});}catch(e){if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:false,error:(e as Error).message});}reportExecution();}).catch(()=>undefined);
+    const priority=['PAUSE','STOP','STOP_PROFILE'].includes(m.kind);
+    const version=generation,epoch=commandEpoch;
+    // Cancellation never waits behind a loading tab or an attachment transfer.
+    // Serialize the interrupt commands with each other, preserving their order.
+    const prepared=priority?claimCommand(m).then(async replay=>{
+      if(replay.done)return {replay};
+      if(!connected||port!==current||version!==generation)throw new Error('Kết nối đã thay đổi.');
+      await (adapter.interrupt?.(m)??adapter.disconnected());commandEpoch++;return {replay};
+    }).catch(error=>({error})):undefined;
+    const work=async()=>{
+      if(!connected||port!==current||version!==generation)return;
+      try{
+        if(!priority&&epoch!==commandEpoch)throw new Error('Lệnh đã bị hủy bởi Dừng hoặc Tạm dừng.');
+        const preparation=prepared?await prepared:undefined;
+        if(preparation&&'error' in preparation)throw preparation.error;
+        const result=preparation?.replay.done?preparation.replay.result:await execute(m,priority);
+        if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:true,result});
+      }catch(e){if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:false,error:(e as Error).message});}
+      reportExecution();
+    };
+    if(priority)interrupts=interrupts.then(work).catch(()=>undefined);else queue=queue.then(work).catch(()=>undefined);
   }
-  async function execute(c:Command){
+  function updateJournal<T>(operation:(journal:Record<string,{done:boolean;result?:unknown}>)=>T):Promise<T>{
+    const work=journalWrites.then(async()=>{
+      const journal=(await chrome.storage.local.get(journalKey))[journalKey]??{};
+      const result=operation(journal),keys=Object.keys(journal);for(const key of keys.slice(0,-1000))delete journal[key];
+      await chrome.storage.local.set({[journalKey]:journal});return result;
+    });journalWrites=work.then(()=>undefined,()=>undefined);return work;
+  }
+  function claimCommand(c:Command){return updateJournal(journal=>{const old=journal[c.commandId];if(old){if(old.done)return {done:true,result:old.result};throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}journal[c.commandId]={done:false};return {done:false,result:undefined as unknown};});}
+  async function execute(c:Command,claimed=false){
     const readOnly=['PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
-    let journal:Record<string,{done:boolean;result?:unknown}>=(await chrome.storage.local.get(journalKey))[journalKey]??{};
-    if(!readOnly&&journal[c.commandId]){if(journal[c.commandId].done)return journal[c.commandId].result;throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}
-    if(!readOnly){journal[c.commandId]={done:false};const keys=Object.keys(journal);for(const k of keys.slice(0,-1000))delete journal[k];await chrome.storage.local.set({[journalKey]:journal});}
+    if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-16-cloud-controls':'2026-10-13-shared-final-question',capabilities:['sharedFinalQuestion',...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-16-resilience-1.4.0':'2026-10-16-resilience-1.4.0',capabilities:['sharedFinalQuestion','reliableRuns',...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){
@@ -91,14 +117,14 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     }else if(c.kind==='START')result=await adapter.start(c,identity.sessionId);
     else if(c.kind==='RECONCILE')result=await adapter.reconcile();
     else result=await adapter.control(c);
-    if(!readOnly){journal[c.commandId]={done:true,result};await chrome.storage.local.set({[journalKey]:journal});}return result;
+    if(!readOnly)await updateJournal(journal=>{journal[c.commandId]={done:true,result};});return result;
   }
   async function request(kind:string,run?:RunState,payload:Record<string,unknown>={}):Promise<any>{
     if(!connected)throw new Error('App mất kết nối; không cấp quyền chạy/gửi.');
     const requestId=crypto.randomUUID();
     // Controls can include profile transfer or account/page checks. Match the
     // coordinator's command budget; short submit grants keep their own limit.
-    const timeout=kind==='ATTENTION_ACQUIRE'?180000:kind==='START'?120000:['CONTROL','AUTO_RESUME'].includes(kind)?60000:5000;
+    const timeout=kind==='ATTENTION_ACQUIRE'?180000:['START','RESTART','RECOVER'].includes(kind)?120000:['CONTROL','AUTO_RESUME'].includes(kind)?60000:5000;
     return new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{
         requests.delete(requestId);
@@ -115,7 +141,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     boot:()=>void connect(),
     async pair(code:string){await ensureIdentity();if(identity.token){await connect();return status();}if(pairing)throw new Error('Đang liên kết, vui lòng chờ phản hồi.');if(!/^[A-F0-9]{12}$/.test(code.trim().toUpperCase()))throw new Error('Mã liên kết phải gồm 12 ký tự. Sao chép mã mới từ app.');pairCode=code.trim().toUpperCase();error='';stopped=false;generation++;const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);const confirmation=new Promise<void>((resolve,reject)=>{pairing={resolve,reject,timer:setTimeout(()=>pairingError('Chưa xác nhận sau 10 giây. Kiểm tra trang quản lý và lấy mã mới.'),10000)};});if(connecting){await new Promise<void>(resolve=>{const timer=setInterval(()=>{if(!connecting){clearInterval(timer);resolve();}},50);});}await connect();await confirmation;return status();},
     async unlink(){await adapter.disconnected();if(cloud&&connected)await request('UNLINK');stopped=true;connected=false;generation++;clearAlarm();const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);identity={sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});return status();},
-    state(run:RunState){if(connected&&run.managed)send({type:'STATE',run});if(connected)reportExecution();},
+    state(run:RunState){if(run.managed)lastStateRunId=run.runId;if(connected&&run.managed)send({type:'STATE',run});if(connected)reportExecution();},
     profileChanged(){if(connected)send({type:'PROFILE_CHANGED'});},
     failure(run:RunState){if(connected)send({type:'LOAD_FAILURE',runId:run.runId});},
     heartbeat(){if(connected){send({type:'HEARTBEAT'});reportExecution();}}
