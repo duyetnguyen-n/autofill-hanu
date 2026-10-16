@@ -751,7 +751,9 @@ function matchesProfile(question: Question, rule: FieldRule, profile: Profile, v
   if (question.kind === "text" || question.kind === "date" || question.kind === "textarea") {
     const input = question.element.querySelector<HTMLInputElement | HTMLTextAreaElement>('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="file"]), textarea');
     const expected = rule.key === "birthDate" ? formatDateForQuestion(value, question) : value;
-    return Boolean(input && normalize(input.value) === normalize(expected));
+    // Free text must equal the saved value, including case and diacritics.
+    // Normalization belongs to question/option matching, never personal data.
+    return Boolean(input && input.value === expected);
   }
   const aliases = rule.optionAliases?.[value] ?? [];
   if (question.kind === "radio" || question.kind === "checkbox") {

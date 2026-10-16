@@ -12,6 +12,17 @@ afterEach(() => {
 });
 
 describe("compiled content-script behavior", () => {
+  it.each(['nguyen van cu','Nguyễn Văn Cư'])('restores the exact saved text instead of accepting normalized prefill %s',async prefill=>{
+    document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Submit</button>';
+    vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockReturnValue({width:640,height:80} as DOMRect);
+    Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:()=>{}});
+    document.querySelector<HTMLInputElement>('input')!.value=prefill;
+    const profile=emptyProfile();profile.values.fullName='NGUYEN VAN CU';let listener:Listener;const sent:any[]=[];
+    vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:Listener)=>listener=fn},sendMessage:async(m:any)=>{sent.push(m);return m.type==='GET_PROFILE'?profile:{ok:true};}}});
+    await import('../src/content');listener!({type:'RUN_CURRENT_PAGE',mode:'test'});
+    await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:{type:'ready_to_submit'}})));
+    expect(document.querySelector<HTMLInputElement>('input')!.value).toBe('NGUYEN VAN CU');
+  });
   it("fills the required CCCD field whose Google Forms heading contains a trailing asterisk", async () => {
     document.body.innerHTML = `
       <div role="listitem" data-item-id="cccd-question">
