@@ -7,10 +7,12 @@ async function setup(sidePanel?: object) {
   let clicked: (tab: { id: number; url: string }) => void;
   let message: (msg: ExtensionMessage, sender: object, respond: (value: unknown) => void) => void;
   let updated:(id:number,change:object,tab:object)=>void;
+  let alarm:(alarm:{name:string})=>void;
   const data: Record<string, unknown> = {};
   const create = vi.fn(async () => ({}));
   const sendMessage = vi.fn(async (_id?:number,_message?:any) => ({ ok: true }));
   vi.stubGlobal('chrome', {
+    alarms: {create:vi.fn(),clear:vi.fn(async()=>true),onAlarm:{addListener:(fn:typeof alarm)=>alarm=fn}},
     sidePanel,
     action: { onClicked: { addListener: (fn: typeof clicked) => { clicked = fn; } } },
     windows: { create },
@@ -34,7 +36,7 @@ async function setup(sidePanel?: object) {
   const ask = (msg: ExtensionMessage, sender = {}) => new Promise<unknown>(resolve => message(msg, sender, resolve));
   const run: RunState = { tabId: 7, formId: 'test-form', mode: 'test', status: 'waiting_manual', filled: [], skipped: [], logs: [], submitAttempted: false, updatedAt: '' };
   data['run:7'] = run;
-  return { click: () => clicked({ id: 7, url: formUrl }), updated:(change:object)=>updated(7,change,{url:formUrl}),create, ask, data, run, sendMessage };
+  return { click: () => clicked({ id: 7, url: formUrl }), alarm:(name:string)=>alarm({name}),updated:(change:object)=>updated(7,change,{url:formUrl}),create, ask, data, run, sendMessage };
 }
 
 it('detects a document that stays loading after the original content script disappears',async()=>{
@@ -143,6 +145,31 @@ it('never schedules a reload after a send reservation has been persisted',async(
   await f.ask({type:'FORM_EVENT',event:{type:'transient_error',reason:'server_error',message:'500'}},{tab:{id:7,url:formUrl},url:formUrl});
   expect(f.data['run:7']).toMatchObject({status:'submit_uncertain',submitAttempted:true,blockingIssue:{reason:'submit_uncertain'}});
   expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
+});
+
+it('rearms an early recovery alarm instead of losing the last allowed retry',async()=>{
+  vi.useFakeTimers();const f=await setup();
+  Object.assign(f.run,{runId:'early-retry',contentEpoch:'error-page',url:formUrl,
+    blockingIssue:{reason:'server_error',message:'429'},
+    recovery:{reason:'server_error',attempt:3,automatic:true,retryAt:new Date(Date.now()+10).toISOString()}});
+  f.data.managedRun=f.run;
+  f.alarm('hanu-recovery:early-retry');await vi.advanceTimersByTimeAsync(0);
+  expect(chrome.alarms.create).toHaveBeenCalledWith('hanu-recovery:early-retry',expect.any(Object));
+  expect(f.sendMessage.mock.calls.some(([,m])=>m?.type==='RUN_CURRENT_PAGE')).toBe(false);
+  await vi.advanceTimersByTimeAsync(20);
+  expect(f.data['run:7']).toMatchObject({status:'running'});
+});
+
+it('a Stop still cancels a retry that was rearmed after an early wake',async()=>{
+  vi.useFakeTimers();const f=await setup();
+  Object.assign(f.run,{runId:'early-stop',contentEpoch:'error-page',url:formUrl,
+    blockingIssue:{reason:'server_error',message:'429'},
+    recovery:{reason:'server_error',attempt:3,automatic:true,retryAt:new Date(Date.now()+10).toISOString()}});
+  f.data.managedRun=f.run;
+  f.alarm('hanu-recovery:early-stop');await vi.advanceTimersByTimeAsync(0);
+  await f.ask({type:'STOP_RUN',tabId:7});await vi.advanceTimersByTimeAsync(100);
+  expect(f.data['run:7']).toMatchObject({status:'idle',recovery:{automatic:false}});
+  expect(f.sendMessage.mock.calls.some(([,m])=>m?.type==='RUN_CURRENT_PAGE')).toBe(false);
 });
 it('checkpoints a valid manual answer in its run while rejecting stale document events',async()=>{
   const f=await setup();f.run.runId='manual';f.run.contentEpoch='new-page';

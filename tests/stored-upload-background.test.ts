@@ -17,7 +17,10 @@ async function setup() {
   profile.attachments.identityDocument = { id: "saved", name: "saved.png", type: "image/png", size: 3, updatedAt: "" };
   vi.mocked(getProfile).mockResolvedValue(profile);
   vi.mocked(getAttachment).mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
-  const executeScript = vi.fn(async (request: { args: Array<{ prepareOnly?: boolean }> }) => [{ frameId: 0, result: { state: "ignored" } }, { frameId: 1, result: { state: request.args[0].prepareOnly ? "ready" : "assigned" } }]);
+  const executeScript = vi.fn(async (request: { args: Array<{ prepareOnly?: boolean }>; target?: {documentIds?:string[]} }) => [
+    ...(!request.target?.documentIds ? [{ frameId: 0, documentId: 'form', result: { state: "ignored" } }] : []),
+    { frameId: 1, documentId: 'picker-document', result: { state: request.args[0].prepareOnly ? "ready" : "assigned" } }
+  ]);
   vi.stubGlobal("chrome", {
     action: { onClicked: { addListener: vi.fn() } },
     tabs: { onUpdated: { addListener: vi.fn() }, onRemoved: { addListener: vi.fn() } },
@@ -34,9 +37,9 @@ async function setup() {
 
 it("passes locally stored bytes to the matched Picker without any filesystem path", async () => {
   const fixture = await setup();
-  expect(await fixture.ask()).toEqual({ state: "assigned" });
+  expect(await fixture.ask()).toEqual(expect.objectContaining({ state: "assigned" }));
   expect(fixture.executeScript).toHaveBeenCalledWith(expect.objectContaining({
-    target: { tabId: 7, allFrames: true },
+    target: { tabId: 7, documentIds: ['picker-document'] },
     args: [expect.objectContaining({ dataUrl: "data:image/png;base64,AQID", name: "saved.png", requestId: "request" })]
   }));
 });
@@ -50,12 +53,13 @@ it("polls Picker errors without reading or sending the stored image again", asyn
   }));
 });
 
-it("checks startup readiness without reading or copying photo bytes into frames", async () => {
+it("prepares the photo once during startup but sends only metadata until ready", async () => {
   const fixture = await setup();
-  fixture.executeScript.mockResolvedValue([{ frameId: 1, result: { state: 'waiting' } }]);
+  fixture.executeScript.mockResolvedValue([{ frameId: 1, documentId: 'picker-document', result: { state: 'waiting' } }]);
   expect(await fixture.ask()).toEqual({ state: 'waiting' });
   expect(await fixture.ask()).toEqual({ state: 'waiting' });
-  expect(getAttachment).not.toHaveBeenCalled();
+  expect(getAttachment).toHaveBeenCalledTimes(1);
+  expect(fixture.executeScript.mock.calls.every(([request]) => !('dataUrl' in request.args[0]))).toBe(true);
   expect(fixture.executeScript).toHaveBeenCalledWith(expect.objectContaining({
     args: [{ pickerUrl: fixture.command.pickerUrl, requestId: fixture.command.requestId, prepareOnly: true }]
   }));
@@ -63,7 +67,7 @@ it("checks startup readiness without reading or copying photo bytes into frames"
 
 it("a repeated assigned request never reads or transmits the image again", async () => {
   const fixture = await setup();
-  fixture.executeScript.mockResolvedValue([{ frameId: 1, result: { state: 'assigned' } }]);
+  fixture.executeScript.mockResolvedValue([{ frameId: 1, documentId: 'picker-document', result: { state: 'assigned' } }]);
   expect(await fixture.ask()).toEqual({ state: 'assigned' });
   expect(getAttachment).not.toHaveBeenCalled();
   expect(fixture.executeScript).toHaveBeenCalledTimes(1);

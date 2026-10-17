@@ -1,5 +1,12 @@
 # Cập nhật website HANU sau này
 
+**v1.5.1 — chuẩn bị ảnh song song và chọn đúng document Picker (18/10/2026):**
+build `npm run build:cloud-extension`, giữ đúng origin production, chép vào đúng
+thư mục extension đang nạp rồi Reload từng profile. Giữ nguyên ID, liên kết,
+hồ sơ và ảnh. Có thêm sửa lịch phục hồi khi timer thức sớm hơn hạn thử lại.
+Đợt này chỉ đổi extension, không cần migration hoặc deploy/restart backend.
+Xem [kết quả kiểm thử và giới hạn tốc độ](UPLOAD-PIPELINE-20261018.md).
+
 **Bản quản lý người dùng ngày 15/10/2026:** đọc [USER-ACCESS.md](USER-ACCESS.md)
 trước khi cập nhật. Bản này cần migration mới, cấu hình email admin đầu tiên
 và build/Reload extension cloud; các bước cập nhật thông thường bên dưới

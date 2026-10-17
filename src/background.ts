@@ -1,6 +1,7 @@
 import { attachmentReference, blobToDataUrl, clearAttachments, dataUrlToBlob, getAttachment, getProfile, getProfileRevision, saveAttachment, saveProfile } from "./storage";
 import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState, validateFinalQuestion } from "./shared";
-import { assignPickerFile, PickerUploadResult } from "./picker-upload";
+import type { PickerUploadResult } from "./picker-upload";
+import { StoredPickerUploads } from './stored-picker-upload';
 import { createNativeClient } from './native-client';
 import {automaticRecoveryAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
 import { cloudOrigin } from './coordinator-transport';
@@ -8,6 +9,7 @@ import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionVi
 
 const RUN_PREFIX = "run:";
 const interruptedRuns = new Set<string>();
+const storedPickerUploads = new StoredPickerUploads();
 let interruptEpoch=0;
 let runWriteQueue=Promise.resolve();
 const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
@@ -162,6 +164,7 @@ async function writeRunNow(run:RunState):Promise<void>{
     const previous=await getRun(run.tabId);
     if(previous?.runId===run.runId){run.eventSeq=Math.max(previous?.eventSeq??0,run.eventSeq??0);run.contentEpoch??=previous?.contentEpoch;if(previous?.submitAttempted)run.submitAttempted=true;}
     if(run.managed&&interruptedRuns.has(run.runId!)&&run.status==='running'){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
+    storedPickerUploads.reconcile(run.tabId, run);
     run.eventSeq = (run.eventSeq ?? 0) + 1;
     run.updatedAt=now();
     const lease=(await chrome.storage.local.get('executionLease')).executionLease;
@@ -229,7 +232,14 @@ function scheduleRecovery(run:RunState){
   if(typeof chrome.alarms?.create==='function')void chrome.alarms.create(`hanu-recovery:${run.runId}`,{when:Date.now()+delay});
 }
 async function recoverPage(tabId:number,runId:string){
-  const run=await getRun(tabId);if(run?.runId!==runId||!automaticRecoveryAllowed(run))return;
+  const run=await getRun(tabId);if(run?.runId!==runId)return;
+  if(!automaticRecoveryAllowed(run)){
+    // A timer/alarm may wake just before retryAt. Returning without rearming
+    // loses that wakeup and can strand the final allowed recovery indefinitely.
+    // Keep the original deadline/attempt; never bypass Stop or submit gates.
+    if(!interruptedRuns.has(runId)&&automaticRecoveryAllowed(run,Infinity))scheduleRecovery(run);
+    return;
+  }
   cancelRecovery(runId);
   try{
     if(run.managed){if(!native.isConnected())return;await native.request('RECOVER',run,{attempt:run.recovery!.attempt});}
@@ -406,30 +416,30 @@ async function uploadStoredFile(message: Extract<ExtensionMessage, { type: "UPLO
   const reference = Object.values(profile.attachments).find(item => item?.id === message.attachmentId);
   if (!reference) throw new Error("Tệp không còn nằm trong hồ sơ đã lưu. Hãy chọn lại ảnh trong extension.");
   const currentForm = (sender.url ?? sender.tab?.url)?.match(/\/d\/e\/([^/]+)/)?.[1];
+  const interruption = interruptEpoch;
   const assertActive = async () => {
     const current = await getRun(tabId);
-    if (current?.status !== "running" || current.formId !== currentForm || current.runId!==activeRun?.runId || current.contentEpoch!==activeRun?.contentEpoch || current.runId&&message.runId!==current.runId || current.contentEpoch&&message.epoch!==current.contentEpoch) throw new Error("Phiên đã dừng hoặc không còn ở form ban đầu.");
+    if (interruption !== interruptEpoch || current?.status !== "running" || current.recoveryRequired || current.submitAttempted || current.runId && interruptedRuns.has(current.runId) || current.formId !== currentForm || current.runId!==activeRun?.runId || current.contentEpoch!==activeRun?.contentEpoch || current.runId&&message.runId!==current.runId || current.contentEpoch&&message.epoch!==current.contentEpoch) throw new Error("Phiên đã dừng hoặc không còn ở form ban đầu.");
   };
-  const inject = async (payload: Parameters<typeof assignPickerFile>[0]): Promise<PickerUploadResult> => {
-    const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: assignPickerFile, args: [payload] });
-    const matching = results.map(item => item.result as PickerUploadResult | undefined)
-      .filter((item): item is PickerUploadResult => Boolean(item && item.state !== "ignored"));
-    return matching.find(item => item.state === "error")
-      ?? matching.find(item => item.state === "assigned")
-      ?? matching.find(item => item.state === "ready") ?? { state: "waiting" };
-  };
-  await assertActive();
-  if (message.checkOnly) return inject({ pickerUrl: message.pickerUrl, requestId: message.requestId, checkOnly: true });
-  // Startup polling sends only readiness metadata. Avoid reading, encoding and
-  // copying a potentially large stored photo into every frame on each poll.
-  const prepared = await inject({ pickerUrl: message.pickerUrl, requestId: message.requestId, prepareOnly: true });
-  if (prepared.state !== "ready") return prepared;
-  await assertActive();
-  const blob = await getAttachment(reference.id);
-  if (!blob) throw new Error("Không đọc được tệp đã lưu. Hãy chọn lại ảnh trong extension.");
-  const dataUrl = await blobToDataUrl(blob);
-  await assertActive();
-  return inject({ dataUrl, name: reference.name, type: reference.type, pickerUrl: message.pickerUrl, requestId: message.requestId });
+  return storedPickerUploads.upload({
+    tabId, runId: activeRun?.runId, epoch: activeRun?.contentEpoch,
+    key: JSON.stringify([activeRun?.runId, activeRun?.contentEpoch, activeRun?.profileRevision,
+      reference, message.pickerUrl, message.requestId]),
+    pickerUrl: message.pickerUrl, requestId: message.requestId, name: reference.name, type: reference.type,
+    checkOnly: message.checkOnly, assertActive,
+    prepare: async () => {
+      const started = performance.now();
+      const blob = await getAttachment(reference.id);
+      const readMs = performance.now() - started;
+      await assertActive();
+      if (!blob || blob.size !== reference.size) throw new Error("Không đọc được đúng tệp đã lưu. Hãy chọn lại ảnh trong extension.");
+      const encoding = performance.now();
+      const dataUrl = await blobToDataUrl(blob);
+      const encodeMs = performance.now() - encoding;
+      await assertActive();
+      return { dataUrl, readMs, encodeMs };
+    }
+  });
 }
 
 async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
@@ -470,6 +480,7 @@ async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
 
 async function haltRun(tabId:number,status:'idle'|'paused'):Promise<RunState|undefined>{
   interruptEpoch++;
+  storedPickerUploads.cancel(tabId);
   const run=await writeState(async()=>{
     const current=await getRun(tabId);if(!current||current.status==='completed')return current;
     if(current.runId)interruptedRuns.add(current.runId);
@@ -632,6 +643,7 @@ async function inspectLoadedDocument(tabId:number):Promise<void>{
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  storedPickerUploads.cancel(tabId);
   cancelNavigationWatch(tabId);
   void releasePageAttention(tabId);
   void writeState(async()=>{const run=await getRun(tabId);if(run&&!endedExecution(run)){cancelRecovery(run.runId);if(run.runId)interruptedRuns.add(run.runId);run.status=run.submitAttempted?'submit_uncertain':'idle';run.activity=undefined;if(run.recovery)run.recovery.automatic=false;run.recoveryRequired=false;run.blockingIssue=run.submitAttempted?run.blockingIssue:undefined;run.logs.push({at:now(),level:'warning',message:'Tab đăng ký đã đóng. Đã dừng lượt và giải phóng profile.'});await writeRunNow(run);}});
@@ -676,7 +688,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         if(sender.tab?.id===undefined||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
         formReadiness.get(sender.tab.id)?.();
         const run=await getRun(sender.tab.id);
-        if(run?.contentEpoch!==message.epoch)cancelNavigationWatch(sender.tab.id);
+        if(run?.contentEpoch!==message.epoch){cancelNavigationWatch(sender.tab.id);storedPickerUploads.cancel(sender.tab.id);}
         if(pageAttention.get(sender.tab.id)?.epoch!==message.epoch)await releasePageAttention(sender.tab.id);
         if(run&&run.formId===canonicalFormId(sender.url??sender.tab.url??'')){
           if(cloudOrigin()&&!run.managed&&!endedExecution(run)){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}

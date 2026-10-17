@@ -18,8 +18,17 @@ export interface PickerUploadPreparation {
   prepareOnly: true;
 }
 
+export interface PickerUploadTimings {
+  readMs: number;
+  encodeMs: number;
+  probeMs: number;
+  handoffMs: number;
+  totalMs: number;
+}
+
 export type PickerUploadResult =
-  | { state: "ignored" | "waiting" | "ready" | "assigned" }
+  | { state: "ignored" | "waiting" | "ready" }
+  | { state: "assigned"; timing?: PickerUploadTimings }
   | { state: "error"; error: string };
 
 // Chrome serializes this function for executeScript. Keep it self-contained:

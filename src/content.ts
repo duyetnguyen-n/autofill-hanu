@@ -3,7 +3,7 @@ import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, For
 import {classifyPage,type PageHealth} from './recovery';
 import {canonicalFormId} from './protocol';
 import type {FinalQuestion,ManualAnswer} from './shared';
-import type { PickerUploadResult } from "./picker-upload";
+import type { PickerUploadResult, PickerUploadTimings } from "./picker-upload";
 
 let active = false;
 let activeMode: RunMode = "test";
@@ -635,6 +635,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   const picker = uploadPicker()!;
   const requestId = crypto.randomUUID();
   let assigned = false;
+  let uploadTiming: PickerUploadTimings | undefined;
   const pickerReadyDeadline = Date.now() + 20000;
   for (let attempt = 0; attempt < 80 && active && Date.now() < pickerReadyDeadline; attempt += 1) {
     if (!picker.isConnected || !visible(picker)) break;
@@ -645,7 +646,7 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
       question.element.dataset.hanuUploadError = (result as { error: string }).error;
       return false;
     }
-    if (result && "state" in result && result.state === "assigned") { assigned = true; break; }
+    if (result && "state" in result && result.state === "assigned") { assigned = true; uploadTiming = result.timing; break; }
     await new Promise(resolve => window.setTimeout(resolve, 250));
   }
   if (!active) return false;
@@ -663,7 +664,8 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
   for (let attempt = 0; attempt < 480 && active && Date.now() < uploadDeadline; attempt += 1) {
     const closed = !picker.isConnected || !visible(picker);
     if (uploadedFileMatches(question, reference.name) && closed) {
-      await emit({type:'progress',message:`Google đã xác nhận ảnh: ${Math.round(performance.now()-uploadStartedAt)} ms (chuẩn bị Picker ${Math.round(assignedAt-uploadStartedAt)} ms).`});
+      const detail = uploadTiming ? ` Đọc ảnh ${Math.round(uploadTiming.readMs)} ms, mã hóa ${Math.round(uploadTiming.encodeMs)} ms, dò Picker ${Math.round(uploadTiming.probeMs)} ms, bàn giao ${Math.round(uploadTiming.handoffMs)} ms.` : '';
+      await emit({type:'progress',message:`Google đã xác nhận ảnh: ${Math.round(performance.now()-uploadStartedAt)} ms (chuẩn bị Picker ${Math.round(assignedAt-uploadStartedAt)} ms).${detail}`});
       return active;
     }
     if (!closed && attempt % 2 === 0) {
