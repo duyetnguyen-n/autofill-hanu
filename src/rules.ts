@@ -118,7 +118,11 @@ export const HSK_RULES: FieldRule[] = [
       ]
     }
   },
-  { key: "termsCommitment", label: "Đồng ý điều khoản", kind: "checkbox", aliases: ["TÔI CAM KẾT | 本人保证", "Tôi đã đọc và đồng ý với những điều khoản trên và sẽ chịu trách nhiệm với thông tin dự thi của mình."] }
+  {
+    key: "termsCommitment", label: "Đồng ý điều khoản", kind: "checkbox",
+    aliases: ["TÔI CAM KẾT", "本人保证", "TÔI CAM KẾT本人保证", "TÔI CAM KẾT 本人保证", "TÔI CAM KẾT | 本人保证", "Tôi đã đọc và đồng ý với những điều khoản trên và sẽ chịu trách nhiệm với thông tin dự thi của mình."],
+    optionAliases: {true:["本人已详细阅读并同意接受以上条款限制。", "Tôi đã đọc và đồng ý với những điều khoản trên và sẽ chịu trách nhiệm với thông tin dự thi của mình."]}
+  }
 ];
 
 export function emptyProfile(): Profile {

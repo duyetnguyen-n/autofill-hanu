@@ -297,7 +297,16 @@ function findRule(question: Question, profile: Profile): FieldRule | undefined {
   const mapped = profile.mappings[mappingKey(formId(), question.id)];
   if (mapped) return getRule(mapped);
   if (question.kind === "checkbox" && isAccountEmailLabel(question.label)) return getRule("recordGoogleEmail");
-  return HSK_RULES.find((rule) => hasExactAlias(question.label, rule.aliases));
+  const candidates = HSK_RULES.filter((rule) => hasExactAlias(question.label, rule.aliases));
+  if(candidates.length>1){
+    // The form repeats the same bilingual commitment heading on two pages.
+    // Identify its meaning from exact option text, independently of the saved
+    // answer, so a consent preference cannot be taken from the other field.
+    const options=controlsIn(question.element,'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+    const matched=candidates.filter(rule=>Object.values(rule.optionAliases??{}).flat().some(alias=>options.some(option=>choiceMatchesValue(option,alias))));
+    if(matched.length)return matched.length===1?matched[0]:undefined;
+  }
+  return candidates[0];
 }
 
 function customValue(question: Question, profile: Profile): string | undefined {
