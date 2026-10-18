@@ -48,6 +48,42 @@ it('detects a document that stays loading after the original content script disa
   expect(f.data['run:7']).toMatchObject({status:'waiting_manual',blockingIssue:{reason:'navigation'},recovery:{attempt:1,automatic:true}});
   expect(chrome.tabs.reload).toBeUndefined();await f.ask({type:'STOP_RUN',tabId:7});
 });
+it('does not mistake a loading Picker iframe for a stalled form navigation while the current uploader is alive',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'upload',contentEpoch:'doc',status:'running',activity:{phase:'uploading',message:'Upload',at:''}});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  f.sendMessage.mockResolvedValue({runId:'upload',epoch:'doc',active:true,inFlight:true} as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(30000);
+  expect(f.data['run:7']).toMatchObject({status:'running',activity:{phase:'uploading'}});
+  expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
+  expect(f.sendMessage).not.toHaveBeenCalledWith(7,{type:'HALT_RUN'});
+  await f.ask({type:'STOP_RUN',tabId:7});
+});
+it('still bounds an explicit Next even when its predecessor document can answer a status probe',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'next',contentEpoch:'doc',status:'running',activity:{phase:'navigating',message:'Next',at:''}});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  f.sendMessage.mockResolvedValue({runId:'next',epoch:'doc',active:true,inFlight:true} as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(25000);
+  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',recovery:{attempt:1,automatic:true}});
+  await f.ask({type:'STOP_RUN',tabId:7});
+});
+it('keeps Stop final when an uploader status probe returns late',async()=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'upload',contentEpoch:'doc',status:'running',activity:{phase:'uploading',message:'Upload',at:''}});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);
+  let resolveProbe!:(value:unknown)=>void;
+  f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_RUN_STATUS'?new Promise<any>(r=>resolveProbe=r):{ok:true});
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(5000);
+  await f.ask({type:'STOP_RUN',tabId:7});resolveProbe({runId:'upload',epoch:'doc',active:true,inFlight:true});
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(f.data['run:7']).toMatchObject({status:'idle'});
+  expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
+});
+it.each([{runId:'other',epoch:'doc',active:true,inFlight:true},{runId:'upload',epoch:'old',active:true,inFlight:true},{runId:'upload',epoch:'doc',active:false,inFlight:true}])('does not let a stale or inactive content reply disable navigation recovery (%j)',async reply=>{
+  vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'upload',contentEpoch:'doc',status:'running',activity:{phase:'uploading',message:'Upload',at:''}});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);f.sendMessage.mockResolvedValue(reply as any);
+  f.updated({status:'loading'});await vi.advanceTimersByTimeAsync(25000);
+  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',recovery:{attempt:1,automatic:true}});
+  await f.ask({type:'STOP_RUN',tabId:7});
+});
 it.each(['stop','new-document'] as const)('cancels the predecessor watchdog after %s',async action=>{
   vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'loading',contentEpoch:'old',status:'running'});
   vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:formUrl,status:'loading'} as any);

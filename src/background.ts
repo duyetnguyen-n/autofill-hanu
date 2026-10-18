@@ -39,8 +39,18 @@ async function armNavigationWatch(tabId:number){
 }
 async function checkNavigationWatch(watch:NavigationWatch){
   if(navigationWatches.get(watch.tabId)?.token!==watch.token)return;
-  const run=await getRun(watch.tabId),tab=await chrome.tabs.get(watch.tabId).catch(()=>undefined);
+  let run=await getRun(watch.tabId);const tab=await chrome.tabs.get(watch.tabId).catch(()=>undefined);
   if(!run||run.runId!==watch.runId||!tab||!['running','submitting'].includes(run.status)||run.recoveryRequired||interruptedRuns.has(watch.runId)||run.contentEpoch!==watch.epoch){cancelNavigationWatch(watch.tabId);return;}
+  // A Picker/subframe can keep the tab's loading spinner on while the main
+  // form is actively filling/uploading. Only its current run/document may
+  // attest this. An explicit Next or Submit keeps its navigation deadline.
+  if(!run.submitAttempted&&run.activity?.phase!=='navigating'){
+    const page=await observePage(chrome.tabs.sendMessage(watch.tabId,{type:'PAGE_RUN_STATUS'})).catch(()=>undefined) as {runId?:string;epoch?:string;active?:boolean;inFlight?:boolean}|undefined;
+    if(navigationWatches.get(watch.tabId)?.token!==watch.token)return;
+    run=await getRun(watch.tabId);
+    if(!run||run.runId!==watch.runId||run.contentEpoch!==watch.epoch||!['running','submitting'].includes(run.status)||run.recoveryRequired||interruptedRuns.has(watch.runId)){cancelNavigationWatch(watch.tabId);return;}
+    if(!run.submitAttempted&&run.activity?.phase!=='navigating'&&page?.runId===run.runId&&page.epoch===run.contentEpoch&&page.active===true&&page.inFlight===true){cancelNavigationWatch(watch.tabId);return;}
+  }
   // A completed HTTP load can still have a stuck in-document Next. Conversely,
   // a newly claimed document owns recovery and cancels the predecessor's timer.
   if(tab.status!=='loading'&&run.activity?.phase!=='navigating'&&!run.submitAttempted){cancelNavigationWatch(watch.tabId);return;}
