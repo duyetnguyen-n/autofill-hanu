@@ -9,7 +9,7 @@ import {CloudGate,type Account} from './CloudLogin';
 import {DataTransfer} from './DataTransfer';
 import {AdminPage} from './AdminPage';
 import {darkTheme,lightTheme,useTheme} from './theme';
-import {runStatusLabel,commandStatus} from '../../src/run-presentation';
+import {runStatusLabel,commandStatus,runElapsed} from '../../src/run-presentation';
 import {HSK_RULES,emptyProfile} from '../../src/rules';
 import './style.css';
 import './access.css';
@@ -38,7 +38,7 @@ const canRestart=(s:SessionView)=>s.connected&&!!s.profile&&!s.conflict&&/^\S+@\
 async function restartSession(s:SessionView){if(!canRestart(s))throw new Error('Profile chưa sẵn sàng chạy lại.');return api(`sessions/${s.id}/restart`,{expectedRunId:s.run!.runId,requestId:crypto.randomUUID()});}
 const status=(s:SessionView)=>s.linked===false?'Đã hủy liên kết':!s.connected?'Mất kết nối':s.conflict?'Xung đột hồ sơ':s.execution?`${s.execution.mode==='test'?'Test':'Live'} · ${s.execution.status==='running'&&!isRunning(s)?(s.execution.active===false?'Form không tự chạy, còn giữ profile':'Lượt còn giữ profile'):runStatusLabel({...s.run,...s.execution})}${s.execution.managed?'':' trong extension'}`:s.error&&!s.run?'Cần kiểm tra':s.run?runStatusLabel(s.run):!s.expectedEmail?'Cần gán email':s.synced?'Đã chuẩn bị':'Chưa đồng bộ';
 const step=(s:SessionView)=>commandStatus(s.control,s.run)??(s.linked===false?'Liên kết lại để tiếp tục sử dụng profile':s.run?.activity?.message??(s.execution?(s.execution.message??'Profile đang được giữ bởi lượt này. Bấm Xem form hoặc Dừng.'):(s.error??s.run?.blockingIssue?.message??s.run?.logs.at(-1)?.message??(s.synced?'Chờ link và lệnh bắt đầu':'Mở Chi tiết để chuẩn bị hồ sơ'))));
-function elapsed(run?:Pick<RunState,'startedAt'|'status'|'updatedAt'>){if(!run?.startedAt)return '⋯';const seconds=Math.max(0,Math.floor((Date.parse(run.status==='running'?new Date().toISOString():run.updatedAt)-Date.parse(run.startedAt))/1000));return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;}
+const elapsed=runElapsed;
 function App({cloud=false,account,logout}:{cloud?:boolean;account?:Account;logout?:()=>Promise<void>}={}){
   const [state,setState]=useState(initial),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[working,setBusy]=useState(false),[url,setUrl]=useState(''),[mode,setMode]=useState<'test'|'live'>('test');
   const [serverConnected,setServerConnected]=useState(false),[replaceSession,setReplaceSession]=useState<string>();

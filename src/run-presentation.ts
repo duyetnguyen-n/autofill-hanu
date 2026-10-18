@@ -1,6 +1,18 @@
 import type {ControlReceipt} from './protocol';
 import type {RunState} from './shared';
 
+export function runElapsed(run:(Pick<RunState,'startedAt'|'status'|'updatedAt'>&Partial<Pick<RunState,'logs'>>)|undefined,now=Date.now()):string {
+  if(!run?.startedAt)return '⋯';
+  // Rebinding a document updates updatedAt even after Stop. The final log
+  // records when execution stopped; later page bookkeeping is not run time.
+  const stopped=['idle','completed','failed','ready_to_submit'].includes(run.status);
+  const end=['running','submitting'].includes(run.status)?now:Date.parse(stopped?(run.logs?.at(-1)?.at??run.updatedAt):run.updatedAt);
+  const start=Date.parse(run.startedAt);
+  if(!Number.isFinite(end)||!Number.isFinite(start))return '⋯';
+  const seconds=Math.max(0,Math.floor((end-start)/1000));
+  return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+}
+
 const labels:Record<RunState['status'],string>={idle:'Đã dừng',running:'Đang chạy',paused:'Tạm dừng',waiting_manual:'Cần bạn xử lý',ready_to_submit:'Xong Test',submitting:'Đang xác nhận gửi',completed:'Đã gửi',submit_uncertain:'Chưa rõ đã gửi',failed:'Có lỗi'};
 export function runStatusLabel(run:Pick<RunState,'status'>&Partial<RunState>):string {
   if(run.submitAttempted&&run.status!=='completed')return run.status==='submitting'?'Đang xác nhận gửi':'Chưa rõ đã gửi';
