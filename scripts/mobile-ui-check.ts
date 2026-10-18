@@ -1,0 +1,112 @@
+import {chromium,expect} from '@playwright/test';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {mobileFixture} from './mobile-fixture';
+
+const app=await mobileFixture(),browser=await chromium.launch({channel:'chromium',headless:true});
+const output='test-results/mobile-20261018';
+await mkdir(output,{recursive:true});
+const results:unknown[]=[],errors:string[]=[];
+try{
+  const context=await browser.newContext({viewport:{width:390,height:844},colorScheme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(app.config.origin);
+  await page.getByRole('button',{name:'Tiếp tục với Google',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Hà Nội · 01',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Thêm profile',exact:true}).first()).toBeEnabled();
+  const noOverflow=async(label:string)=>{
+    const dimensions=await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
+    expect(dimensions.scroll,`${label}: page overflow`).toBeLessThanOrEqual(dimensions.client);
+    results.push({label,...dimensions});
+  };
+  for(const [width,height] of [[320,568],[360,800],[390,844],[430,932],[768,1024],[900,1024],[1024,768],[1440,1000]]){
+    await page.setViewportSize({width,height});await noOverflow(`manager-${width}`);
+    const dock=page.getByRole('button',{name:'Bắt đầu Test',exact:true});
+    if(width<=900){
+      const position=await dock.evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,viewport:innerHeight};});
+      expect(position.bottom).toBeLessThanOrEqual(position.viewport);expect(position.top).toBeGreaterThanOrEqual(0);expect(position.height).toBeGreaterThanOrEqual(44);
+      const tableWidth=await page.locator('.sessions-table').evaluate(e=>e.getBoundingClientRect().width);
+      expect(tableWidth).toBeLessThanOrEqual(width);
+    }
+    if([320,390,768,1440].includes(width))await page.screenshot({path:`${output}/manager-${width}-light.png`,fullPage:true});
+  }
+  await page.setViewportSize({width:390,height:844});
+  const first=page.getByRole('checkbox',{name:'Chọn Hà Nội · 01',exact:true}),second=page.getByRole('checkbox',{name:'Chọn Lớp HSK cuối tuần · 02',exact:true});
+  await first.check();await second.check();
+  await expect(page.locator('.mobile-run-summary')).toContainText('2 profile đã chọn');
+  await page.getByRole('textbox',{name:'Tìm profile',exact:true}).fill('khánh');
+  await expect(page.locator('tbody tr')).toHaveCount(1);
+  await page.getByRole('checkbox',{name:'Chọn các profile đang hiển thị',exact:true}).uncheck();
+  await page.getByRole('textbox',{name:'Tìm profile',exact:true}).fill('');
+  await expect(first).toBeChecked();await expect(second).not.toBeChecked();
+  await page.getByRole('link',{name:'Nhập link Google Form',exact:true}).click();
+  await page.getByRole('textbox',{name:'Link Google Form',exact:true}).fill('https://docs.google.com/forms/d/e/mobile-fixture/viewform');
+  await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Bắt đầu Test',exact:true}).click();
+  await expect(page.locator('tbody tr').first()).toContainText('Đang chạy');
+  const store=app.repository.store('11111111-1111-4111-8111-111111111111');
+  const initialRun=(await store.session(app.sessions[0].id)).run!.runId;
+  await page.getByRole('button',{name:'Tạm dừng nhóm',exact:true}).click();
+  await expect(page.locator('tbody tr').first()).toContainText('Tạm dừng');
+  await page.getByRole('button',{name:'Tiếp tục nhóm',exact:true}).click();
+  await expect(page.locator('tbody tr').first()).toContainText('Đang chạy');
+  await page.getByRole('button',{name:'Dừng nhóm',exact:true}).click();
+  await expect(page.locator('tbody tr').first()).toContainText('Đã dừng');
+  const row=page.locator('tbody tr').first();
+  await row.getByRole('button',{name:'Chạy lại',exact:true}).click();
+  await expect.poll(async()=> (await store.session(app.sessions[0].id)).run!.runId).not.toBe(initialRun);
+  await row.getByRole('button',{name:'Dừng',exact:true}).click();
+  expect((await store.session(app.sessions[1].id)).run).toBeUndefined();
+  await row.getByRole('button',{name:'Chi tiết',exact:true}).click();
+  const detail=page.getByRole('dialog',{name:'Chi tiết Hà Nội · 01',exact:true});
+  await page.getByRole('textbox',{name:'Họ và tên',exact:true}).fill('Nguyễn Minh Anh đã chỉnh');
+  await page.getByRole('textbox',{name:'Số điện thoại',exact:true}).fill('0904567890');
+  await detail.getByRole('button',{name:'Lưu và đồng bộ',exact:true}).click();
+  await expect(detail.getByRole('status')).toContainText('Đã lưu và đồng bộ');
+  expect((await store.session(app.sessions[0].id)).profile!.values.fullName).toBe('Nguyễn Minh Anh đã chỉnh');
+  await detail.getByRole('button',{name:'Thao tác khác',exact:true}).click();
+  await page.getByRole('button',{name:'Hủy liên kết',exact:true}).press('Escape');
+  await expect(detail).toBeVisible();await expect(page.getByRole('button',{name:'Hủy liên kết',exact:true})).toHaveCount(0);
+  await detail.getByRole('button',{name:'Thao tác khác',exact:true}).click();
+  await page.getByRole('button',{name:'Hủy liên kết',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Xác nhận hủy liên kết',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Giữ liên kết',exact:true}).click();
+  expect((await store.session(app.sessions[0].id)).linked).not.toBe(false);
+  for(const [width,height] of [[320,568],[390,844],[768,1024]]){
+    await page.setViewportSize({width,height});await noOverflow(`detail-${width}`);
+    const saveRect=await detail.getByRole('button',{name:'Lưu và đồng bộ',exact:true}).evaluate(e=>{const r=e.getBoundingClientRect();return {bottom:r.bottom,height:r.height};});
+    expect(saveRect.bottom).toBeLessThanOrEqual(height);expect(saveRect.height).toBeGreaterThanOrEqual(44);
+  }
+  await page.setViewportSize({width:390,height:844});
+  await page.screenshot({path:`${output}/detail-390.png`,fullPage:false});
+  await detail.getByRole('button',{name:'Đóng chi tiết',exact:true}).click();
+  expect(await page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden');
+  await page.getByRole('button',{name:'Tài khoản và công cụ',exact:true}).click();
+  const tools=page.getByRole('dialog',{name:'Tài khoản và công cụ',exact:true});
+  await expect(tools.getByRole('link',{name:'Tài khoản',exact:true})).toBeVisible();
+  const chooser=page.waitForEvent('filechooser');
+  await tools.getByRole('button',{name:'Nhập từ bản local',exact:true}).click();
+  await (await chooser).setFiles([]);
+  await expect(tools).toBeVisible();
+  await tools.getByRole('button',{name:'Đóng',exact:true}).press('Escape');
+  await expect(page.getByRole('button',{name:'Tài khoản và công cụ',exact:true})).toBeFocused();
+  await page.getByRole('button',{name:'Đổi giao diện sáng tối',exact:true}).click();
+  await expect(page.locator('.application')).toHaveClass(/dark/);await noOverflow('manager-dark-390');
+  await page.screenshot({path:`${output}/manager-390-dark.png`,fullPage:true});
+  await page.getByRole('button',{name:'Đổi giao diện sáng tối',exact:true}).click();
+  await page.getByRole('button',{name:'Tài khoản và công cụ',exact:true}).click();
+  await tools.getByRole('link',{name:'Tài khoản',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Quyền sử dụng của bạn',exact:true})).toBeVisible();
+  await noOverflow('account-390');await page.screenshot({path:`${output}/account-390.png`,fullPage:true});
+  await page.goto(`${app.config.origin}/admin`);
+  await expect(page.getByRole('heading',{name:'Người dùng',exact:true})).toBeVisible();await noOverflow('admin-390');
+  await page.screenshot({path:`${output}/admin-390.png`,fullPage:true});
+  await page.setViewportSize({width:320,height:568});await noOverflow('admin-320');
+  await page.goto(app.config.origin);await expect(page.getByRole('button',{name:'Hà Nội · 01',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Tài khoản và công cụ',exact:true}).click();
+  await page.getByRole('dialog',{name:'Tài khoản và công cụ',exact:true}).getByRole('button',{name:'Đăng xuất',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Đăng nhập để bắt đầu',exact:true})).toBeVisible();await noOverflow('login-320');
+  await page.screenshot({path:`${output}/login-320.png`,fullPage:true});
+  expect(errors).toEqual([]);
+  await writeFile(`${output}/ui-check.json`,JSON.stringify({pass:true,scope:'Isolated synthetic accounts and mocked extension commands; no real Google forms.',viewports:results,commands:app.commands,errors},null,2));
+  console.log('PASS: responsive widths, phone/tablet/desktop, light/dark, visible-selection semantics, pinned Start, pause/resume/stop/restart, independent profiles, draft Save, nested focus/Escape, cancel unlink, local file chooser, account/admin/login, zero page errors.');
+}finally{await browser.close();await app.close();}

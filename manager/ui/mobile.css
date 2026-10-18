@@ -1,0 +1,223 @@
+/* Mobile evolution of the existing Fluent/Geist system.
+   Layers: sticky header 4, run dock 5, existing profile overlay 20.
+   Fluent owns the layers and focus management of dialogs/popovers. */
+.desktop-account-tools{display:flex;align-items:center;gap:6px}
+.mobile-tools-trigger,.mobile-only,.mobile-cell-label,.add-profile-short,.mobile-run-summary,.drawer-mobile-actions{display:none!important}
+.start-action,.drawer-desktop-actions{display:contents}
+.drawer-content{min-height:0;overscroll-behavior:contain}
+.profile-action-popover{max-width:calc(100vw - 32px);padding:10px;background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1)}
+.profile-action-popover>div{display:grid;gap:6px;min-width:220px}
+.profile-action-popover button{min-height:44px;justify-content:flex-start;font-size:13px}
+.mobile-tools-dialog{background:var(--colorNeutralBackground1);color:var(--colorNeutralForeground1);width:min(420px,calc(100vw - 32px));border-radius:16px;padding:24px}
+.mobile-account-tools{display:grid;gap:8px;padding-block:12px}
+.mobile-account-tools .account-email{grid-row:1;max-width:none;font-size:13px;overflow-wrap:anywhere;white-space:normal;padding:0 4px 12px;border-bottom:1px solid var(--colorNeutralStroke2)}
+.mobile-account-tools button,.mobile-account-tools a{min-height:46px;justify-content:flex-start;font-size:14px}
+.sessions-table .selection .fui-Checkbox__label{display:none}
+
+@media(max-width:1100px){
+  .desktop-account-tools{display:none}
+  .mobile-tools-trigger{display:inline-flex!important}
+}
+
+@media(max-width:900px){
+  .application{--mobile-gutter:16px;display:block;min-height:100dvh}
+  .application .app-main,.application .workspace{min-width:0;width:100%}
+  .application .workspace{padding:24px var(--mobile-gutter) calc(112px + env(safe-area-inset-bottom))}
+  .application .topbar{height:72px;min-height:72px;padding:0 var(--mobile-gutter);gap:12px;position:sticky;top:0;z-index:4;background:var(--surface)}
+  .breadcrumb{flex-direction:column;align-items:flex-start;gap:1px;flex:1;min-width:0;line-height:1.45}
+  .breadcrumb>span:first-child{font-size:10px;color:var(--muted);white-space:nowrap}
+  .breadcrumb>span:nth-child(2){display:none}
+  .breadcrumb strong{font-size:16px;font-weight:600;letter-spacing:-.35px}
+  .top-actions{flex-wrap:nowrap;gap:2px;flex-shrink:0}
+  .desktop-account-tools{display:none}
+  .mobile-tools-trigger{display:inline-flex!important}
+  .top-actions>.fui-Button,.top-actions .mobile-tools-trigger{min-width:44px;min-height:44px;border-radius:10px}
+  .top-actions .add-profile-button{min-width:84px;padding-inline:12px;font-size:13px}
+  .add-profile-label{display:none}
+  .add-profile-short{display:inline!important}
+  .application .fui-Button{min-height:44px;white-space:nowrap}
+  .application .fui-Input,.application .fui-Select{min-height:46px;max-width:100%;min-width:0}
+  .application .fui-Input input,.application .fui-Select select,.application textarea{font-size:16px!important}
+  .application .fui-Field{min-width:0}
+  .application .fui-Field>label{font-size:13px;line-height:1.55}
+  .application .fui-Checkbox{min-height:44px;min-width:44px}
+  .page-heading{display:block;margin-bottom:22px}
+  .page-heading h1{font-size:27px;letter-spacing:-.9px}
+  .page-heading p{font-size:13px;line-height:1.65;max-width:32ch;margin-top:8px}
+  .heading-connection{display:flex;margin-top:12px;font-size:12px}
+  .heading-connection svg{font-size:17px}
+  .overview-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 0;padding:20px;margin-bottom:20px;border-radius:14px}
+  .overview-strip>div{padding:0 0 0 20px;min-width:0}
+  .overview-strip>div:nth-child(odd){border:0;padding-left:0}
+  .overview-strip>div>span{font-size:10px;letter-spacing:.35px;line-height:1.5}
+  .overview-strip strong{font-size:30px;letter-spacing:-1.5px;margin-top:5px}
+  .overview-strip small{font-size:11px;line-height:1.5;margin-top:2px}
+  .execution-overview{display:grid;gap:5px;padding:14px 16px;border-radius:12px;margin-bottom:24px}
+  .execution-overview strong{font-size:14px}
+  .execution-overview span{font-size:12px;line-height:1.6;color:var(--ink)}
+  .run-controls{grid-template-columns:minmax(0,1fr);gap:16px;scroll-margin-top:88px}
+  .url-field{grid-column:auto}
+  .run-controls label{font-size:13px;margin-bottom:7px}
+  .start-action{display:flex;position:fixed;bottom:0;inset-inline:0;z-index:5;align-items:center;justify-content:space-between;gap:12px;padding:12px max(16px,env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 24px color-mix(in srgb,var(--accent) 5%,transparent)}
+  .mobile-run-summary{display:grid!important;gap:4px;min-width:0}
+  .mobile-run-summary strong{font-size:13px;font-weight:600;line-height:1.4}
+  .mobile-run-summary span{font-size:11px;line-height:1.4;color:var(--muted)}
+  .mobile-run-summary a{display:inline-flex;align-items:center;min-height:28px;color:var(--accent);text-underline-offset:3px}
+  .start-action .start-button{min-width:148px;min-height:48px;height:auto;padding:12px 16px;font-size:14px!important;border-radius:10px!important;flex-shrink:0}
+  .final-question{margin-top:22px;padding:16px;border-radius:14px}
+  .final-question-heading{align-items:flex-start;gap:12px}
+  .final-question-heading strong{font-size:15px}
+  .final-question-heading p,.final-question p{font-size:12px;line-height:1.65}
+  .application .final-question-heading .fui-Button{max-width:46%;font-size:12px;white-space:normal}
+  .final-question-simple,.final-question-fields{grid-template-columns:minmax(0,1fr);gap:14px}
+  .final-question-fields>div:last-child{grid-column:auto}
+  .final-question-preview{padding:14px;min-height:76px;border-radius:9px}
+  .final-question-preview strong{font-size:14px}
+  .final-question-footer{flex-direction:column;align-items:stretch;gap:12px}
+  .final-question-footer>span{font-size:12px}
+  .application .final-question-footer .fui-Button{width:100%;white-space:normal}
+  .final-question-read{flex-direction:column;align-items:stretch}
+  .final-question-options summary{font-size:12px;padding-block:8px}
+  .run-help{padding:16px 0;margin:0;font-size:12px;line-height:1.65;gap:12px;align-items:stretch;flex-direction:column}
+  .group-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .group-actions button{flex:1;font-size:12px;padding-inline:10px}
+  .banner{align-items:flex-start;gap:10px;padding:14px;border-radius:10px;font-size:13px;line-height:1.65;overflow-wrap:anywhere}
+  .banner>svg{margin-top:4px}
+  .banner .fui-Button{min-width:36px;min-height:36px;flex-shrink:0}
+  .session-area{border:0;background:transparent;overflow:visible;border-radius:0;margin-top:8px}
+  .list-toolbar{padding:0 0 14px;border:0;display:flex;flex-direction:column;gap:12px;align-items:stretch}
+  .filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;max-width:100%;overflow:visible;padding:2px}
+  .filters button{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:9px 11px;font-size:12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);line-height:1.5}
+  .filters button.active{background:var(--tint);border-color:var(--accent)}
+  .filters span{font-size:10px;margin-left:5px;padding:0 4px}
+  .search{width:100%;min-height:46px!important;border-radius:10px!important}
+  .table-wrap{overflow:visible;max-height:none}
+  .sessions-table{display:block;min-width:0;width:100%;table-layout:auto}
+  .sessions-table thead{display:block;position:static;background:transparent}
+  .sessions-table thead tr{display:block}
+  .sessions-table th:not(.selection){position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .sessions-table th.selection{display:block;width:auto;padding:0 0 10px;border:0}
+  .sessions-table .selection .mobile-only{display:inline!important;font-size:12px;color:var(--muted)}
+  .sessions-table .selection .fui-Checkbox__label{display:block}
+  .sessions-table tbody{display:grid;gap:12px;width:100%}
+  .sessions-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'identity select' 'status duration' 'candidate files' 'actions actions';gap:16px 12px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:none}
+  .sessions-table tbody tr[aria-selected=true]{border-color:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 12%,transparent)}
+  .sessions-table tbody tr.running-row{border-inline-start:3px solid var(--accent)}
+  .sessions-table tbody tr.needs-attention{border-inline-start:3px solid var(--danger)}
+  .sessions-table td,.sessions-table td:first-child,.sessions-table tr:last-child td{display:block;min-width:0;padding:0;border:0;box-shadow:none}
+  .session-select{grid-area:select;align-self:start;margin:-6px -8px -6px 0}
+  .session-identity{grid-area:identity;align-self:center}
+  .session-status{grid-area:status}
+  .session-duration{grid-area:duration;text-align:right;align-self:start;font-size:17px;line-height:1.5;color:var(--ink);white-space:nowrap}
+  .session-candidate{grid-area:candidate}
+  .session-files{grid-area:files;align-self:start;text-align:right}
+  .session-actions{grid-area:actions;padding-top:12px!important;border-top:1px solid var(--line)!important}
+  .mobile-cell-label{display:block!important;font-family:'Geist Variable',sans-serif;font-size:10px;font-weight:400;letter-spacing:.1px;line-height:1.5;color:var(--muted);margin-bottom:5px}
+  .profile-cell{gap:0}
+  .profile-number{display:none}
+  .profile-link{font-size:15px;line-height:1.5;font-weight:600;white-space:normal;text-align:left;overflow-wrap:anywhere;min-height:44px}
+  .profile-link svg{font-size:15px}
+  .profile-cell .secondary-line{font-size:12px;line-height:1.5;overflow-wrap:anywhere;white-space:normal;overflow:visible;margin-top:3px}
+  .candidate-name{font-size:13px;font-weight:550;line-height:1.6;white-space:normal;overflow:visible;overflow-wrap:anywhere}
+  .session-candidate .secondary-line{font-size:11px;line-height:1.6}
+  .session-status .status{font-size:11px;line-height:1.5;padding:5px 7px;max-width:100%;white-space:normal;align-items:flex-start;border-radius:6px}
+  .session-status .status svg{font-size:15px;margin-top:1px;flex-shrink:0}
+  .session-status .step{font-size:12px;line-height:1.6;white-space:normal;overflow:visible;overflow-wrap:anywhere;margin-top:7px}
+  .file-indicator{font-size:12px;line-height:1.6;justify-content:flex-end}
+  .file-indicator svg{font-size:16px}
+  .session-files .muted{font-size:12px}
+  .row-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;justify-content:stretch}
+  .row-actions .fui-Button{font-size:12px;padding-inline:10px;width:100%;border-radius:8px}
+  .row-actions .fui-Button:last-child:nth-child(odd){grid-column:1/-1}
+  .list-footer{background:transparent;border:0;padding:16px 0;gap:12px;font-size:11px;line-height:1.6;flex-wrap:wrap}
+  .empty{padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+  .empty p{font-size:13px;line-height:1.7}
+  .setup-empty{grid-template-columns:minmax(0,1fr);gap:24px;padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+  .setup-intro>p,.setup-instructions p{font-size:13px;line-height:1.7;max-width:none}
+  .setup-instructions{border-left:0;border-top:1px solid var(--line);padding:22px 0 0}
+  .setup-instructions h3{font-size:14px}
+  .setup-intro>button{font-size:13px}
+  .drawer{width:100%;height:100dvh;max-height:100dvh;overflow:hidden}
+  .drawer-header{padding:18px 20px 12px;gap:12px;flex-shrink:0}
+  .drawer-header h2{font-size:23px;line-height:1.4;overflow-wrap:anywhere;margin-top:10px}
+  .drawer-header>div{min-width:0}
+  .drawer-header>.fui-Button{min-width:44px;min-height:44px;align-self:flex-start}
+  .connection-meta{padding:0 20px;font-size:11px;gap:3px;flex-shrink:0}
+  .connection-meta code{font-size:10px;line-height:1.6}
+  .drawer-tools{padding:12px 20px;gap:8px;flex-shrink:0}
+  .drawer-tools button{font-size:12px;flex:1;min-width:0;padding-inline:8px}
+  .detail-tabs{padding:0 20px;gap:24px;flex-shrink:0}
+  .detail-tabs button{font-size:13px;min-height:44px;padding-block:12px}
+  .drawer-content{padding:20px;min-height:0;flex:1;overflow:auto}
+  .profile-fields,.identity-fields{grid-template-columns:minmax(0,1fr);gap:18px}
+  .drawer-content h3{font-size:15px;margin:26px 0 18px}
+  .drawer-content .profile-fields label{font-size:13px}
+  .drawer-content input[type=file]{font-size:13px;width:100%;max-width:100%;min-height:44px}
+  .attachment-name{overflow-wrap:anywhere;font-size:12px;line-height:1.6}
+  .sync-row{flex-direction:column;align-items:stretch;gap:10px;font-size:12px;line-height:1.6}
+  .sync-row button{font-size:13px}
+  .drawer-footer{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px 20px calc(12px + env(safe-area-inset-bottom));background:var(--surface);flex-shrink:0}
+  .drawer-desktop-actions{display:none}
+  .drawer-mobile-actions{display:inline-flex!important}
+  .drawer-footer>.fui-Button,.drawer-footer .drawer-mobile-actions{min-height:48px;font-size:13px;min-width:0;width:100%;padding-inline:10px}
+  .drawer-footer>.fui-Button:only-child{grid-column:1/-1}
+  .event-log li{grid-template-columns:62px minmax(0,1fr);font-size:12px;gap:10px;overflow-wrap:anywhere}
+  .event-log time{font-size:10px}
+  .run-summary p,.profile-unlink-confirm p,.submission-review p{font-size:13px}
+  .pair-dialog{width:calc(100vw - 32px);max-width:calc(100vw - 32px);padding:22px;border-radius:16px!important}
+  .pair-intro,.pair-helper{font-size:13px;line-height:1.7}
+  .pair-code{align-items:stretch;flex-direction:column;padding:16px;gap:12px}
+  .pair-code code{font-size:22px;letter-spacing:1.3px;overflow-wrap:anywhere}
+  .pair-code button{font-size:13px;min-height:44px}
+  .pair-feedback{padding:14px;font-size:13px}
+  .pair-feedback p{font-size:12px}
+  .fui-DialogActions{flex-wrap:wrap}
+  .mobile-tools-dialog .fui-DialogTitle{font-size:20px;line-height:1.4}
+  .mobile-tools-dialog .fui-DialogActions button{min-height:44px;min-width:90px}
+  .access-topbar{padding:14px 16px;min-height:72px;gap:12px}
+  .access-topbar .brand{font-size:19px;gap:9px;min-width:0}
+  .access-top-actions{gap:2px;flex-shrink:0}
+  .access-top-actions .fui-Button{min-height:44px;min-width:44px;padding-inline:10px}
+  .account-layout{grid-template-columns:minmax(0,1fr);padding:28px 16px 40px;gap:24px}
+  .account-intro h1{font-size:28px;line-height:1.3;letter-spacing:-.8px}
+  .account-intro>p{font-size:14px;line-height:1.75}
+  .account-surface{border-radius:14px;min-width:0}
+  .account-facts>div{font-size:13px;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}
+  .account-status-content .access-form-actions>*{min-height:44px}
+  .login-story{padding:28px 20px}
+  .login-copy{padding:32px 0 12px}
+  .login-copy h1{font-size:30px}
+  .login-copy p{font-size:14px;line-height:1.75}
+  .login-panel{padding:32px 20px 48px}
+  .login-form h2{font-size:25px}
+  .admin-workspace{padding:24px 16px 40px}
+  .admin-mobile-nav{gap:20px;overflow:auto;white-space:nowrap}
+  .admin-heading h1{font-size:27px}
+  .admin-filters button{min-height:44px}
+  .admin-users-table .fui-Button,.admin-users-table .admin-user-button{min-height:44px}
+  .admin-users-table tbody tr{padding:18px;gap:16px 10px}
+  .access-limits-fields{grid-template-columns:minmax(0,1fr)}
+  .access-full-width{grid-column:auto}
+  .fui-DialogSurface.admin-drawer{padding:20px 16px;width:100vw}
+  .admin-drawer .fui-DialogActions{gap:8px;flex-wrap:wrap}
+  .admin-drawer .fui-DialogActions>.fui-Button{min-height:44px}
+}
+
+@media(min-width:700px) and (max-width:900px){
+  .filters{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .sessions-table tbody{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+  .drawer{width:min(570px,100%)}
+}
+
+@media(max-width:359px){
+  .application{--mobile-gutter:12px}
+  .application .topbar{gap:6px}
+  .top-actions .add-profile-button{min-width:72px;padding-inline:8px}
+  .start-action{gap:8px;padding-inline:12px}
+  .start-action .start-button{min-width:132px;padding-inline:12px;font-size:13px!important}
+  .mobile-run-summary strong{font-size:12px}
+  .mobile-run-summary span{font-size:10px}
+  .sessions-table tbody tr{padding:14px;gap:14px 8px}
+  .drawer-tools,.drawer-content,.detail-tabs{padding-inline:16px}
+  .drawer-footer{padding-inline:16px;gap:8px}
+}

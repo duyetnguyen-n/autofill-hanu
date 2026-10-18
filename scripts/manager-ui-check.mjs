@@ -71,7 +71,7 @@ try{
   await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeDisabled();
   await page.getByRole('button',{name:'Dừng nhóm',exact:true}).click();
   await expect(page.locator('table')).toContainText('Đã dừng');
-  const next=page.waitForResponse(r=>r.url().endsWith('/api/start'));
+  const next=page.waitForResponse(r=>r.url().endsWith(`/api/sessions/${id}/restart`));
   await page.getByRole('button',{name:'Chạy lại',exact:true}).click();expect((await next).ok()).toBe(true);
   await expect(page.locator('table')).toContainText('Đang chạy');
   expect(app.store.session(id).run.runId).not.toBe('stopped-fixture');expect(app.store.session(id).run.url).toBe(formUrl);expect(app.store.session(id).run.mode).toBe('test');

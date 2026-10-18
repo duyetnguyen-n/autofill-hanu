@@ -28,6 +28,7 @@
     "package": "node scripts/run-node24.mjs scripts/package.mjs",
     "test:browser": "node scripts/run-node24.mjs scripts/browser-check.mjs",
     "test:manager-ui": "node scripts/run-node24.mjs scripts/manager-ui-check.mjs",
+    "test:mobile-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/mobile-ui-check.ts",
     "test:final-question-ui": "node scripts/run-node24.mjs scripts/final-question-ui-check.mjs",
     "test:navigation": "node scripts/run-node24.mjs scripts/navigation-check.mjs",
     "test:background-flow": "node scripts/run-node24.mjs scripts/background-flow-check.mjs",
