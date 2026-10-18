@@ -32,7 +32,7 @@
   .desktop-account-tools{display:none}
   .mobile-tools-trigger{display:inline-flex!important}
   .top-actions>.fui-Button,.top-actions .mobile-tools-trigger{min-width:44px;min-height:44px;border-radius:10px}
-  .top-actions .add-profile-button{min-width:84px;padding-inline:12px;font-size:13px}
+  .application .top-actions .add-profile-button{min-width:84px;padding-inline:12px;font-size:13px}
   .add-profile-label{display:none}
   .add-profile-short{display:inline!important}
   .application .fui-Button{min-height:44px;white-space:nowrap}
