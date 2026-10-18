@@ -9,7 +9,7 @@ import {CloudGate,type Account} from './CloudLogin';
 import {DataTransfer} from './DataTransfer';
 import {AdminPage} from './AdminPage';
 import {darkTheme,lightTheme,useTheme} from './theme';
-import {runStatusLabel,commandStatus,runElapsed} from '../../src/run-presentation';
+import {runStatusLabel,commandStatus,runElapsed,displayedRun} from '../../src/run-presentation';
 import {HSK_RULES,emptyProfile} from '../../src/rules';
 import './style.css';
 import './access.css';
@@ -30,7 +30,7 @@ async function api<T=any>(path:string,body?:unknown,method=body===undefined?'GET
 }
 const labels:Record<string,string>={idle:'Đã dừng',running:'Đang chạy',paused:'Tạm dừng',waiting_manual:'Cần bạn xử lý',ready_to_submit:'Xong Test',submitting:'Đang xác nhận',completed:'Đã gửi',submit_uncertain:'Chưa rõ đã gửi',failed:'Có lỗi'};
 const attention=(s:SessionView)=>s.linked!==false&&(!s.connected||!!s.error||!!s.conflict||!!s.run&&['paused','waiting_manual','submit_uncertain','failed'].includes(s.run.status));
-const shownRun=(s:SessionView)=>s.execution??s.run;
+const shownRun=(s:SessionView)=>displayedRun(s.run,s.execution);
 const isRunning=(s:SessionView)=>s.connected&&(s.execution?['running','submitting'].includes(s.execution.status)&&(s.execution.active===true||!s.execution.tabOpen):['running','submitting'].includes(s.run?.status??''));
 const needsStop=(s:SessionView)=>!!s.execution||!!s.run&&!['idle','completed','ready_to_submit'].includes(s.run.status);
 const sessionReady=(s:SessionView)=>s.connected&&s.synced&&!!s.profile&&!s.conflict&&!s.execution&&(!s.run||['idle','completed','failed','ready_to_submit'].includes(s.run.status))&&(!s.error||!!s.run&&['idle','failed','ready_to_submit'].includes(s.run.status))&&/^\S+@\S+\.\S+$/.test(s.expectedEmail);

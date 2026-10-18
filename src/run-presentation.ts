@@ -1,5 +1,13 @@
-import type {ControlReceipt} from './protocol';
+import type {ControlReceipt,ExecutionView} from './protocol';
 import type {RunState} from './shared';
+
+export function displayedRun(run:RunState|undefined,execution:ExecutionView|null|undefined):RunState|ExecutionView|undefined {
+  if(!execution)return run;
+  // The coordinator starts the clock before preflight/opening. A matching
+  // extension execution reports a later local start; keep the full duration.
+  if(execution.managed&&execution.runId===run?.runId&&run?.startedAt)return {...execution,startedAt:run.startedAt};
+  return execution;
+}
 
 export function runElapsed(run:(Pick<RunState,'startedAt'|'status'|'updatedAt'>&Partial<Pick<RunState,'logs'>>)|undefined,now=Date.now()):string {
   if(!run?.startedAt)return '⋯';
