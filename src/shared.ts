@@ -119,6 +119,7 @@ export interface RunState {
   profileSnapshot?: Profile;
   profileRevision?: number;
   attachmentHashes?:Record<string,string>;
+  uploadRepairs?:Record<string,number>;
   expectedEmail?: string;
   url?: string;
   eventSeq?: number;
@@ -170,6 +171,7 @@ export type ExtensionMessage =
   | { type: "SAVE_ATTACHMENT"; attachmentKey: string; name: string; mimeType: string; dataUrl: string }
   | { type: "GET_ATTACHMENT"; attachmentId: string }
   | { type: "UPLOAD_STORED_FILE"; attachmentId: string; pickerUrl: string; requestId: string; checkOnly?: boolean; runId?:string; epoch?:string }
+  | { type: "REQUEST_UPLOAD_REPAIR"; attachmentId:string; runId?:string; epoch?:string }
   | { type: "CLEAR_ALL_DATA" }
   | { type: "START_RUN"; tabId: number; mode: RunMode }
   | { type: "RESTART_RUN"; tabId:number; runId?:string; operationId?:string }

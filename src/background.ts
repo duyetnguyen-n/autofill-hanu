@@ -689,7 +689,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
   messageQueue=messageQueue.then(async () => {
     try {
-      if(sender.tab&&isFormsUrl(sender.url??sender.tab.url)&&!['CLAIM_DOCUMENT','REQUEST_SUBMIT','GET_RUN_FOR_TAB','GET_PROFILE','GET_ATTACHMENT','UPLOAD_STORED_FILE','TRUSTED_CLICK','TRUSTED_KEYS','FORM_EVENT'].includes(message.type))throw new Error('Trang form không được phép thay đổi cấu hình extension.');
+      if(sender.tab&&isFormsUrl(sender.url??sender.tab.url)&&!['CLAIM_DOCUMENT','REQUEST_SUBMIT','GET_RUN_FOR_TAB','GET_PROFILE','GET_ATTACHMENT','UPLOAD_STORED_FILE','REQUEST_UPLOAD_REPAIR','TRUSTED_CLICK','TRUSTED_KEYS','FORM_EVENT'].includes(message.type))throw new Error('Trang form không được phép thay đổi cấu hình extension.');
       if(message.type==='NATIVE_STATUS')return sendResponse(await native.status());
       if(message.type==='NATIVE_PAIR')return sendResponse(await native.pair(message.code));
       if(message.type==='NATIVE_UNLINK')return sendResponse(await native.unlink());
@@ -745,6 +745,22 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         return sendResponse(blob ? { dataUrl: await blobToDataUrl(blob) } : { dataUrl: undefined });
       }
       if (message.type === "UPLOAD_STORED_FILE") return sendResponse(await uploadStoredFile(message, sender));
+      if(message.type==='REQUEST_UPLOAD_REPAIR'){
+        if(sender.tab?.id===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab.url))throw new Error('Trang sửa ảnh không hợp lệ.');
+        const tabId=sender.tab.id;
+        const result=await writeState(async()=>{
+          const run=await getRun(tabId);
+          if(!run?.runId||run.runId!==message.runId||run.contentEpoch!==message.epoch||run.formId!==canonicalFormId(sender.url??sender.tab?.url??'')||run.status!=='running'||run.submitAttempted||run.recoveryRequired||interruptedRuns.has(run.runId))return {ok:true,repairGranted:false};
+          const profile=run.profileSnapshot??await getProfile();
+          if(!Object.values(profile.attachments).some(a=>a?.id===message.attachmentId)||(run.uploadRepairs?.[message.attachmentId]??0)>=1)return {ok:true,repairGranted:false};
+          run.uploadRepairs={...run.uploadRepairs,[message.attachmentId]:1};
+          run.activity={phase:'uploading',message:'Google từ chối ảnh không còn khả dụng; đang thay lại đúng ảnh một lần.',at:now()};
+          cancelNavigationWatch(tabId);
+          await writeRunNow(addLog(run,'warning','Google từ chối ảnh không còn khả dụng. Cấp một lần thay ảnh của đúng hồ sơ; chưa Gửi form.'));
+          return {ok:true,repairGranted:true};
+        });
+        return sendResponse(result);
+      }
       if (message.type === "CLEAR_ALL_DATA") {
         if((await getManaged())?.status==='running')throw new Error('Dừng lượt app trước khi xóa dữ liệu.');
         if(Object.values((await chrome.storage.local.get('submissionLocks')).submissionLocks??{}).some((v:any)=>v.resolution!=='not_received'))throw new Error('Còn khóa gửi chưa giải quyết; không được xóa.');

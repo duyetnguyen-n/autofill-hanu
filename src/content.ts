@@ -588,6 +588,25 @@ function uploadPicker(): HTMLIFrameElement | undefined {
   });
 }
 
+function rejectedUnavailableFile(question:Question):boolean{
+  return question.kind==='file'&&Array.from(question.element.querySelectorAll('[role="alert"]')).some(node=>visible(node)&&/^(tep nay khong con co san nua|this file is no longer available)[.!\s]*$/.test(normalize(node.textContent??'')));
+}
+async function clearRejectedFile(question:Question,profile:Profile,rule:FieldRule):Promise<boolean>{
+  const ref=rule.attachmentKey?profile.attachments[rule.attachmentKey]:undefined;
+  if(!active||submitAttempted||!ref||!rejectedUnavailableFile(question)||!uploadedFileMatches(question,ref.name)||uploadPicker())return false;
+  const grant=await chrome.runtime.sendMessage({type:'REQUEST_UPLOAD_REPAIR',attachmentId:ref.id,runId:boundRunId,epoch:documentEpoch} satisfies ExtensionMessage).catch(()=>undefined) as {repairGranted?:boolean}|undefined;
+  if(!active||submitAttempted||!grant?.repairGranted)return false;
+  const remove=Array.from(question.element.querySelectorAll<HTMLElement>('button,[role="button"]')).find(e=>visible(e)&&/remove file|xóa tệp|xoa tep|delete file/i.test(`${e.getAttribute('aria-label')??''} ${e.textContent??''}`));
+  if(!remove)return false;
+  remove.scrollIntoView?.({block:'center',behavior:'auto'});pointerClick(remove);
+  if(!await waitFor(()=>!uploadedFileMatches(question),8)){
+    if(!active||!remove.isConnected||!visible(remove))return false;
+    remove.scrollIntoView?.({block:'center',behavior:'auto'});await trustedClick(remove);
+    if(!await waitFor(()=>!uploadedFileMatches(question),40))return false;
+  }
+  return active;
+}
+
 async function fillFile(question: Question, rule: FieldRule, profile: Profile): Promise<boolean> {
   const attachmentKey = rule.attachmentKey;
   const reference = attachmentKey ? profile.attachments[attachmentKey] : undefined;
@@ -1155,6 +1174,11 @@ async function execute(depth = 0): Promise<void> {
       await emit({ type: "progress", message: `Hồ sơ chưa có dữ liệu tùy chọn: ${rule.label}`, skipped: question.id });
       return;
     }
+    if(rule.kind==='file'&&rejectedUnavailableFile(question)){
+      if(!await clearRejectedFile(question,profile,rule)){
+        if(!active)return;active=false;await emit({type:'block',issue:manualIssue(question,'file_upload','Google từ chối ảnh không còn khả dụng; không được tự thay thêm. Kiểm tra đúng ảnh trước khi Tiếp tục.')});return;
+      }
+    }
     if (wasFilled && matchesProfile(question, rule, profile, value ?? "")) {
       await emit({ type: "progress", message: `Giữ nguyên trường đã khớp hồ sơ: ${question.label}`, skipped: question.id });
       return;
@@ -1272,6 +1296,7 @@ async function execute(depth = 0): Promise<void> {
   // renders. A changed page is authoritative; only validate on a failed move.
   const error = changed ? undefined : validationError();
   if (!changed) {
+    if(error&&!submitAttempted&&questions().some(rejectedUnavailableFile)){await execute(depth+1);return;}
     if(error)await blockForCorrection(`Google Forms báo lỗi: ${error}`);else {active=false;await emit({type:'transient_error',reason:'navigation',message:'Google chưa chuyển trang sau khi bấm Tiếp.'});}
     return;
   }

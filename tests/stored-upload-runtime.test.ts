@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 async function setup(result = { state: "assigned" }, uploaded = false, mountDelay = 0,
-  extra: {html?:string;values?:Record<string,string>;onMount?:()=>void;uploadDelay?:number} = {}) {
+  extra: {html?:string;values?:Record<string,string>;onMount?:()=>void;uploadDelay?:number;rejected?:string;repairGranted?:boolean} = {}) {
   vi.useFakeTimers();
   document.body.innerHTML = `<div role="listitem" data-item-id="file">
     <div role="heading">ẢNH MẶT TRƯỚC GTTT CỦA THÍ SINH | 身份证件图 *</div>
@@ -25,7 +25,7 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
     document.querySelector("iframe")?.remove();
   };
   if (uploaded) commit();
-  else {
+  {
     const opener = card.querySelector("button")!;
     if (mountDelay) { opener.remove(); window.setTimeout(() => card.append(opener), mountDelay); }
     opener.addEventListener("click", () => {
@@ -33,6 +33,10 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
     iframe.src = "https://docs.google.com/picker?hostId=file-upload&rpcService=test&rpctoken=token";
     document.body.append(iframe);
     });
+  }
+  if(extra.rejected){
+    card.insertAdjacentHTML('beforeend',`<div role="alert">${extra.rejected}</div>`);
+    card.addEventListener('click',e=>{const remove=(e.target as Element).closest('[aria-label="Remove file"]');if(remove){remove.remove();card.querySelector('span')?.remove();card.querySelector('[role="alert"]')?.remove();}});
   }
   const profile = emptyProfile();
   Object.assign(profile.values,extra.values);
@@ -43,6 +47,7 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
   const sendMessage = vi.fn(async (message: ExtensionMessage) => {
     sent.push(message);
     if (message.type === "GET_PROFILE") return profile;
+    if(message.type==='REQUEST_UPLOAD_REPAIR')return {ok:true,repairGranted:extra.repairGranted??true};
     if (message.type === "UPLOAD_STORED_FILE") {
       if(extra.uploadDelay&&!message.checkOnly)await new Promise(resolve=>window.setTimeout(resolve,extra.uploadDelay));
       return result;
@@ -61,6 +66,26 @@ async function setup(result = { state: "assigned" }, uploaded = false, mountDela
   await vi.advanceTimersByTimeAsync(100);
   return { next, submit, sent, commit, sendMessage };
 }
+
+it('replaces the exact stored photo once after an explicit Google unavailable-file rejection, then waits for upload confirmation',async()=>{
+  const f=await setup({state:'assigned'},true,0,{rejected:'Tệp này không còn có sẵn nữa'});
+  expect(f.sent.filter(m=>m.type==='REQUEST_UPLOAD_REPAIR')).toHaveLength(1);
+  expect(f.sent).toContainEqual(expect.objectContaining({type:'UPLOAD_STORED_FILE',attachmentId:'stored-image'}));
+  expect(f.next).not.toHaveBeenCalled();f.commit();await vi.advanceTimersByTimeAsync(1000);
+  expect(f.next).toHaveBeenCalledTimes(1);expect(f.submit).not.toHaveBeenCalled();
+});
+it('keeps a rejected photo untouched when the run has no repair grant left',async()=>{
+  const f=await setup({state:'assigned'},true,0,{rejected:'Tệp này không còn có sẵn nữa',repairGranted:false});
+  expect(f.sent.filter(m=>m.type==='REQUEST_UPLOAD_REPAIR')).toHaveLength(1);
+  expect(f.sent.some(m=>m.type==='UPLOAD_STORED_FILE')).toBe(false);
+  expect(f.sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'block',issue:expect.objectContaining({reason:'file_upload'})})}));
+  expect(f.next).not.toHaveBeenCalled();expect(document.querySelector('[aria-label="Remove file"]')).not.toBeNull();
+});
+it('does not replace a photo for a generic validation message',async()=>{
+  const f=await setup({state:'assigned'},true,0,{rejected:'Dữ liệu chưa hợp lệ'});
+  expect(f.sent.some(m=>m.type==='REQUEST_UPLOAD_REPAIR')).toBe(false);
+  expect(f.next).not.toHaveBeenCalled();expect(document.querySelector('[aria-label="Remove file"]')).not.toBeNull();
+});
 
 it("opens Picker with the stored attachment, waits for server completion, then advances without submitting", async () => {
   const fixture = await setup();
@@ -184,5 +209,4 @@ it("does not skip a required upload card whose button mounts after page navigati
   expect(fixture.next).toHaveBeenCalledTimes(1);
   expect(fixture.submit).not.toHaveBeenCalled();
 });
-
 

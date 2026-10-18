@@ -112,6 +112,22 @@ it('rechecks the current upload on Resume instead of skipping an old blocked fil
   await expect(f.ask({type:'RESUME_RUN',tabId:7})).resolves.toMatchObject({status:'running'});
   expect(f.sendMessage).toHaveBeenCalledWith(7,expect.objectContaining({type:'RUN_CURRENT_PAGE',skipQuestionId:undefined}));
 });
+it('persists one replacement grant per stored photo/run and rejects another request after navigation',async()=>{
+  const f=await setup();Object.assign(f.run,{runId:'repair',contentEpoch:'doc',status:'running',profileSnapshot:{values:{},customFields:[],mappings:{},attachments:{identityDocument:{id:'photo',name:'photo.png',type:'image/png',size:1,updatedAt:''}}}});
+  const sender={tab:{id:7,url:formUrl},url:formUrl},message={type:'REQUEST_UPLOAD_REPAIR' as const,runId:'repair',epoch:'doc',attachmentId:'photo'};
+  await expect(f.ask(message,sender)).resolves.toMatchObject({repairGranted:true});
+  expect(f.data['run:7']).toMatchObject({uploadRepairs:{photo:1},status:'running'});
+  await expect(f.ask({...message,epoch:'new'},sender)).resolves.toMatchObject({repairGranted:false});
+  await expect(f.ask(message,sender)).resolves.toMatchObject({repairGranted:false});
+  await f.ask({type:'CLAIM_DOCUMENT',epoch:'new'},sender);
+  await expect(f.ask({...message,epoch:'new'},sender)).resolves.toMatchObject({repairGranted:false});
+});
+it.each(['stale','stopped','submitting','different-photo'])('denies unavailable-photo replacement for %s',async scenario=>{
+  const f=await setup();Object.assign(f.run,{runId:'repair',contentEpoch:'doc',status:'running',profileSnapshot:{values:{},customFields:[],mappings:{},attachments:{identityDocument:{id:'photo',name:'photo.png',type:'image/png',size:1,updatedAt:''}}}});
+  if(scenario==='stopped')f.run.status='idle';if(scenario==='submitting')f.run.submitAttempted=true;
+  await expect(f.ask({type:'REQUEST_UPLOAD_REPAIR',runId:'repair',epoch:scenario==='stale'?'old':'doc',attachmentId:scenario==='different-photo'?'other':'photo'},{tab:{id:7,url:formUrl},url:formUrl})).resolves.toMatchObject({repairGranted:false});
+  expect((f.data['run:7'] as RunState).uploadRepairs).toBeUndefined();
+});
 
 it('uses action behavior on Chrome 114/115 without calling missing sidePanel.open', async () => {
   const setPanelBehavior = vi.fn(async () => {});
