@@ -12,6 +12,25 @@ afterEach(() => {
 });
 
 describe("compiled content-script behavior", () => {
+  it('selects the same commitment after a late image pushes it below the viewport before the trusted fallback',async()=>{
+    document.body.innerHTML='<div role="listitem"><div role="heading">TÔI CAM KẾT 本人保证 *</div><div id="yes" role="radio" aria-checked="false" aria-label="Tôi cam kết không thuê người đăng ký dự thi kỳ thi lần này."></div><div role="radio" aria-checked="false" aria-label="本人保证未雇用他人代替报名本次考试。"></div></div><button>Submit</button>';
+    const target=document.querySelector<HTMLElement>('#yes')!;let top=200,shifted=false;const clicks:any[]=[];
+    vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(this:HTMLElement){return (this===target?{left:20,top,width:20,height:20}:{left:0,top:0,width:640,height:80}) as DOMRect;});
+    Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:function(this:HTMLElement){if(this===target)top=200;}});
+    target.addEventListener('click',()=>{if(!shifted){shifted=true;window.setTimeout(()=>{top=1200;},30);}});
+    const profile=emptyProfile();profile.values.firstCommitment='true';let listener:Listener;const sent:any[]=[];
+    vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:Listener)=>listener=fn},sendMessage:async(m:any)=>{
+      sent.push(m);if(m.type==='GET_PROFILE')return profile;
+      if(m.type==='TRUSTED_CLICK'){clicks.push(m);if(m.x===30&&m.y===top+10&&m.y<window.innerHeight)target.setAttribute('aria-checked','true');return {dispatched:true};}
+      return {ok:true};
+    }}});
+    await import('../src/content');listener!({type:'RUN_CURRENT_PAGE',mode:'test'});
+    await vi.waitFor(()=>expect(sent).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:{type:'ready_to_submit'}})),{timeout:2500});
+    expect(target.getAttribute('aria-checked')).toBe('true');
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]).toMatchObject({x:30,y:210});
+    expect(sent.some(m=>m.type==='FORM_EVENT'&&m.event.type==='block')).toBe(false);
+  });
   it.each([
     {key:'termsCommitment',other:'firstCommitment',options:['本人已详细阅读并同意接受以上条款限制。','Tôi đã đọc và đồng ý với những điều khoản trên và sẽ chịu trách nhiệm với thông tin dự thi của mình.']},
     {key:'firstCommitment',other:'termsCommitment',options:['本人保证未雇用他人代替报名本次考试。','Tôi cam kết không thuê người đăng ký dự thi kỳ thi lần này.']}

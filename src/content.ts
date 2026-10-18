@@ -395,6 +395,12 @@ async function clickIfNeeded(element: Element): Promise<boolean> {
   pointerClick(element);
   if (await waitFor(() => checked(element))) return true;
   if (!active) return false;
+  // A late image above the answer can move it after the first scroll/click.
+  // Resolve the current position again before the coordinate-based fallback.
+  if(!element.isConnected)return false;
+  (element as HTMLElement).scrollIntoView?.({block:'center',behavior:'auto'});
+  if(checked(element))return true;
+  if(!visible(element))return false;
   await trustedClick(element);
   return waitFor(() => checked(element));
 }
