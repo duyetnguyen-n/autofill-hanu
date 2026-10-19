@@ -8,15 +8,50 @@ vi.mock('../src/native-client',()=>({createNativeClient:(a:typeof adapter)=>{ada
 afterEach(()=>{vi.unstubAllGlobals();vi.resetModules();});
 const url='https://docs.google.com/forms/d/e/lease-fixture/viewform';
 async function fixture(){
- const data:Record<string,any>={profile:emptyProfile(),profileRevision:1};let listener:any,removed:any;
+ const data:Record<string,any>={profile:emptyProfile(),profileRevision:1};let listener:any,removed:any,alarm:any;
  const tabs=new Map<number,any>([[1,{id:1,url,status:'complete',windowId:1}],[2,{id:2,url,status:'complete',windowId:1}]]);
  const sendMessage=vi.fn(async(_id:number,msg:any)=>msg.type==='PAGE_ACCOUNT'?{email:'fixture@example.test'}:{ok:true});
  const create=vi.fn(async(options:any)=>{const tab={id:55,url:options.url,status:'complete',windowId:1};tabs.set(55,tab);return tab;});
- vi.stubGlobal('chrome',{runtime:{getURL:(p:string)=>p,onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:vi.fn(async()=>({}))},action:{onClicked:{addListener:vi.fn()}},tabs:{get:vi.fn(async(id:number)=>{const tab=tabs.get(id);if(!tab)throw new Error('closed');return tab;}),query:vi.fn(async()=>[...tabs.values()]),create,sendMessage,onUpdated:{addListener:vi.fn()},onRemoved:{addListener:(fn:any)=>removed=fn}},windows:{create:vi.fn()},storage:{local:{get:vi.fn(async(key:string|null)=>key===null?structuredClone(data):{[key]:structuredClone(data[key])}),set:vi.fn(async(value:any)=>Object.assign(data,structuredClone(value))),remove:vi.fn(async(key:string)=>delete data[key])}}});
+ vi.stubGlobal('chrome',{alarms:{create:vi.fn(),clear:vi.fn(async()=>true),onAlarm:{addListener:(fn:any)=>alarm=fn}},runtime:{getURL:(p:string)=>p,onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:vi.fn(async()=>({}))},action:{onClicked:{addListener:vi.fn()}},tabs:{get:vi.fn(async(id:number)=>{const tab=tabs.get(id);if(!tab)throw new Error('closed');return tab;}),query:vi.fn(async()=>[...tabs.values()]),create,sendMessage,onUpdated:{addListener:vi.fn()},onRemoved:{addListener:(fn:any)=>removed=fn}},windows:{create:vi.fn()},storage:{local:{get:vi.fn(async(key:string|null)=>key===null?structuredClone(data):{[key]:structuredClone(data[key])}),set:vi.fn(async(value:any)=>Object.assign(data,structuredClone(value))),remove:vi.fn(async(key:string)=>delete data[key])}}});
  await import('../src/background');const ask=(msg:ExtensionMessage,sender:object={})=>new Promise<any>(resolve=>listener(msg,sender,resolve));
- return {data,tabs,create,sendMessage,ask,removed:(id:number)=>removed(id)};
+ return {data,tabs,create,sendMessage,ask,alarm:(name:string)=>alarm({name}),removed:(id:number)=>removed(id)};
 }
 function command(kind:Command['kind'],runId='new-managed'):Command{return {type:'COMMAND',protocol:1,sessionId:'session',commandId:crypto.randomUUID(),kind,runId,payload:{url,mode:'test',revision:1,expectedEmail:'fixture@example.test'}};}
+it('coalesces concurrent timer/alarm recovery wakeups without consuming the next retry',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await fixture(),retryAt=new Date(Date.now()).toISOString();
+  const run:RunState={runId:'retry-race',managed:true,tabId:1,formId:'lease-fixture',url,mode:'test',status:'waiting_manual',contentEpoch:'error',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',blockingIssue:{reason:'server_error',message:'503'},recovery:{reason:'server_error',attempt:1,automatic:true,retryAt}};
+  f.data['run:1']=run;f.data.managedRun=run;
+  let release!:()=>void,attempts=0;
+  nativeRequest.mockImplementation(async(kind:string)=>{if(kind==='RECOVER'){attempts++;if(attempts===1)await new Promise<void>(r=>release=r);}return {};});
+  f.alarm('hanu-recovery:retry-race');f.alarm('hanu-recovery:retry-race');await vi.advanceTimersByTimeAsync(0);
+  expect(attempts).toBe(1);
+  f.data['run:1'].status='running';
+  await f.ask({type:'FORM_EVENT',runId:run.runId,epoch:'error',event:{type:'transient_error',reason:'server_error',message:'503'}},{tab:{id:1,url},url});
+  expect(f.data['run:1'].recovery.attempt).toBe(2);
+  await vi.advanceTimersByTimeAsync(7000);expect(attempts).toBe(1);
+  release();await vi.advanceTimersByTimeAsync(1);
+  expect(attempts).toBe(2);
+  await adapter.control(command('STOP_PROFILE','retry-race'));
+ }finally{vi.useRealTimers();}
+});
+it('bounds a frozen page heartbeat so a manager Stop can release the profile instead of permanently blocking Restart',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await fixture();
+  const run:RunState={runId:'frozen',tabId:1,formId:'lease-fixture',mode:'test',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:''};
+  f.data['run:1']=run;f.data.executionLease={runId:run.runId,tabId:1,active:true};
+  f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_RUN_STATUS'||m.type==='HALT_RUN'?new Promise<any>(()=>{}):{ok:true});
+  const observing=adapter.execution();await vi.advanceTimersByTimeAsync(0);
+  const stopping=f.ask({type:'STOP_RUN',tabId:1});
+  await vi.advanceTimersByTimeAsync(1300);
+  await expect(observing).resolves.toMatchObject({runId:'frozen',active:undefined});
+  await expect(stopping).resolves.toMatchObject({status:'idle'});
+  expect(f.data.executionLease.active).toBe(false);
+  await expect(f.ask({type:'START_RUN',tabId:2,mode:'test'})).resolves.toMatchObject({status:'running',tabId:2,url});
+ }finally{vi.useRealTimers();}
+});
 it('requires server-managed runs in cloud builds, including legacy local Resume and Submit paths',async()=>{
  vi.useFakeTimers();
  try{

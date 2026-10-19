@@ -1,7 +1,7 @@
 import {expect,it} from 'vitest';
 import {automaticRecoveryAllowed,classifyPage,recoveryDelay,validCorrections} from '../src/recovery';
 import {currentExecution} from '../src/protocol';
-import {commandStatus,runStatusLabel} from '../src/run-presentation';
+import {commandStatus,runStatusLabel,submissionReviewMessage} from '../src/run-presentation';
 import type {RunState} from '../src/shared';
 const page={text:'',hasQuestions:false,hasNavigation:false,captcha:false,online:true};
 const run:RunState={runId:'run',tabId:1,formId:'form',mode:'test',status:'waiting_manual',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',blockingIssue:{reason:'server_error',message:'500'},recovery:{reason:'server_error',attempt:1,automatic:true,retryAt:new Date(1000).toISOString()}};
@@ -44,4 +44,11 @@ it('presents recovery, CAPTCHA and uncertain sends distinctly without treating t
  expect(runStatusLabel({...run,submitAttempted:true})).toBe('Chưa rõ đã gửi');
  expect(commandStatus({commandId:'x',kind:'STOP_PROFILE',state:'pending',requestedAt:'',updatedAt:'',runId:'run'},run)).toContain('xác nhận Dừng');
  expect(commandStatus({commandId:'x',kind:'STOP_PROFILE',state:'pending',requestedAt:'',updatedAt:'',runId:'old'},run)).toBeUndefined();
+});
+it('explains why Restart is unavailable even after Stop of a reserved send',()=>{
+ expect(submissionReviewMessage({...run,status:'submit_uncertain',submitAttempted:true,blockingIssue:undefined})).toContain('Chạy lại đang khóa');
+ expect(submissionReviewMessage({...run,submitAttempted:false})).toBeUndefined();
+ expect(submissionReviewMessage({...run,status:'completed',submitAttempted:true})).toBeUndefined();
+ expect(submissionReviewMessage({...run,status:'idle',submitAttempted:true})).toBeUndefined();
+ expect(runStatusLabel({...run,status:'idle',submitAttempted:true})).toBe('Đã xác minh chưa gửi');
 });

@@ -199,6 +199,27 @@ it('never schedules a reload after a send reservation has been persisted',async(
   expect((f.data['run:7'] as RunState).recovery).toBeUndefined();
 });
 
+it.each(['submitting','submit_uncertain'] as const)('reports a Google sorry redirect after %s without clearing its send lock or retrying',async status=>{
+  const f=await setup();Object.assign(f.run,{runId:'captcha-after-send',contentEpoch:'response',status,submitAttempted:true});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url:'https://www.google.com/sorry/index?continue=formResponse',status:'complete'} as any);
+  f.updated({status:'complete'});
+  await vi.waitFor(()=>expect(f.data['run:7']).toMatchObject({status:'submit_uncertain',submitAttempted:true,blockingIssue:{reason:'captcha'},activity:{phase:'waiting_user'}}));
+  expect((f.data['run:7'] as RunState).blockingIssue?.message).toContain('chưa thể kết luận chưa gửi');
+  expect((f.data['run:7'] as RunState).recovery?.automatic).not.toBe(true);
+  expect(f.sendMessage.mock.calls.some(([,m])=>m?.type==='RUN_CURRENT_PAGE')).toBe(false);
+});
+
+it('claims and classifies the closedform route of the same run instead of stranding it on a different form',async()=>{
+  const f=await setup();Object.assign(f.run,{runId:'closed',contentEpoch:'old',status:'running'});
+  const url=formUrl.replace('viewform','closedform');
+  await expect(f.ask({type:'CLAIM_DOCUMENT',epoch:'closed-document'},{tab:{id:7,url},url})).resolves.toMatchObject({run:{runId:'closed',contentEpoch:'closed-document',status:'running'}});
+  vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,url,status:'complete'} as any);
+  f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_HEALTH'?{ok:true,issue:{reason:'form_closed',message:'Form đã ngừng nhận đăng ký.'}}:{ok:true});
+  f.updated({status:'complete'});
+  await vi.waitFor(()=>expect(f.data['run:7']).toMatchObject({status:'waiting_manual',blockingIssue:{reason:'form_closed'}}));
+  expect((f.data['run:7'] as RunState).recovery?.automatic).not.toBe(true);
+});
+
 it('rearms an early recovery alarm instead of losing the last allowed retry',async()=>{
   vi.useFakeTimers();const f=await setup();
   Object.assign(f.run,{runId:'early-retry',contentEpoch:'error-page',url:formUrl,

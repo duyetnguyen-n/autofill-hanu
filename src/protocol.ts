@@ -50,14 +50,14 @@ export function canonicalFormId(url: string): string | undefined {
     if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com') return;
     // Signed-in Forms posts to /forms/u/0/... even when the address bar is
     // later rewritten to /forms/d/.... MessageSender.url retains that route.
-    return u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/(?:e\/)?([^/]+)\/(?:viewform|formResponse)(?:\/|$)/)?.[1];
+    return u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/(?:e\/)?([^/]+)\/(?:viewform|formResponse|closedform)(?:\/|$)/)?.[1];
   } catch { return; }
 }
 export function allowedFormUrl(url: string): boolean {
   try {
     const u = new URL(url);
     return u.protocol === 'https:' && !u.username && !u.password &&
-      (u.hostname === 'forms.gle' || Boolean(canonicalFormId(url)));
+      (u.hostname === 'forms.gle' || Boolean(canonicalFormId(url))&&/\/(?:viewform|formResponse)(?:\/|$)/.test(u.pathname));
   } catch { return false; }
 }
 export function validateProfile(value: unknown): asserts value is Profile {

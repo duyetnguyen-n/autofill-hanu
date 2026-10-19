@@ -37,6 +37,19 @@ it.each([true,false])('reconciles a submitted document without clicking Submit a
   expect(clicked).not.toHaveBeenCalled();expect(messages.some(m=>m.type==='REQUEST_SUBMIT'||m.type==='GET_PROFILE')).toBe(false);
 });
 
+it.each(['submitting','submit_uncertain'] as const)('observes a delayed custom acknowledgement after reload (%s) without touching the form',async status=>{
+  document.body.innerHTML='<div id="response">Đang tải kết quả…</div>';
+  const messages:ExtensionMessage[]=[];
+  vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:typeof listener)=>listener=fn},sendMessage:async(m:ExtensionMessage)=>{
+    messages.push(m);if(m.type==='CLAIM_DOCUMENT')return {ok:true,run:{runId:'locked',status,mode:'live',submitAttempted:true}};return {ok:true};
+  }}});
+  await import('../src/content');
+  await vi.waitFor(()=>expect(document.documentElement.dataset.hanuRecovery).toContain(status));
+  document.querySelector('#response')!.textContent='Chúc mừng thí sinh đã hoàn thành bước điền thông tin đăng ký biểu mẫu! Thí sinh vui lòng chờ email xác nhận của Điểm thi.';
+  await vi.waitFor(()=>expect(messages).toContainEqual(expect.objectContaining({type:'FORM_EVENT',runId:'locked',event:expect.objectContaining({type:'completed'})})));
+  expect(messages.some(m=>['REQUEST_SUBMIT','GET_PROFILE','PAGE_ATTENTION_ACQUIRE'].includes(m.type))).toBe(false);
+});
+
 it('resumes after Stop while the previous execution is still awaiting foreground',async()=>{
   document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Submit</button>';
   let width=0,reject!:(e:Error)=>void,acquires=0;

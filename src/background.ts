@@ -17,6 +17,7 @@ function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.th
 async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
 const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:parkManaged,reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
 const recoveryTimers=new Map<string,ReturnType<typeof setTimeout>>();
+const recoveriesInFlight=new Map<string,Promise<void>>();
 interface NavigationWatch {token:string;tabId:number;runId:string;epoch?:string;started:number;timer?:ReturnType<typeof setTimeout>}
 const navigationWatches=new Map<number,NavigationWatch>();
 function cancelNavigationWatch(tabId:number){
@@ -215,7 +216,9 @@ async function repairLeaseNow():Promise<RunState|undefined>{
 }
 async function executionSnapshot():Promise<ExecutionView|null>{return writeState(async()=>{
  const run=await repairLeaseNow();if(!run)return null;
- const page=run.tabId>=0?await chrome.tabs.sendMessage(run.tabId,{type:'PAGE_RUN_STATUS'}).catch(()=>undefined):undefined;
+ // A hung renderer can leave sendMessage unresolved forever. A heartbeat
+ // observation must not retain the durable queue needed by Stop/Restart.
+ const page=run.tabId>=0?await observePage(chrome.tabs.sendMessage(run.tabId,{type:'PAGE_RUN_STATUS'})).catch(()=>undefined):undefined;
  const active=page?.runId===run.runId&&typeof page.active==='boolean'?page.active:undefined;
  return {runId:run.runId,tabId:run.tabId,mode:run.mode,status:run.status,managed:!!run.managed,tabOpen:run.tabId>=0,active,eventSeq:run.eventSeq,message:run.blockingIssue?.message??run.logs.at(-1)?.message,startedAt:run.startedAt,updatedAt:run.updatedAt};
 });}
@@ -241,8 +244,25 @@ function scheduleRecovery(run:RunState){
   recoveryTimers.set(run.runId,setTimeout(()=>void recoverPage(run.tabId,run.runId!).catch(()=>{}),delay));
   if(typeof chrome.alarms?.create==='function')void chrome.alarms.create(`hanu-recovery:${run.runId}`,{when:Date.now()+delay});
 }
-async function recoverPage(tabId:number,runId:string){
+function recoverPage(tabId:number,runId:string):Promise<void>{
+  const pending=recoveriesInFlight.get(runId);if(pending)return pending;
+  // Chrome can fire both the timer and its durable alarm for the same attempt.
+  // Coalesce before the first storage read: a late duplicate must not cancel
+  // the next attempt scheduled while the first RECOVER command is finishing.
+  const handled:{attempt?:number}={};
+  const work=recoverPageOnce(tabId,runId,handled);recoveriesInFlight.set(runId,work);
+  void work.finally(async()=>{
+    if(recoveriesInFlight.get(runId)!==work)return;recoveriesInFlight.delete(runId);
+    const latest=await getRun(tabId);
+    // A new retry can become due while the preceding command is still being
+    // acknowledged. Its coalesced wakeup must be restored after completion.
+    if(latest?.runId===runId&&(latest.recovery?.attempt??0)>(handled.attempt??Infinity)&&!recoveriesInFlight.has(runId)&&!interruptedRuns.has(runId)&&automaticRecoveryAllowed(latest,Infinity))scheduleRecovery(latest);
+  }).catch(()=>{});
+  return work;
+}
+async function recoverPageOnce(tabId:number,runId:string,handled:{attempt?:number}){
   const run=await getRun(tabId);if(run?.runId!==runId)return;
+  handled.attempt=run.recovery?.attempt;
   if(!automaticRecoveryAllowed(run)){
     // A timer/alarm may wake just before retryAt. Returning without rearming
     // loses that wakeup and can strand the final allowed recovery indefinitely.
@@ -275,9 +295,9 @@ class PageProblem extends Error {
 
 async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,expectedEpoch?:string):Promise<RunState|undefined>{
   const result=await writeState(async()=>{
-    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!['running','submitting'].includes(current.status)||interruptedRuns.has(runId))return;
+    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!['running','submitting','submit_uncertain'].includes(current.status)||interruptedRuns.has(runId)&&!current.submitAttempted)return;
     if(expectedEpoch!==undefined&&current.contentEpoch!==expectedEpoch)return;
-    if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:'submit_uncertain',message:'Google chưa xác nhận sau khi khóa gửi. Không tự tải lại hoặc gửi lại.'};}
+    if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt đã giữ khóa gửi; chưa thể kết luận chưa gửi. Mở form kiểm tra kết quả trước khi xác minh; không tự tải lại hoặc gửi lại.`};current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;}
     else if(health.retryable&&health.issue&&['network','server_error','navigation'].includes(health.issue.reason)){
       const next=transientState(current,health.issue.reason as 'network'|'server_error'|'navigation',health.issue.message);await writeRunNow(next);return next;
     }else{
@@ -472,6 +492,7 @@ async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
     runId:crypto.randomUUID(),profileSnapshot:await getProfile(),profileRevision:await getProfileRevision(),startedAt:now(),
     tabId,
     formId,
+    url:tab.url,
     mode,
     status: "running",
     filled: existing?.filled ?? [],
@@ -638,17 +659,17 @@ const documentInspections=new Map<number,Promise<void>>();
 async function inspectLoadedDocument(tabId:number):Promise<void>{
   if(documentInspections.has(tabId))return documentInspections.get(tabId)!;
   const work=(async()=>{
-    const before=await getRun(tabId);if(!before||before.status!=='running'||before.recoveryRequired)return;
+    const before=await getRun(tabId);if(!before||!['running','submitting','submit_uncertain'].includes(before.status)||before.recoveryRequired)return;
     const tab=await chrome.tabs.get(tabId).catch(()=>undefined);if(!tab)return;
-    const externalIssue=/^https:\/\/accounts\.google\.com\//i.test(tab.url??'')?{reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản rồi bấm Tiếp tục.'}:/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(tab.url??'')?{reason:'captcha' as const,message:'Google yêu cầu xác thực. Tự xử lý rồi bấm Tiếp tục.'}:undefined;
+    const externalIssue=/^https:\/\/accounts\.google\.com\//i.test(tab.url??'')?{reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản rồi bấm Tiếp tục.'}:/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(tab.url??'')?{reason:'captcha' as const,message:'Google chặn lưu lượng và yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'}:undefined;
     if(externalIssue){await blockPageProblem(before.runId!,{issue:externalIssue},tabId);return;}
     if(canonicalFormId(tab.url??'')!==before.formId&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))return;
     let health:PageHealth;
     try{health=await sendToForm<PageHealth>(tabId,{type:'PAGE_HEALTH'});}
     catch{health={issue:{reason:'network',message:'Trang Google không tải được hoặc extension chưa đọc được trang.'},retryable:true};}
     if(!health?.issue)return;
-    const latest=await getRun(tabId);if(!latest||latest.runId!==before.runId||latest.status!=='running'||latest.recoveryRequired)return;
-    await blockPageProblem(before.runId!,health,tabId);
+    const latest=await getRun(tabId);if(!latest||latest.runId!==before.runId||!['running','submitting','submit_uncertain'].includes(latest.status)||latest.recoveryRequired||latest.contentEpoch!==before.contentEpoch)return;
+    await blockPageProblem(before.runId!,health,tabId,before.contentEpoch);
   })();documentInspections.set(tabId,work);try{await work;}finally{if(documentInspections.get(tabId)===work)documentInspections.delete(tabId);}
 }
 
@@ -907,6 +928,9 @@ async function focusManaged(){
   await chrome.tabs.update(tab.id!,{active:true});const window=await chrome.windows.get(tab.windowId);
   if(window.state==='minimized')await chrome.windows.update(tab.windowId,{state:'normal'});
   await chrome.windows.update(tab.windowId,{focused:true});
+  // After an extension update the old response document can still be open.
+  // Reattach read-only inspection there; never reload a POST or click Submit.
+  if(run?.submitAttempted&&run.status!=='completed'&&tab.id===run.tabId&&canonicalFormId(tab.url??'')===run.formId)await sendToForm(tab.id!,{type:'PAGE_HEALTH'}).catch(()=>{});
   return {tabId:tab.id};
 }
 async function stopProfile(expectedRunId?:string){

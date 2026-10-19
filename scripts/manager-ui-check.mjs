@@ -87,4 +87,18 @@ try{
   await expect(page.locator('table')).toContainText('Đã dừng');await expect(page.getByRole('button',{name:'Bắt đầu Test',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'Xem form',exact:true}).click();await expect.poll(()=>commands.at(-1)).toBe('FOCUS');
   console.log('PASS: a standalone owner is visible even when the managed run failed, Start is disabled while held, and row Stop releases it without a run-ID mismatch.');
+  const uncertain=app.store.session(id);uncertain.execution=undefined;uncertain.error=undefined;
+  uncertain.run={...uncertain.run,status:'submit_uncertain',submitAttempted:true,blockingIssue:{reason:'captcha',message:'Google chặn lưu lượng và yêu cầu xác thực.'}};
+  app.store.saveRun(id,uncertain.run);app.store.saveSession(uncertain);app.coordinator.changed();
+  await expect(page.locator('table')).toContainText('Chạy lại đang khóa');
+  await expect(page.getByRole('button',{name:'Chạy lại',exact:true})).toHaveCount(0);
+  const denied=await page.request.post(`${app.origin}/api/sessions/${id}/restart`,{headers:{Origin:app.origin},data:{expectedRunId:uncertain.run.runId}});
+  expect(denied.ok()).toBe(false);
+  await page.getByRole('button',{name:'Xác minh kết quả',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Xác minh kết quả gửi',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Đã xác minh chưa gửi',exact:true})).toBeDisabled();
+  await expect(page.getByText(/không chọn “chưa gửi” chỉ vì trang lỗi hoặc CAPTCHA/).last()).toBeVisible();
+  await page.screenshot({path:'test-results/manager-submission-review.png',fullPage:true});
+  expect(app.store.session(id).run.submitAttempted).toBe(true);
+  console.log('PASS: a reserved send explains the Restart lock, exposes review, rejects Restart server-side and does not resolve itself.');
 }finally{await browser?.close();await app?.close();rmSync(dir,{recursive:true,force:true});}

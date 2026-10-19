@@ -2,6 +2,7 @@ import { HSK_RULES, getRule } from "./rules";
 import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize, matchesFinalQuestionLabel } from "./shared";
 import {classifyPage,type PageHealth} from './recovery';
 import {canonicalFormId} from './protocol';
+import {hasSubmissionConfirmation} from './submission-confirmation';
 import type {FinalQuestion,ManualAnswer} from './shared';
 import type { PickerUploadResult, PickerUploadTimings } from "./picker-upload";
 
@@ -13,6 +14,7 @@ let executionInFlight = false;
 let pendingStart:(()=>void)|undefined;
 let runRequestGeneration=0;
 let cancelManualResume: (() => void) | undefined;
+let cancelConfirmationWatch:(()=>void)|undefined;
 const documentEpoch=crypto.randomUUID();
 let boundRunId:string|undefined;
 let attentionToken:string|undefined;
@@ -991,7 +993,19 @@ function button(kind: "next" | "submit"): HTMLElement | undefined {
 
 function completedPage(): boolean {
   const text = document.body.innerText ?? document.body.textContent ?? "";
-  return /your response has been recorded|đã ghi lại câu trả lời|câu trả lời của bạn đã được ghi lại|response has been recorded/i.test(text);
+  const hasQuestions=questions().length>0;
+  const hasNavigation=!!button('next')||!!button('submit');
+  const health=classifyPage({text,title:document.title,hasQuestions,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false});
+  return hasSubmissionConfirmation({text,hasQuestions,hasNavigation,blocked:!!health.issue});
+}
+
+function watchSubmissionConfirmation(){
+  cancelConfirmationWatch?.();
+  const runId=boundRunId;
+  const stop=()=>{observer.disconnect();clearTimeout(timer);if(cancelConfirmationWatch===stop)cancelConfirmationWatch=undefined;};
+  const check=()=>{if(runId!==boundRunId||!submitAttempted){stop();return;}if(completedPage()){stop();void emit({type:'completed',message:'Google Forms hiển thị xác nhận đã nộp biểu mẫu. Chờ đơn vị tiếp nhận xác nhận kết quả đăng ký.'}).catch(()=>{});}};
+  const observer=new MutationObserver(check),timer=window.setTimeout(stop,30000);
+  cancelConfirmationWatch=stop;observer.observe(document.body,{childList:true,subtree:true,characterData:true});check();
 }
 
 function validationError(): string | undefined {
@@ -1338,11 +1352,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     active = false;
     void releaseAttention();
     cancelManualResume?.();
+    cancelConfirmationWatch?.();
     sendResponse?.({ ok: true });
     return;
   }
   if (message.type === "RUN_CURRENT_PAGE") {
     cancelManualResume?.();
+    cancelConfirmationWatch?.();
     const generation=++runRequestGeneration;
     const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;savedCorrections=message.corrections??{};active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
     void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(response=>{
@@ -1367,8 +1383,9 @@ void Promise.resolve(chrome.runtime.sendMessage({ type: "CLAIM_DOCUMENT",epoch:d
     // the existing lock; never execute the form or request another submit.
     if(run?.submitAttempted){
       boundRunId=run.runId;submitAttempted=true;active=false;
-      if(completedPage())await emit({type:'completed',message:'Google Forms đã xác nhận nhận phản hồi.'});
+      if(completedPage()){await emit({type:'completed',message:'Google Forms hiển thị xác nhận đã nộp biểu mẫu. Chờ đơn vị tiếp nhận xác nhận kết quả đăng ký.'});return;}
       else if(run.status==='submitting')await emit({type:'block',issue:{reason:'submit_uncertain',message:'Trang sau Gửi chưa xác nhận nhận phản hồi. Giữ khóa gửi để đối chiếu.'}});
+      if(run.status!=='completed')watchSubmissionConfirmation();
       return;
     }
     if (run?.status !== "running" ||run.recoveryRequired) return;

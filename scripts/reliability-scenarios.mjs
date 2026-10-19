@@ -5,18 +5,34 @@ import {chromium} from '@playwright/test';
 // Invoked only by background-flow-check's isolated HTTPS form and synthetic
 // Chromium profiles. No Google traffic, real account or production writes.
 export async function reliabilityScenarios(x){
- const {app,profiles,steps,faultPolicies,documentRequests,faultResults,fixtureUrl,wait,sleep,complete}=x;
+ const {app,profiles,steps,faultPolicies,documentRequests,submissions,faultResults,fixtureUrl,wait,sleep,complete}=x;
  const sessions=()=>app.store.sessions();
  const session=async p=>(await sessions()).find(s=>s.id===p.id);
  const ask=(p,type,extra={})=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return __fixture.ask({type:${JSON.stringify(type)},tabId:r.tabId,mode:'test',...${JSON.stringify(extra)}});})()`);
  const form=(p,body)=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return (await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{${body}}}))[0].result;})()`);
- const checkpoint=async(name,fn)=>{const selected=process.argv.find(a=>a.startsWith('--fault-case='))?.split('=')[1];if(selected&&!name.includes(selected))return;const start=Date.now();await fn();faultResults.push({case:name,passed:true,ms:Date.now()-start});console.log('PASS fault: '+name);};
+ const checkpoint=async(name,fn)=>{const selected=process.argv.find(a=>a.startsWith('--fault-case='))?.split('=')[1];if(selected&&!selected.split(',').some(part=>name.includes(part)))return;const start=Date.now();await fn();faultResults.push({case:name,passed:true,ms:Date.now()-start});console.log('PASS fault: '+name);};
  const reset=async()=>{
   for(const p of profiles)await app.coordinator.control(p.id,'STOP');
   for(const p of profiles)await p.eval(`(async()=>{const tabs=await chrome.tabs.query({});for(const t of tabs)if(t.url?.includes('/forms/'))await chrome.tabs.remove(t.id);})()`);
   steps.clear();faultPolicies.clear();documentRequests.length=0;
  };
  const start=()=>app.coordinator.start(profiles.map(p=>p.id),fixtureUrl,'test',undefined,randomUUID());
+ await checkpoint('pre-submit-reload-restores-profile-and-allows-manager-restart',async()=>{
+  await reset();const p=profiles[0];faultPolicies.set(0,{delayNext:2500});await start();
+  await wait(()=>documentRequests.some(r=>r.index===0&&r.method==='POST'&&r.step===0));
+  const runId=(await session(p)).run.runId;
+  steps.set(0,0);
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.tabs.update(r.tabId,{url:${JSON.stringify(fixtureUrl)}});})()`);
+  await complete('ready_to_submit');
+  assert.equal((await session(p)).run.runId,runId);
+  assert.equal((await session(p)).run.submitAttempted,false);
+  assert.equal(await form(p,"return document.querySelector('#phone').value;"),'0900000000');
+  const peers=await Promise.all(profiles.slice(1).map(session));
+  steps.set(0,0);await app.coordinator.restart(p.id,runId,randomUUID());await complete('ready_to_submit');
+  assert.notEqual((await session(p)).run.runId,runId);
+  for(const peer of peers)assert.equal((await sessions()).find(s=>s.id===peer.id).run.runId,peer.run.runId);
+  assert.equal([...submissions.values()].reduce((a,b)=>a+b,0),0);
+ });
  await checkpoint('simultaneous-hung-document-captcha-upload-error-and-healthy-profiles',async()=>{
   if(profiles.length<4)return;
   await reset();faultPolicies.set(0,{hangNext:true,resetOnRecovery:true});faultPolicies.set(1,{captcha:true});faultPolicies.set(2,{uploadError:true});

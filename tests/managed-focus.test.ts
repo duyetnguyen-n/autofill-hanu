@@ -35,6 +35,15 @@ it('does not open a controller on simultaneous focus requests',async()=>{
 it('opens the last form without starting autofill when its tab was closed',async()=>{
  const f=await setup();f.tabs.length=0;expect(await adapter.focus()).toMatchObject({tabId:99});expect(f.tabCreate).toHaveBeenCalledWith({url,active:true});expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();expect(f.data.managedRun.status).toBe('idle');
 });
+it('rechecks an existing reserved response read-only when opening it after an extension update',async()=>{
+ const f=await setup('submit_uncertain');f.data.managedRun.submitAttempted=true;f.data['run:7'].submitAttempted=true;
+ f.tabs[0].url=url.replace('/viewform','/formResponse');
+ await adapter.focus();
+ expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(7,{type:'PAGE_HEALTH'});
+ expect(chrome.tabs.update).toHaveBeenCalledWith(7,{active:true});
+ expect(vi.mocked(chrome.tabs.update).mock.calls.every(([,options])=>!options.url)).toBe(true);
+ expect(f.data.managedRun.submitAttempted).toBe(true);
+});
 it.each(['idle','completed','ready_to_submit'] as const)('closing a %s form preserves its terminal state and released lease',async status=>{
  const f=await setup(status);f.removed(7);await vi.waitFor(()=>expect(chrome.storage.local.get).toHaveBeenCalledWith('run:7'));expect(f.data.managedRun.status).toBe(status);expect(chrome.storage.local.set).not.toHaveBeenCalled();
 });
