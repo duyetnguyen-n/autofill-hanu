@@ -52,3 +52,12 @@ it('explains why Restart is unavailable even after Stop of a reserved send',()=>
  expect(submissionReviewMessage({...run,status:'idle',submitAttempted:true})).toBeUndefined();
  expect(runStatusLabel({...run,status:'idle',submitAttempted:true})).toBe('Đã xác minh chưa gửi');
 });
+
+it('requires persistent intent and a different document before allowing a bounded returned-form submission',async()=>{
+ const {returnedSubmissionAllowed,pageReadyResumeAllowed}=await import('../src/recovery');
+ const candidate:RunState={...run,mode:'live',status:'submit_uncertain',autoContinue:true,retryOnReturn:true,submitAttempted:true,submissionEpoch:'old',contentEpoch:'new'};
+ expect(returnedSubmissionAllowed(candidate)).toBe(true);
+ for(const patch of [{autoContinue:false},{retryOnReturn:false},{mode:'test'},{status:'paused'},{status:'completed'},{recoveryRequired:true},{submissionEpoch:undefined},{contentEpoch:'old'},{submissionRetries:2}])expect(returnedSubmissionAllowed({...candidate,...patch} as RunState)).toBe(false);
+ expect(pageReadyResumeAllowed({...run,autoContinue:true,blockingIssue:{reason:'captcha',message:'wait'}})).toBe(true);
+ expect(pageReadyResumeAllowed({...run,autoContinue:false})).toBe(false);
+});

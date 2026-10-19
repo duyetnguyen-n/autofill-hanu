@@ -109,6 +109,12 @@ export interface RunLogEntry {
 }
 
 export interface RunState {
+  // Durable user intent, independent of a temporary page/network blocker.
+  autoContinue?: boolean;
+  retryOnReturn?: boolean;
+  submissionEpoch?: string;
+  submissionRetries?: number;
+  pendingReturnedRetry?: {epoch:string;fromRetries:number};
   activity?:RunActivity;
   recovery?:RecoveryPlan;
   corrections?:Record<string,ManualAnswer>;
@@ -157,7 +163,7 @@ export type ExtensionMessage =
   | { type: "NATIVE_OPEN_MANAGER" }
   | { type: "CLAIM_DOCUMENT"; epoch: string }
   | { type: "REQUEST_SUBMIT"; runId?: string; epoch?: string }
-  | { type: "AUTO_RESUME"; runId?: string; epoch: string }
+  | { type: "AUTO_RESUME"; runId?: string; epoch: string; source?: 'page_ready' }
   | { type: "PAGE_ACCOUNT" }
   | { type: "PAGE_HEALTH" }
   | { type: "PAGE_RUN_STATUS" }
@@ -181,7 +187,7 @@ export type ExtensionMessage =
   | { type: "SCAN_FORM"; tabId: number }
   | { type: "SAVE_MAPPING"; tabId: number; questionId: string; ruleKey: string }
   | { type: "RUN_CURRENT_PAGE"; mode: RunMode; skipQuestionId?: string; runId?: string; epoch?: string; finalQuestion?:FinalQuestion; corrections?:Record<string,ManualAnswer> }
-  | { type: "HALT_RUN" }
+  | { type: "HALT_RUN"; watchReturn?: boolean }
   | { type: "FORM_EVENT"; event: FormEvent; runId?: string; epoch?: string }
   | { type: "GET_PROFILE" };
 

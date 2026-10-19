@@ -10,6 +10,16 @@ export async function reliabilityScenarios(x){
  const session=async p=>(await sessions()).find(s=>s.id===p.id);
  const ask=(p,type,extra={})=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return __fixture.ask({type:${JSON.stringify(type)},tabId:r.tabId,mode:'test',...${JSON.stringify(extra)}});})()`);
  const form=(p,body)=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return (await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{${body}}}))[0].result;})()`);
+ const activateHistory=async p=>{
+  const target=(await p.cdp.send('Target.getTargets')).targetInfos.find(t=>t.type==='page'&&t.url.includes('/forms/'));
+  assert(target);const attached=(await p.cdp.send('Target.attachToTarget',{targetId:target.targetId,flatten:true})).sessionId;
+  try{
+   const point=await p.cdp.evaluate(attached,`(()=>{const e=document.querySelector('h1')??document.body;const b=e.getBoundingClientRect();return {x:b.left+10,y:b.top+10,history:history.length,url:location.href};})()`);
+   console.log('History fixture '+JSON.stringify(point));
+   await p.cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1},attached);
+   await p.cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x,y:point.y,button:'left',clickCount:1},attached);
+  }finally{await p.cdp.send('Target.detachFromTarget',{sessionId:attached}).catch(()=>{});}
+ };
  const checkpoint=async(name,fn)=>{const selected=process.argv.find(a=>a.startsWith('--fault-case='))?.split('=')[1];if(selected&&!selected.split(',').some(part=>name.includes(part)))return;const start=Date.now();await fn();faultResults.push({case:name,passed:true,ms:Date.now()-start});console.log('PASS fault: '+name);};
  const reset=async()=>{
   for(const p of profiles)await app.coordinator.control(p.id,'STOP');
@@ -73,16 +83,40 @@ export async function reliabilityScenarios(x){
   await app.coordinator.control(profiles[0].id,'STOP');const stoppedRequests=documentRequests.filter(r=>r.index===0).length;
   await sleep(4500);assert.equal(documentRequests.filter(r=>r.index===0).length,stoppedRequests);assert.equal((await session(profiles[0])).run.status,'idle');
  });
- await checkpoint('captcha-waits-for-human-without-refresh-loop',async()=>{
+ await checkpoint('captcha-unavailable-recovers-automatically-without-refresh-loop',async()=>{
   await reset();faultPolicies.set(0,{captcha:true});await start();
   await wait(async()=>(await session(profiles[0])).run?.blockingIssue?.reason==='captcha');
   const requests=documentRequests.filter(r=>r.index===0).length;await sleep(4500);assert.equal(documentRequests.filter(r=>r.index===0).length,requests);
   assert.notEqual((await session(profiles[0])).run.recovery?.automatic,true);
-  // Replace the synthetic checkpoint with a healthy page, without interacting
-  // with a real CAPTCHA. It must still wait for explicit user intent.
+  // A recovered form resumes the existing intent without solving a CAPTCHA.
   faultPolicies.clear();await profiles[0].eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.tabs.update(r.tabId,{url:${JSON.stringify(fixtureUrl)}});})()`);
-  await sleep(1500);assert.equal((await session(profiles[0])).run.status,'waiting_manual');
-  await app.coordinator.control(profiles[0].id,'RESUME');await complete('ready_to_submit');
+  await wait(async()=>(await session(profiles[0])).run.status==='ready_to_submit');await complete('ready_to_submit');
+ });
+ await checkpoint('captcha-back-and-forward-restores-intent-without-refilling',async()=>{
+  await reset();await start();await complete('ready_to_submit');const p=profiles[0];
+  // Use a GET document so this case tests history recovery independently of
+  // Chromium's native POST-resubmission confirmation dialog.
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.tabs.update(r.tabId,{url:${JSON.stringify(fixtureUrl)}});})()`);
+  await wait(()=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;return (await chrome.tabs.get(r.tabId)).status==='complete';})()`));
+  await app.coordinator.control(p.id,'RESUME');await complete('ready_to_submit');const run=(await session(p)).run;
+  // Mark a synthetic unavailable CAPTCHA, then leave the filled form through
+  // real browser history. No actual Google challenge is generated/solved.
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},args:[r],func:r=>{window.addEventListener('pageshow',e=>{document.documentElement.dataset.fixturePersisted=String(e.persisted)});return chrome.runtime.sendMessage({type:'FORM_EVENT',runId:r.runId,epoch:r.contentEpoch,event:{type:'block',issue:{reason:'captcha',message:'Synthetic CAPTCHA unavailable'}}});}});})()`);
+  await wait(async()=>(await session(p)).run.status==='waiting_manual');
+  faultPolicies.set(0,{captcha:true});
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},args:[${JSON.stringify(fixtureUrl+'?checkpoint=unavailable')}],func:url=>setTimeout(()=>location.assign(url),0)});})()`);
+  await wait(()=>p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun,t=await chrome.tabs.get(r.tabId);return t.status==='complete'&&t.url.includes('checkpoint=unavailable');})()`));
+  faultPolicies.delete(0);await activateHistory(p);
+  const began=Date.now();await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{setTimeout(()=>history.back(),0)}});})()`);
+  await wait(async()=>(await session(p)).run.status==='ready_to_submit');await complete('ready_to_submit');
+  const values=await form(p,"return {phone:document.querySelector('#phone')?.value,persisted:document.documentElement.dataset.fixturePersisted};");
+  assert.equal(values.phone,'0900000000');assert.equal((await session(p)).run.runId,run.runId);
+  faultResults.push({case:'back-recovery-timing',passed:true,ms:Date.now()-began,bfcache:values.persisted==='true'});
+  // A user Pause remains final even when the same history events repeat.
+  await app.coordinator.control(p.id,'PAUSE');await activateHistory(p);
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{setTimeout(()=>history.forward(),0)}});})()`);await sleep(300);await activateHistory(p);
+  await p.eval(`(async()=>{const r=(await chrome.storage.local.get('managedRun')).managedRun;await chrome.scripting.executeScript({target:{tabId:r.tabId},func:()=>{setTimeout(()=>history.back(),0)}});})()`);await sleep(700);
+  assert.equal((await session(p)).run.status,'paused');await app.coordinator.control(p.id,'RESUME');await complete('ready_to_submit');
  });
  await checkpoint('manual-correction-survives-reload-with-frozen-profile',async()=>{
   await reset();const p=profiles[0];

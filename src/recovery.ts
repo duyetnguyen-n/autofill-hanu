@@ -8,7 +8,7 @@ export const recoveryDelay=(attempt:number,random=Math.random()):number=>
 
 export interface PageHealth {issue?:BlockingIssue;retryable?:boolean;ready?:boolean}
 export function classifyPage(input:{text:string;title?:string;hasQuestions:boolean;hasNavigation:boolean;captcha:boolean;online:boolean}):PageHealth {
-  if(input.captcha)return {issue:{reason:'captcha',message:'Google yêu cầu xác thực. Hãy tự xử lý rồi bấm Tiếp tục; extension giữ nguyên lượt.'}};
+  if(input.captcha)return {issue:{reason:'captcha',message:'Google yêu cầu xác thực. Extension giữ lượt và tự tiếp tục khi trở về form sẵn sàng.'}};
   if(!input.online)return {issue:{reason:'network',message:'Mất kết nối mạng. Đang chờ thử lại có giới hạn.'},retryable:true};
   if(input.hasQuestions||input.hasNavigation)return {};
   const text=`${input.title??''}\n${input.text}`.replace(/\s+/g,' ').slice(0,12000);
@@ -25,7 +25,21 @@ export function automaticRecoveryAllowed(run:RunState|undefined,now=Date.now()):
     Number.isFinite(Date.parse(run.recovery.retryAt??''))&&Date.parse(run.recovery.retryAt!)<=now;
 }
 
+// Recovery of a page is different from retrying a request. A recovered form
+// may be usable before the scheduled network retry, including a BFCache Back.
+export function pageReadyResumeAllowed(run:RunState|undefined):boolean {
+  return !!run?.runId&&run.autoContinue===true&&!run.submitAttempted&&!run.recoveryRequired&&run.status==='waiting_manual'&&
+    ['captcha','network','server_error','navigation','account'].includes(run.blockingIssue?.reason??'');
+}
+
 export function validCorrections(value:unknown):value is Record<string,ManualAnswer>{
   if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length>100)return false;
   return Object.entries(value).every(([key,a])=>key.length<=800&&!!a&&typeof a==='object'&&typeof a.label==='string'&&a.label.length<=4000&&['text','textarea','date','radio','checkbox','dropdown'].includes(a.kind)&&Array.isArray(a.values)&&a.values.length<=30&&a.values.every((v:unknown)=>typeof v==='string'&&v.length<=10000));
+}
+
+// A restored/new healthy form is required; never loop on the same submit DOM.
+export function returnedSubmissionAllowed(run:RunState|undefined):boolean {
+  return !!run?.runId&&run.autoContinue===true&&run.retryOnReturn===true&&run.mode==='live'&&run.submitAttempted&&!run.recoveryRequired&&
+    ['submitting','submit_uncertain'].includes(run.status)&&!!run.submissionEpoch&&!!run.contentEpoch&&run.submissionEpoch!==run.contentEpoch&&
+    (run.submissionRetries??0)<2;
 }

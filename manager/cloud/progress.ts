@@ -2,7 +2,8 @@ import {validCorrections} from '../../src/recovery';
 import type { RunState } from '../../src/shared';
 
 export function validCloudProgress(run: RunState): boolean {
-  return !!run && Array.isArray(run.logs) && run.logs.length <= 2000 &&
+  return !!run && (run.autoContinue===undefined||typeof run.autoContinue==='boolean') &&
+    (run.submissionRetries===undefined||Number.isSafeInteger(run.submissionRetries)&&run.submissionRetries>=0&&run.submissionRetries<=2) && Array.isArray(run.logs) && run.logs.length <= 2000 &&
     !run.logs.some(log => !log || typeof log.message !== 'string' || typeof log.at !== 'string' || !['info', 'warning', 'error', 'success'].includes(log.level)) &&
     Number.isSafeInteger(run.eventSeq) && run.eventSeq! >= 0 && run.eventSeq! <= 2147483647 &&
     typeof run.formId === 'string' && run.formId.length <= 300 && typeof run.submitAttempted === 'boolean' &&

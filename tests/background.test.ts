@@ -252,3 +252,34 @@ it('checkpoints a valid manual answer in its run while rejecting stale document 
   expect(f.data['run:7']).toMatchObject({status:'waiting_manual',corrections:event.answers});
   expect(f.data.profile).toBeUndefined();
 });
+
+it.each(['captcha','network','server_error','navigation','account'] as const)('resumes a ready returned form blocked on %s before its retry timer',async reason=>{
+ const f=await setup();Object.assign(f.run,{runId:'return',contentEpoch:'doc',autoContinue:true,blockingIssue:{reason,message:'wait'}});
+ f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_HEALTH'?{ready:true} as any:{ok:true});
+ await expect(f.ask({type:'AUTO_RESUME',source:'page_ready',runId:'return',epoch:'doc'},{tab:{id:7,url:formUrl},url:formUrl})).resolves.toMatchObject({resumed:true});
+ expect(f.data['run:7']).toMatchObject({status:'running',autoContinue:true});
+ expect(f.sendMessage).toHaveBeenCalledWith(7,expect.objectContaining({type:'RUN_CURRENT_PAGE'}));await f.ask({type:'STOP_RUN',tabId:7});
+});
+it.each(['paused','idle','wrong-form','old-document','not-ready','still-captcha'] as const)('rejects automatic page return for %s',async scenario=>{
+ const f=await setup();Object.assign(f.run,{runId:'return',contentEpoch:'doc',autoContinue:true,blockingIssue:{reason:'captcha',message:'wait'}});
+ if(scenario==='paused'||scenario==='idle')f.run.status=scenario;
+ f.sendMessage.mockResolvedValue(scenario==='still-captcha'?{ready:true,issue:{reason:'captcha',message:'wait'}} as any:{ready:scenario!=='not-ready'} as any);
+ await expect(f.ask({type:'AUTO_RESUME',source:'page_ready',runId:'return',epoch:scenario==='old-document'?'old':'doc'},{tab:{id:7,url:formUrl},url:scenario==='wrong-form'?formUrl.replace('test-form','other'):formUrl})).resolves.toMatchObject({ok:false});
+ expect(f.sendMessage.mock.calls.some(([,m])=>m.type==='RUN_CURRENT_PAGE')).toBe(false);
+});
+it('authorizes a returned-form retry only in a new document and preserves the prior uncertain send history',async()=>{
+ const f=await setup();Object.assign(f.run,{runId:'return',contentEpoch:'new',submissionEpoch:'old',mode:'live',status:'submit_uncertain',submitAttempted:true,autoContinue:true,retryOnReturn:true});
+ f.data.submissionLocks={return:{formId:'test-form',resolution:'uncertain'}};
+ f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_HEALTH'?{ready:true} as any:{ok:true});
+ await expect(f.ask({type:'AUTO_RESUME',source:'page_ready',runId:'return',epoch:'new'},{tab:{id:7,url:formUrl},url:formUrl})).resolves.toMatchObject({resumed:true});
+ expect(f.data['run:7']).toMatchObject({status:'running',submitAttempted:false,submissionRetries:1});
+ expect((f.data.submissionLocks as any).return).toMatchObject({resolution:'uncertain',retryReady:true});await f.ask({type:'STOP_RUN',tabId:7});
+});
+
+it('schedules a safe GET recovery when Back returns an unreadable pre-submit document while waiting for CAPTCHA',async()=>{
+ vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'back-error',status:'waiting_manual',contentEpoch:'captcha-doc',autoContinue:true,url:formUrl,blockingIssue:{reason:'captcha',message:'unavailable'}});
+ f.sendMessage.mockImplementation(async()=>{throw new Error('No readable document after Back');});
+ f.updated({status:'complete'});await vi.advanceTimersByTimeAsync(1000);
+ expect(f.data['run:7']).toMatchObject({status:'waiting_manual',blockingIssue:{reason:'network'},recovery:{automatic:true,attempt:1}});
+ await f.ask({type:'STOP_RUN',tabId:7});
+});

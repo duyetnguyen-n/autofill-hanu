@@ -22,8 +22,9 @@ export function runElapsed(run:(Pick<RunState,'startedAt'|'status'|'updatedAt'>&
 }
 
 const labels:Record<RunState['status'],string>={idle:'Đã dừng',running:'Đang chạy',paused:'Tạm dừng',waiting_manual:'Cần bạn xử lý',ready_to_submit:'Xong Test',submitting:'Đang xác nhận gửi',completed:'Đã gửi',submit_uncertain:'Chưa rõ đã gửi',failed:'Có lỗi'};
-export function submissionReviewMessage(run:Pick<RunState,'status'|'submitAttempted'|'blockingIssue'>|undefined):string|undefined {
+export function submissionReviewMessage(run:(Pick<RunState,'status'|'submitAttempted'|'blockingIssue'>&Partial<RunState>)|undefined):string|undefined {
   if(!run?.submitAttempted||run.status==='completed'||run.status==='idle')return;
+  if(run.autoContinue&&run.retryOnReturn&&(run.submissionRetries??0)<2)return 'Chưa xác nhận kết quả gửi. Extension giữ lượt và tự thử lại khi đúng form, đúng tài khoản sẵn sàng trở lại; có thể tạo phản hồi trùng. CAPTCHA cần hoàn tất trong trình duyệt. Dừng sẽ hủy tự tiếp tục.';
   return `${run.blockingIssue?.message??'Lượt đã giữ khóa gửi, chưa có xác nhận từ Google.'} Chạy lại đang khóa để tránh nộp trùng. Mở Xem form rồi Xác minh kết quả; không chọn “chưa gửi” chỉ vì trang lỗi hoặc CAPTCHA.`;
 }
 export function runStatusLabel(run:Pick<RunState,'status'>&Partial<RunState>):string {

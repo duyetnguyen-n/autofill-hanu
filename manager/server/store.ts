@@ -1,3 +1,4 @@
+import {returnedSubmissionAllowed} from '../../src/recovery';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
@@ -60,8 +61,18 @@ export class Store implements DataStore {
     const old=this.db.prepare('SELECT resolution FROM locks WHERE session=? AND form=? AND run=?').get(session,form,run) as {resolution:string}|undefined;
     if (!s.run || s.run.runId !== run || s.run.mode !== 'live' || !['running','submitting'].includes(s.run.status) || this.group(run).paused || old&&old.resolution!=='local_reserved' || locks.some(l=>l.run!==run||l.resolution!=='local_reserved')) throw new Error('Quyền gửi đã bị khóa hoặc lượt không hoạt động.');
     this.db.prepare('INSERT OR REPLACE INTO locks VALUES(?,?,?,?,?)').run(session,form,run,'uncertain',new Date().toISOString());
-    s.run.submitAttempted=true; s.run.status='submitting'; this.saveRun(session,s.run); this.saveSession(s); this.audit(session,run,'submit_lock','Đã khóa quyền gửi.');
+    s.run.pendingReturnedRetry=undefined;s.run.submitAttempted=true; s.run.status='submitting'; this.saveRun(session,s.run); this.saveSession(s); this.audit(session,run,'submit_lock','Đã khóa quyền gửi.');
   }); }
+  authorizeReturnedRetry(session:string,runId:string,epoch:string,retries:number){return this.transaction(()=>{
+    const s=this.session(session),run=s.run,g=this.group(runId);
+    if(run?.runId===runId&&run.autoContinue&&run.contentEpoch===epoch&&run.pendingReturnedRetry?.fromRetries===retries&&run.submissionRetries===retries+1&&!g.paused&&!g.stopped){run.pendingReturnedRetry.epoch=epoch;this.saveRun(session,run);this.saveSession(s);return;}
+    if(!returnedSubmissionAllowed(run)||run!.runId!==runId||run!.contentEpoch!==epoch||(run!.submissionRetries??0)!==retries||g.paused||g.stopped||!g.members.includes(session))throw new Error('Lượt không được phép thử lại sau khi trở về form.');
+    const locks=this.db.prepare("SELECT run,resolution FROM locks WHERE session=? AND form=? AND resolution!='not_received'").all(session,run!.formId) as {run:string;resolution:string}[];
+    if(locks.some(l=>l.run!==runId||l.resolution==='received'))throw new Error('Form đã có kết quả hoặc thuộc lượt khác.');
+    this.db.prepare("UPDATE locks SET resolution='local_reserved' WHERE session=? AND run=?").run(session,runId);
+    run!.pendingReturnedRetry={epoch,fromRetries:retries};run!.submissionRetries=retries+1;run!.submitAttempted=false;run!.status='waiting_manual';run!.blockingIssue={reason:'navigation',message:'Form đã khôi phục; cho phép thử lại, có thể gửi trùng.'};
+    this.saveRun(session,run!);this.saveSession(s);this.audit(session,runId,'returned_form_retry','Cho phép thử gửi lại trên form đã khôi phục; kết quả trước vẫn chưa rõ.');
+  });}
   resolve(session: string, runId: string, result: 'received'|'not_received') {
     const s=this.session(session); if (!s.run || s.run.runId!==runId || !s.run.submitAttempted) throw new Error('Không có kết quả gửi cần xác minh.');
     this.db.prepare('UPDATE locks SET resolution=? WHERE session=? AND run=?').run(result,session,runId);
@@ -91,10 +102,10 @@ export class Store implements DataStore {
   recordStartResult(id:string,result:import('../../src/protocol').StartResult){this.transaction(()=>{const g=this.group(id);g.startResults=[...(g.startResults??[]).filter(r=>r.id!==result.id),result];this.saveGroup(g);});}
   acceptProgress(id:string,run:RunState){return this.transaction(()=>{
     const s=this.session(id);
-    if(!run||!s.run||run.runId!==s.run.runId||run.sessionId!==id||!Number.isSafeInteger(run.eventSeq)||(run.eventSeq??0)<=(s.run.eventSeq??0)||s.run.submitAttempted&&!run.submitAttempted)return false;
+    if(!run||!s.run||(run.submissionRetries??0)!==(s.run.submissionRetries??0)||run.runId!==s.run.runId||run.sessionId!==id||!Number.isSafeInteger(run.eventSeq)||(run.eventSeq??0)<=(s.run.eventSeq??0)||s.run.submitAttempted&&!run.submitAttempted)return false;
     if(this.group(run.runId!).paused&&run.status==='running')return false;
     if(s.run.formId&&run.formId!==s.run.formId)return false;
-    s.run={...run,mode:s.run.mode,managed:true,url:s.run.url,expectedEmail:s.run.expectedEmail,profileRevision:s.run.profileRevision,startedAt:s.run.startedAt,profileSnapshot:s.run.profileSnapshot,finalQuestion:s.run.finalQuestion};
+    s.run={...run,mode:s.run.mode,managed:true,retryOnReturn:s.run.retryOnReturn,pendingReturnedRetry:s.run.pendingReturnedRetry,url:s.run.url,expectedEmail:s.run.expectedEmail,profileRevision:s.run.profileRevision,startedAt:s.run.startedAt,profileSnapshot:s.run.profileSnapshot,finalQuestion:s.run.finalQuestion};
     if(run.submitAttempted&&run.formId)this.db.prepare('INSERT OR IGNORE INTO locks VALUES(?,?,?,?,?)').run(id,run.formId,run.runId!,'local_reserved',new Date().toISOString());
     if(run.status==='completed'&&run.submitAttempted)this.db.prepare("UPDATE locks SET resolution='received' WHERE session=? AND run=?").run(id,run.runId!);
     s.error=run.blockingIssue?.message??(run.status==='failed'?run.logs.at(-1)?.message:undefined);

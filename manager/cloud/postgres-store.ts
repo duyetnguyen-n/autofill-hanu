@@ -1,3 +1,4 @@
+import {returnedSubmissionAllowed} from '../../src/recovery';
 import { randomBytes } from 'node:crypto';
 import { digest } from '../server/store';
 import type { DataStore } from '../server/data-store';
@@ -114,7 +115,8 @@ export class PostgresStore implements DataStore {
       if(s.run?.runId!==runId)return s;
       if(s.run){
         const ack=result?.run??(result?.runId===runId?result:undefined);
-        s.run.submitAttempted=!!(s.run.submitAttempted||ack?.submitAttempted);
+        s.run.autoContinue=false;
+        s.run.submitAttempted=!!(s.run.submitAttempted||ack?.submitAttempted&&(ack.submissionRetries??0)===(s.run.submissionRetries??0));
         s.run.status=s.run.submitAttempted?'submit_uncertain':'idle';s.run.recoveryRequired=false;s.run.activity=undefined;
         if(s.run.recovery)s.run.recovery.automatic=false;
         if(!s.run.submitAttempted)s.run.blockingIssue=undefined;
@@ -235,10 +237,10 @@ export class PostgresStore implements DataStore {
     if (!validCloudProgress(run)) return false;
     return transaction(this.pool, async db => {
       const s = await this.read(id, db, true);
-      if (!s.run || !s.connected && run.status==='running' || run.runId !== s.run.runId || run.sessionId !== id || run.eventSeq! <= (s.run.eventSeq ?? 0) || s.run.submitAttempted && !run.submitAttempted) return false;
+      if (!s.run || (run.submissionRetries??0)!==(s.run.submissionRetries??0) || !s.connected && run.status==='running' || run.runId !== s.run.runId || run.sessionId !== id || run.eventSeq! <= (s.run.eventSeq ?? 0) || s.run.submitAttempted && !run.submitAttempted) return false;
       const group = (await db.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2', [this.owner, run.runId])).rows[0]?.data;
       if (!group || group.paused && run.status === 'running'||s.run.formId&&run.formId!==s.run.formId||canonicalFormId(group.url)&&run.formId&&run.formId!==canonicalFormId(group.url)) return false;
-      s.run = { ...run,mode:s.run.mode,managed:true,url:s.run.url,expectedEmail:s.run.expectedEmail,profileRevision:s.run.profileRevision,startedAt:s.run.startedAt,profileSnapshot: s.run.profileSnapshot, finalQuestion: s.run.finalQuestion };
+      s.run = { ...run,mode:s.run.mode,managed:true,retryOnReturn:s.run.retryOnReturn,pendingReturnedRetry:s.run.pendingReturnedRetry,url:s.run.url,expectedEmail:s.run.expectedEmail,profileRevision:s.run.profileRevision,startedAt:s.run.startedAt,profileSnapshot: s.run.profileSnapshot, finalQuestion: s.run.finalQuestion };
       await this.writeRun(id, s.run, db);
       if (run.submitAttempted && run.formId) await db.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,$3,$4,'local_reserved') ON CONFLICT DO NOTHING", [this.owner, id, run.formId, run.runId]);
       if (run.status === 'completed' && run.submitAttempted) await db.query("UPDATE hanu.locks SET resolution='received' WHERE owner=$1 AND session=$2 AND run=$3", [this.owner, id, run.runId]);
@@ -263,11 +265,11 @@ export class PostgresStore implements DataStore {
       const locked = { data: structuredClone(s), version: this.versions.get(s)! };
       if (progress) {
         const current = s.run;
-        if (!validCloudProgress(progress) || !current || current.runId !== run || progress.runId !== run || progress.sessionId !== session ||
+        if (!validCloudProgress(progress) || !current || (progress.submissionRetries??0)!==(current.submissionRetries??0) || current.runId !== run || progress.runId !== run || progress.sessionId !== session ||
           current.submitAttempted && !progress.submitAttempted || progress.formId !== form ||
           current.formId && current.formId !== form || g && canonicalFormId(g.url) && canonicalFormId(g.url) !== form) throw new CloudError('Tiến độ/form không khớp lượt gửi.', 409);
         if (progress.eventSeq! > (current.eventSeq ?? 0)) {
-          s.run = { ...progress, mode:current.mode,managed:true,
+          s.run = { ...progress, mode:current.mode,managed:true,retryOnReturn:current.retryOnReturn,pendingReturnedRetry:current.pendingReturnedRetry,
             url:current.url,expectedEmail:current.expectedEmail,profileRevision:current.profileRevision,startedAt:current.startedAt,
             profileSnapshot:current.profileSnapshot,finalQuestion:current.finalQuestion };
           s.error = progress.blockingIssue?.message;
@@ -277,11 +279,27 @@ export class PostgresStore implements DataStore {
       const old = locks.find(l => l.run === run);
       if (!g || g.mode!=='live' || g.paused || !g.members.includes(session) || !s.run || s.run.runId !== run || s.run.formId !== form || s.run.mode !== 'live' || !['running', 'submitting'].includes(s.run.status) || old && old.resolution !== 'local_reserved' || locks.some(l => l.resolution !== 'not_received' && (l.run !== run || l.resolution !== 'local_reserved'))) throw new CloudError('Quyền gửi đã bị khóa hoặc lượt không hoạt động.', 409);
       await db.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,$3,$4,'uncertain') ON CONFLICT(owner,session,form,run) DO UPDATE SET resolution='uncertain'", [this.owner, session, form, run]);
+      s.run.pendingReturnedRetry=undefined;
       s.run.submitAttempted = true;
       s.run.status = 'submitting';
       await this.writeRun(session, s.run, db);
       await this.write(s, db, locked);
       await db.query("INSERT INTO hanu.audit(owner,session,run,kind,message) VALUES($1,$2,$3,'submit_lock','Đã khóa quyền gửi.')", [this.owner, session, run]);
+    });
+  }
+  async authorizeReturnedRetry(session:string,runId:string,epoch:string,retries:number){
+    await transaction(this.pool,async db=>{
+      await this.assertLease(db);const account=await requireAccount(db,this.owner,true);assertLive(account,'live');
+      const g=(await db.query('SELECT data FROM hanu.groups WHERE owner=$1 AND id=$2 FOR SHARE',[this.owner,runId])).rows[0]?.data as GroupView|undefined;
+      const s=await this.read(session,db,true),run=s.run;
+      if(run?.runId===runId&&run.autoContinue&&run.contentEpoch===epoch&&run.pendingReturnedRetry?.fromRetries===retries&&run.submissionRetries===retries+1&&g&&!g.paused&&!g.stopped){if(run.pendingReturnedRetry.epoch!==epoch){run.pendingReturnedRetry.epoch=epoch;await this.writeRun(session,run,db);await this.write(s,db);}return;}
+      if(!returnedSubmissionAllowed(run)||run!.runId!==runId||run!.contentEpoch!==epoch||(run!.submissionRetries??0)!==retries||!g||g.paused||g.stopped||!g.members.includes(session))throw new CloudError('Lượt không được phép thử lại sau khi trở về form.',409);
+      const locks=(await db.query("SELECT run,resolution FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3 AND resolution!='not_received'",[this.owner,session,run!.formId])).rows;
+      if(locks.some(l=>l.run!==runId||l.resolution==='received'))throw new CloudError('Form đã có kết quả hoặc thuộc lượt khác.',409);
+      await db.query("UPDATE hanu.locks SET resolution='local_reserved' WHERE owner=$1 AND session=$2 AND run=$3",[this.owner,session,runId]);
+      run!.pendingReturnedRetry={epoch,fromRetries:retries};run!.submissionRetries=retries+1;run!.submitAttempted=false;run!.status='waiting_manual';run!.blockingIssue={reason:'navigation',message:'Form đã khôi phục; cho phép thử lại, có thể gửi trùng.'};
+      await this.writeRun(session,run!,db);await this.write(s,db);
+      await db.query("INSERT INTO hanu.audit(owner,session,run,kind,message) VALUES($1,$2,$3,'returned_form_retry','Cho phép thử gửi lại trên form đã khôi phục; kết quả trước vẫn chưa rõ.')",[this.owner,session,runId]);
     });
   }
   async resolve(session: string, run: string, result: 'received' | 'not_received') {

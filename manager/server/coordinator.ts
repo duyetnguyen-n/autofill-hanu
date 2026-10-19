@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
 import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
 import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
-import {automaticRecoveryAllowed} from '../../src/recovery';
+import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 
@@ -151,7 +151,8 @@ export class Coordinator {
         }
         if(message.kind==='RESTART'){const group=await this.restart(id,message.runId,message.operationId);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,group,run:(await this.store.session(id)).run}));return;}
         if(message.kind==='RECOVER'){if(s.run?.recovery?.attempt!==message.attempt)throw new Error('Yêu cầu phục hồi đã cũ.');const result=await this.control(id,'RESUME',message.runId,'recovery');this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
-        if(message.kind==='AUTO_RESUME'){const result=await this.control(id,'RESUME',message.runId,true);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
+        if(message.kind==='AUTO_RESUME'&&message.source==='returned_submit'){const result=await this.retryReturnedForm(id,message.runId,message.epoch,message.retries);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
+        if(message.kind==='AUTO_RESUME'){const result=await this.control(id,'RESUME',message.runId,message.source==='page_ready'?'page_ready':true);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CONTROL'){if(s.run?.runId!==message.runId||!['PAUSE','RESUME','STOP'].includes(message.action))throw new Error('Lệnh điều khiển không hợp lệ.');const result=await this.control(id,message.action,message.runId);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CHECK_FORM'){if(s.run?.runId!==message.runId||!(await this.store.group(message.runId)).members.includes(id)||await this.store.blocked(id,message.formId))throw new Error('Form này có khóa gửi chưa được giải quyết.');}
         else if(message.kind==='SUBMIT'){
@@ -289,7 +290,7 @@ export class Coordinator {
         const hashes:Record<string,string>={};
         await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.store.attachmentInfo(member,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}));
         if((this.intents.get(member)??0)!==intents.get(member))throw new Error('Đã hủy Bắt đầu vì có lệnh Dừng hoặc Tạm dừng mới.');
-        s.run={runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
+        s.run={runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,autoContinue:true,retryOnReturn:true,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
         await this.store.beginGroup(group,[s],true);this.runBuffer?.begin([s],group);this.changed();
         const gate=await this.store.group(id);this.runBuffer?.groupGate(gate);
         if((this.intents.get(member)??0)!==intents.get(member)||gate.paused){await failed(member,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'),true);return {id:member,ok:false,error:'Đã dừng trước khi mở form.'};}
@@ -301,26 +302,36 @@ export class Coordinator {
     if(results.length===1&&!results[0].ok)throw new Error(results[0].error);
     return {...await this.store.group(id),startResults:results};
   }
-  async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'=false) {
+  private async retryReturnedForm(id:string,runId:string,epoch:string,retries:number){
+    const intent=this.intents.get(id)??0;
+    await this.runBuffer?.flush(id);
+    if(!this.store.authorizeReturnedRetry)throw new Error('Server chưa hỗ trợ thử lại trên form khôi phục.');
+    await this.store.authorizeReturnedRetry(id,runId,epoch,retries);
+    if((this.intents.get(id)??0)!==intent)throw new Error('Có lệnh Dừng mới; hủy thử lại.');
+    const s=await this.store.session(id);this.runBuffer?.refresh(id,s);
+    return this.control(id,'RESUME',runId,'returned_submit');
+  }
+  async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'|'page_ready'|'returned_submit'=false) {
     if(kind!=='RESUME')this.intents.set(id,(this.intents.get(id)??0)+1);
     const key=JSON.stringify([id,kind,expectedRunId,automatic]);const pending=this.controls.get(key);if(pending)return pending;
     const work=this.controlOne(id,kind,expectedRunId,automatic);this.controls.set(key,work);
     try{return await work;}finally{if(this.controls.get(key)===work)this.controls.delete(key);}
   }
-  private async controlOne(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'=false) {
+  private async controlOne(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'|'page_ready'|'returned_submit'=false) {
     const intent=this.intents.get(id)??0;
     if(expectedRunId&&this.runBuffer?.has(id)&&!this.runBuffer.matches(id,expectedRunId))throw new Error('Lệnh thuộc lượt cũ.');
     if(kind!=='RESUME')this.runBuffer?.halt(id);
     await this.runBuffer?.flush(id);
     const s=await this.store.session(id);if(expectedRunId&&s.run?.runId!==expectedRunId)throw new Error('Lệnh thuộc lượt cũ.');
     if(automatic==='recovery'&&(!expectedRunId||!automaticRecoveryAllowed(s.run)))throw new Error('Lượt không còn chờ phục hồi hoặc chưa tới thời điểm thử lại.');
+    if((automatic==='page_ready'||automatic==='returned_submit')&&(!expectedRunId||!pageReadyResumeAllowed(s.run)))throw new Error('Form không còn chờ tự tiếp tục.');
     if(automatic===true&&(!expectedRunId||s.run?.status!=='waiting_manual'||s.run.recoveryRequired||!['validation','unknown_required','file_upload','unsupported'].includes(s.run.blockingIssue?.reason??'')))throw new Error('Lượt không chờ sửa dữ liệu; không tự tiếp tục.');
     if(kind!=='RESUME')await this.attention.cancel(id);
     if(kind==='STOP'){
       const result=await this.command(id,'STOP_PROFILE',{},s.run?.runId);
       if(this.store.acknowledgeStop){await this.runBuffer?.flush(id);const current=await this.store.acknowledgeStop(id,s.run?.runId,result);this.runBuffer?.refresh(id,current);this.changed();return result;}
       const current=await this.store.session(id);
-      if(current.run?.runId===s.run?.runId){if(current.run){current.run.status=current.run.submitAttempted?'submit_uncertain':'idle';current.run.blockingIssue=current.run.submitAttempted?current.run.blockingIssue:undefined;current.run.eventSeq=Math.max(current.run.eventSeq??0,result?.run?.runId===current.run.runId?(result.run.eventSeq??0):0);current.run.updatedAt=new Date().toISOString();current.run.logs.push({at:current.run.updatedAt,level:'info',message:'Đã dừng mọi lượt trong profile. Có thể bắt đầu lượt mới khi chưa khóa gửi.'});await this.store.saveRun(id,current.run);}current.error=undefined;current.execution=result?.execution??null;await this.store.saveSession(current);this.changed();}
+      if(current.run?.runId===s.run?.runId){if(current.run){current.run.autoContinue=false;current.run.status=current.run.submitAttempted?'submit_uncertain':'idle';current.run.blockingIssue=current.run.submitAttempted?current.run.blockingIssue:undefined;current.run.eventSeq=Math.max(current.run.eventSeq??0,result?.run?.runId===current.run.runId?(result.run.eventSeq??0):0);current.run.updatedAt=new Date().toISOString();current.run.logs.push({at:current.run.updatedAt,level:'info',message:'Đã dừng mọi lượt trong profile. Có thể bắt đầu lượt mới khi chưa khóa gửi.'});await this.store.saveRun(id,current.run);}current.error=undefined;current.execution=result?.execution??null;await this.store.saveSession(current);this.changed();}
       this.runBuffer?.refresh(id,current);return result;
     }
     if(!s.run?.runId)throw new Error('Chưa có lượt chạy.');
@@ -338,7 +349,9 @@ export class Coordinator {
     try{
       if(kind==='RESUME')await this.store.authorizeResume?.(id);
       if(kind==='RESUME'&&(this.intents.get(id)??0)!==intent)throw new Error('Có lệnh Dừng mới; hủy Tiếp tục.');
-      result=await this.command(id,kind,automatic==='recovery'?{recovery:true}:automatic?{automatic:true}:{},s.run.runId,kind==='RESUME'?90000:45000);
+      const payload:Record<string,unknown>=automatic==='recovery'?{recovery:true}:automatic?{automatic:true}:{};
+      if(kind==='RESUME'&&(automatic==='returned_submit'||s.run.pendingReturnedRetry))payload.retryReturned={epoch:s.run.contentEpoch,retries:s.run.submissionRetries};
+      result=await this.command(id,kind,payload,s.run.runId,kind==='RESUME'?90000:45000);
       if(kind==='RESUME'&&(this.intents.get(id)??0)!==intent)throw new Error('Có lệnh Dừng mới; bỏ phản hồi Tiếp tục cũ.');
     }catch(error){
       this.runBuffer?.halt(id);

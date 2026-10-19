@@ -189,3 +189,15 @@ describe('durable coordinator state',()=>{
     await c.start([s.id],store.group('group').url,'test');expect(commands.at(-1)?.[1]).toBe('START');
   });
 });
+
+it('re-arms only an authorized returned-form attempt and rejects old progress and duplicate grants',async()=>{
+ const {store,members}=setup(1),id=members[0],s=store.session(id);
+ Object.assign(s.run!,{autoContinue:true,retryOnReturn:true,submissionEpoch:'old',contentEpoch:'new'});store.saveSession(s);store.acquireSubmit(id,'group','form');
+ store.authorizeReturnedRetry(id,'group','new',0);
+ expect(store.session(id).run).toMatchObject({submitAttempted:false,submissionRetries:1,status:'waiting_manual'});
+ store.authorizeReturnedRetry(id,'group','new',0);expect(store.session(id).run?.submissionRetries).toBe(1);
+ const current=store.session(id),before=current.run!;
+ expect(store.acceptProgress(id,{...before,submissionRetries:0,eventSeq:100,status:'completed',submitAttempted:true})).toBe(false);
+ current.run!.status='running';store.saveSession(current);store.acquireSubmit(id,'group','form');expect(()=>store.acquireSubmit(id,'group','form')).toThrow();
+ expect(store.session(id).run?.submitAttempted).toBe(true);
+});

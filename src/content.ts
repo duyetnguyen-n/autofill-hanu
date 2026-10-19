@@ -1,6 +1,6 @@
 import { HSK_RULES, getRule } from "./rules";
 import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize, matchesFinalQuestionLabel } from "./shared";
-import {classifyPage,type PageHealth} from './recovery';
+import {classifyPage,pageReadyResumeAllowed,returnedSubmissionAllowed,type PageHealth} from './recovery';
 import {canonicalFormId} from './protocol';
 import {hasSubmissionConfirmation} from './submission-confirmation';
 import type {FinalQuestion,ManualAnswer} from './shared';
@@ -15,8 +15,11 @@ let pendingStart:(()=>void)|undefined;
 let runRequestGeneration=0;
 let cancelManualResume: (() => void) | undefined;
 let cancelConfirmationWatch:(()=>void)|undefined;
-const documentEpoch=crypto.randomUUID();
+let documentEpoch=crypto.randomUUID();
+let refreshPageState:(()=>void)|undefined;
+let checkReturnedPage:(()=>void)|undefined;
 let boundRunId:string|undefined;
+let boundSubmissionRetries=0;
 let attentionToken:string|undefined;
 let attentionHeld=false;
 let activeFinalQuestion:FinalQuestion|undefined;
@@ -960,9 +963,24 @@ function armAutoResume(question: Question,wholePage=false): void {
   };
 }
 
+let progressWrites:Promise<void>=Promise.resolve();
+let progressError:Error|undefined;
 async function emit(event: FormEvent): Promise<void> {
-  const result=await chrome.runtime.sendMessage({ type: "FORM_EVENT", event,...(boundRunId?{runId:boundRunId,epoch:documentEpoch}:{}) } satisfies ExtensionMessage);
-  if(result?.ok===false){active=false;throw new Error(result.error);}
+  const generation=runRequestGeneration;
+  const message={type:'FORM_EVENT' as const,event,...(boundRunId?{runId:boundRunId,epoch:documentEpoch}:{})};
+  const send=async()=>{
+    const result=await chrome.runtime.sendMessage(message satisfies ExtensionMessage);
+    if(result?.ok===false)throw new Error(result.error);
+  };
+  if(event.type==='progress'){
+    // Rendering/input can overlap local progress persistence. Flush before any
+    // state transition or navigation; logs never authorize a form action.
+    progressWrites=progressWrites.then(send).catch(error=>{if(generation===runRequestGeneration){progressError=error;}});
+    return;
+  }
+  await progressWrites;
+  if(progressError){const error=progressError;progressError=undefined;throw error;}
+  try{await send();if(event.type==='block'||event.type==='transient_error')refreshPageState?.();}catch(error){if(generation===runRequestGeneration)active=false;throw error;}
 }
 
 export function pageHealth():PageHealth {
@@ -1041,7 +1059,7 @@ async function execute(depth = 0): Promise<void> {
   if(health.issue){active=false;if(health.retryable&&['network','server_error','navigation'].includes(health.issue.reason))await emit({type:'transient_error',reason:health.issue.reason as 'network'|'server_error'|'navigation',message:health.issue.message});else await emit({type:'block',issue:health.issue});return;}
   if (hasUnsatisfiedCaptcha()) {
     active = false;
-    await emit({ type: "block", issue: { reason: "captcha", message: "Phát hiện CAPTCHA chưa hoàn tất. Hãy tự giải rồi bấm Tiếp tục." } });
+    await emit({ type: "block", issue: { reason: "captcha", message: "Phát hiện CAPTCHA chưa hoàn tất. Extension giữ lượt và tự tiếp tục khi form sẵn sàng trở lại." } });
     return;
   }
 
@@ -1275,15 +1293,17 @@ async function execute(depth = 0): Promise<void> {
     submitAttempted = true;
     await emit({ type: "submit_attempt" });
     if(!active)return;
+    const submissionGeneration=runRequestGeneration;
     submit.click();
-    for(let i=0;i<80&&!completedPage();i++)await new Promise(r=>window.setTimeout(r,250));
+    for(let i=0;i<80&&active&&submissionGeneration===runRequestGeneration&&!completedPage();i++)await new Promise(r=>window.setTimeout(r,250));
+    if(!active||submissionGeneration!==runRequestGeneration)return;
     if (completedPage()) {
       active = false;
       await emit({ type: "completed", message: "Google Forms đã xác nhận nhận phản hồi." });
     } else {
       const error = validationError();
       active = false;
-      await emit({ type: "block", issue: { reason: error ? "validation" : "submit_uncertain", message: error ? `Google Forms báo lỗi: ${error}` : "Đã bấm Gửi nhưng chưa thấy xác nhận. Extension sẽ không tự gửi lại." } });
+      await emit({ type: "block", issue: { reason: error ? "validation" : "submit_uncertain", message: error ? `Google Forms báo lỗi: ${error}` : "Đã bấm Gửi nhưng chưa thấy xác nhận. Giữ lịch sử gửi; chỉ thử lại khi form được khôi phục và lượt cho phép." } });
     }
     });
     return;
@@ -1324,20 +1344,22 @@ async function execute(depth = 0): Promise<void> {
 function requestExecute(depth = 0): void {
   if (executionInFlight) return;
   executionInFlight = true;
+  const generation=runRequestGeneration;
   // One independent renderer lease per document avoids repeated debugger
   // attach/detach for each control. Nested upload/menu/Next retain all checks.
   void withAttention('Điền và đối chiếu trang form',()=>execute(depth)).catch(async (error) => {
-    if(!active)return;
+    if(!active||generation!==runRequestGeneration)return;
     active = false;
     await emit({ type: "failed", message: error instanceof Error ? error.message : String(error) });
   }).finally(() => {
     executionInFlight = false;
-    const start=pendingStart;pendingStart=undefined;start?.();
+    const start=pendingStart;pendingStart=undefined;start?.();if(!start&&!active)checkReturnedPage?.();
   });
 }
 
-const contentGlobal=globalThis as typeof globalThis&{__hanuContentRuntime?:unknown};
+const contentGlobal=globalThis as typeof globalThis&{__hanuContentRuntime?:unknown;__hanuReturnCleanup?:()=>void};
 if(contentGlobal.__hanuContentRuntime!==chrome.runtime){
+contentGlobal.__hanuReturnCleanup?.();
 contentGlobal.__hanuContentRuntime=chrome.runtime;
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   if(message.type==='PAGE_RUN_STATUS'){sendResponse({runId:boundRunId,active,inFlight:executionInFlight,epoch:documentEpoch});return;}
@@ -1348,11 +1370,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     return;
   }
   if (message.type === "HALT_RUN") {
-    runRequestGeneration++;pendingStart=undefined;
+    runRequestGeneration++;pendingStart=undefined;returnWatchRun=undefined;progressError=undefined;
     active = false;
     void releaseAttention();
     cancelManualResume?.();
     cancelConfirmationWatch?.();
+    if(message.watchReturn)void reconcileDocument();
     sendResponse?.({ ok: true });
     return;
   }
@@ -1360,40 +1383,88 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     cancelManualResume?.();
     cancelConfirmationWatch?.();
     const generation=++runRequestGeneration;
-    const start=()=>{if(generation!==runRequestGeneration)return;activeFinalQuestion=message.finalQuestion;savedCorrections=message.corrections??{};active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId){submitAttempted=false;manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
+    let authorizedRetries:number|undefined;
+    const start=()=>{if(generation!==runRequestGeneration)return;progressError=undefined;returnWatchRun=undefined;activeFinalQuestion=message.finalQuestion;savedCorrections=message.corrections??{};active=true;activeMode=message.mode;manualSkipQuestionId=message.skipQuestionId;if(message.runId!==boundRunId||authorizedRetries!==undefined&&authorizedRetries>boundSubmissionRetries)submitAttempted=false;boundSubmissionRetries=authorizedRetries??boundSubmissionRetries;if(message.runId!==boundRunId){manualCorrections.clear();boundRunId=message.runId;}requestExecute();};
     void Promise.resolve(chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage)).then(response=>{
-      if(generation!==runRequestGeneration||response?.ok===false||response?.run&&(response.run.runId!==message.runId||response.run.status!=='running'||response.run.recoveryRequired))return;
+      if(generation!==runRequestGeneration||response?.ok===false||response?.run&&(response.run.runId!==message.runId||response.run.status!=='running'||response.run.submitAttempted||response.run.recoveryRequired))return;
+      authorizedRetries=response?.run?.submissionRetries;
       if(executionInFlight){active=false;pendingStart=start;void releaseAttention();}else start();
     });
     sendResponse?.({ ok: true });
   }
 });
 
-// A Google Forms "Next" may replace the entire document (not merely swap
-// cards). The old content script is then destroyed mid-run. On every fresh
-// document, recover a still-running session from the service worker so page
-// advancement never depends on the user pressing Resume again.
-document.documentElement.dataset.hanuRecovery='claiming:2026-10-13';
-void Promise.resolve(chrome.runtime.sendMessage({ type: "CLAIM_DOCUMENT",epoch:documentEpoch } satisfies ExtensionMessage))
-  .then(response=>response?.run??chrome.runtime.sendMessage({ type: "GET_RUN_FOR_TAB" } satisfies ExtensionMessage))
-  .then(async (run: RunState | undefined) => {
+// Reconcile both new documents and documents restored by Back/Forward. A
+// temporary block never overrides an explicit Pause/Stop in durable state.
+let returnWatchRun:RunState|undefined;
+let reentryWork:Promise<void>|undefined;
+let returnRequest:Promise<void>|undefined;
+let returnTimer:ReturnType<typeof setTimeout>|undefined;
+let returnFailures=0;
+let acknowledgedReturn:string|undefined;
+let observedSubmitting:string|undefined;
+const returnKey=(run:RunState)=>`${run.runId}:${documentEpoch}:${run.submissionRetries??0}`;
+let disposed=false;
+let reconcileAgain=false;
+function checkPageReturn(){
+  if(disposed||active||executionInFlight||returnRequest||!(pageReadyResumeAllowed(returnWatchRun)||returnedSubmissionAllowed(returnWatchRun)))return;
+  const health=pageHealth();if(health.issue||!health.ready)return;
+  const run=returnWatchRun!,generation=runRequestGeneration,key=returnKey(returnWatchRun!);
+  if(acknowledgedReturn===key)return;
+  document.documentElement.dataset.hanuReturnState='requesting';
+  returnRequest=(async()=>{
+    const result=await chrome.runtime.sendMessage({type:'AUTO_RESUME',source:'page_ready',runId:run.runId,epoch:documentEpoch} satisfies ExtensionMessage);
+    if(result?.ok===false)throw new Error(result.error);
+    if(generation===runRequestGeneration){acknowledgedReturn=key;returnWatchRun=undefined;}document.documentElement.dataset.hanuReturnState='resumed';
+  })().catch(error=>{
+    document.documentElement.dataset.hanuReturnState=String(error?.message??error).slice(0,500);
+    // Recheck transient command failures without reloading the form or
+    // clicking Next. Explicit Stop is checked again in the background.
+    if(!disposed&&generation===runRequestGeneration&&returnFailures++<3){clearTimeout(returnTimer);returnTimer=setTimeout(()=>void reconcileDocument(),[250,1000,3000][Math.min(returnFailures-1,2)]);}
+  }).finally(()=>{returnRequest=undefined;});
+}
+function reconcileDocument():Promise<void>{
+  if(reentryWork){reconcileAgain=true;return reentryWork;}
+  const generation=runRequestGeneration;
+  reentryWork=(async()=>{
+    const response=await chrome.runtime.sendMessage({type:'CLAIM_DOCUMENT',epoch:documentEpoch} satisfies ExtensionMessage);
+    if(disposed||generation!==runRequestGeneration||response?.ok===false)return;
+    const candidate=response?.run??await chrome.runtime.sendMessage({type:'GET_RUN_FOR_TAB'} satisfies ExtensionMessage);
+    const run:RunState|undefined=candidate?.runId?candidate:undefined;
+    if(disposed||generation!==runRequestGeneration)return;
+    returnWatchRun=run;
     activeFinalQuestion=run?.finalQuestion;savedCorrections=run?.corrections??{};
     document.documentElement.dataset.hanuRecovery=run?`${run.status}:${run.recoveryRequired?'recovery-required':'available'}`:'no-run';
-    // Submit can also replace the document. Recover the acknowledgement with
-    // the existing lock; never execute the form or request another submit.
     if(run?.submitAttempted){
-      boundRunId=run.runId;submitAttempted=true;active=false;
+      boundRunId=run.runId;boundSubmissionRetries=run.submissionRetries??0;submitAttempted=true;active=false;
       if(completedPage()){await emit({type:'completed',message:'Google Forms hiển thị xác nhận đã nộp biểu mẫu. Chờ đơn vị tiếp nhận xác nhận kết quả đăng ký.'});return;}
-      else if(run.status==='submitting')await emit({type:'block',issue:{reason:'submit_uncertain',message:'Trang sau Gửi chưa xác nhận nhận phản hồi. Giữ khóa gửi để đối chiếu.'}});
-      if(run.status!=='completed')watchSubmissionConfirmation();
+      if(run.status==='submitting'&&observedSubmitting!==returnKey(run)){observedSubmitting=returnKey(run);await emit({type:'block',issue:{reason:'submit_uncertain',message:'Trang sau Gửi chưa xác nhận nhận phản hồi. Giữ lịch sử gửi để đối chiếu.'}});}
+      if(run.status!=='completed'){watchSubmissionConfirmation();checkPageReturn();}
       return;
     }
-    if (run?.status !== "running" ||run.recoveryRequired) return;
-    active = true;
-    activeMode = run.mode;
-    boundRunId=run.runId;
-    requestExecute();
-  })
-  .catch(() => {document.documentElement.dataset.hanuRecovery='failed';});
+    if(run?.status!=='running'||run.recoveryRequired){active=false;checkPageReturn();return;}
+    if(active&&run.runId===boundRunId)return;
+    if(run.runId!==boundRunId||(run.submissionRetries??0)>boundSubmissionRetries){submitAttempted=false;manualCorrections.clear();}boundSubmissionRetries=run.submissionRetries??0;
+    const start=()=>{if(disposed||generation!==runRequestGeneration)return;progressError=undefined;active=true;activeMode=run.mode;boundRunId=run.runId;returnWatchRun=undefined;requestExecute();};
+    if(executionInFlight){active=false;pendingStart=start;}else start();
+  })().catch(()=>{document.documentElement.dataset.hanuRecovery='failed';}).finally(()=>{reentryWork=undefined;if(reconcileAgain&&!disposed){reconcileAgain=false;void reconcileDocument();}});
+  return reentryWork;
+}
+const onPageReturn=(event:Event)=>{if(event.type==='pageshow'){if(!(event as PageTransitionEvent).persisted)return;documentEpoch=crypto.randomUUID();}returnFailures=0;void reconcileDocument();};
+refreshPageState=()=>void reconcileDocument();
+checkReturnedPage=checkPageReturn;
+const onPageHide=()=>{runRequestGeneration++;progressWrites=Promise.resolve();progressError=undefined;active=false;pendingStart=undefined;returnWatchRun=undefined;cancelManualResume?.();cancelConfirmationWatch?.();void releaseAttention();};
+window.addEventListener('pageshow',onPageReturn);
+window.addEventListener('popstate',onPageReturn);
+window.addEventListener('online',onPageReturn);
+window.addEventListener('pagehide',onPageHide);
+const returnObserver=new MutationObserver(checkPageReturn);
+returnObserver.observe(document.body,{childList:true,subtree:true,attributes:true,characterData:true});
+contentGlobal.__hanuReturnCleanup=()=>{
+  disposed=true;refreshPageState=undefined;checkReturnedPage=undefined;clearTimeout(returnTimer);returnObserver.disconnect();
+  window.removeEventListener('pageshow',onPageReturn);window.removeEventListener('popstate',onPageReturn);window.removeEventListener('online',onPageReturn);window.removeEventListener('pagehide',onPageHide);
+};
+document.documentElement.dataset.hanuRecovery='claiming:2026-10-19';
+void reconcileDocument();
 
 }

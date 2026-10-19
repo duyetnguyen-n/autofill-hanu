@@ -187,3 +187,17 @@ it('commits Stop atomically against the latest checkpoint and never stops a repl
  const replacement=await c.start([id],group.url,'test');
  expect((await store.acknowledgeStop(id,group.id,{execution:null})).run).toMatchObject({runId:replacement.id,status:'running'});
 });
+
+it('transactionally re-arms a returned form without claiming the earlier response was not received',async()=>{
+ const f=await setup(),{members,group}=await start(f),a=members[0],s=await a.store.session(a.sessionId);
+ Object.assign(s.run!,{autoContinue:true,retryOnReturn:true,submissionEpoch:'old',contentEpoch:'new'});await a.store.saveSession(s);await a.store.acquireSubmit(a.sessionId,group.id,'fixture-form');
+ await a.store.authorizeReturnedRetry(a.sessionId,group.id,'new',0);
+ let current=await a.store.session(a.sessionId);expect(current.run).toMatchObject({submitAttempted:false,submissionRetries:1,status:'waiting_manual'});
+ expect((await f.pool.query('SELECT resolution FROM hanu.locks WHERE session=$1',[a.sessionId])).rows[0].resolution).toBe('local_reserved');
+ await a.store.authorizeReturnedRetry(a.sessionId,group.id,'new',0);expect((await a.store.session(a.sessionId)).run?.submissionRetries).toBe(1);
+ current.run!.contentEpoch='newer';await a.store.saveSession(current);await a.store.authorizeReturnedRetry(a.sessionId,group.id,'newer',0);expect((await a.store.session(a.sessionId)).run?.pendingReturnedRetry?.epoch).toBe('newer');
+ expect(await a.store.acceptProgress(a.sessionId,{...current.run!,submissionRetries:0,submitAttempted:true,status:'completed',eventSeq:100})).toBe(false);
+ current=await a.store.session(a.sessionId);current.run!.status='running';await a.store.saveSession(current);
+ const grants=await Promise.allSettled([a.store.acquireSubmit(a.sessionId,group.id,'fixture-form'),a.store.acquireSubmit(a.sessionId,group.id,'fixture-form')]);
+ expect(grants.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+},20000);

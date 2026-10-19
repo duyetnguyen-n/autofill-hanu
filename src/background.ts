@@ -3,7 +3,7 @@ import { ExtensionMessage, FormEvent, Profile, RunLogEntry, RunMode, RunState, v
 import type { PickerUploadResult } from "./picker-upload";
 import { StoredPickerUploads } from './stored-picker-upload';
 import { createNativeClient } from './native-client';
-import {automaticRecoveryAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
+import {automaticRecoveryAllowed,pageReadyResumeAllowed,returnedSubmissionAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
 import { cloudOrigin } from './coordinator-transport';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 
@@ -149,10 +149,10 @@ async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE
 function now(): string {
   return new Date().toISOString();
 }
-async function haltDocument(tabId:number){
+async function haltDocument(tabId:number,watchReturn=false){
   let timer:ReturnType<typeof setTimeout>|undefined;
   // A frozen renderer must not hold the durable control/recovery queue open.
-  await Promise.race([chrome.tabs.sendMessage(tabId,{type:'HALT_RUN'}).catch(()=>{}),new Promise<void>(resolve=>timer=setTimeout(resolve,500))]).finally(()=>clearTimeout(timer));
+  await Promise.race([chrome.tabs.sendMessage(tabId,{type:'HALT_RUN',...(watchReturn?{watchReturn:true}:{})}).catch(()=>{}),new Promise<void>(resolve=>timer=setTimeout(resolve,500))]).finally(()=>clearTimeout(timer));
 }
 async function observePage<T>(work:Promise<T>):Promise<T>{
   let timer:ReturnType<typeof setTimeout>|undefined;
@@ -171,9 +171,9 @@ async function getRun(tabId: number): Promise<RunState | undefined> {
   return result[`${RUN_PREFIX}${tabId}`] as RunState | undefined;
 }
 
-async function writeRunNow(run:RunState):Promise<void>{
+async function writeRunNow(run:RunState,returnedRetry=false):Promise<void>{
     const previous=await getRun(run.tabId);
-    if(previous?.runId===run.runId){run.eventSeq=Math.max(previous?.eventSeq??0,run.eventSeq??0);run.contentEpoch??=previous?.contentEpoch;if(previous?.submitAttempted)run.submitAttempted=true;}
+    if(previous&&previous.runId===run.runId){if((run.submissionRetries??0)!==(previous.submissionRetries??0)&&!(returnedRetry&&(run.submissionRetries??0)===(previous.submissionRetries??0)+1))throw new Error('Sự kiện thuộc lần gửi cũ.');run.eventSeq=Math.max(previous?.eventSeq??0,run.eventSeq??0);run.contentEpoch??=previous?.contentEpoch;if(previous?.submitAttempted&&!returnedRetry)run.submitAttempted=true;}
     if(run.managed&&interruptedRuns.has(run.runId!)&&run.status==='running'){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
     storedPickerUploads.reconcile(run.tabId, run);
     run.eventSeq = (run.eventSeq ?? 0) + 1;
@@ -295,9 +295,9 @@ class PageProblem extends Error {
 
 async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,expectedEpoch?:string):Promise<RunState|undefined>{
   const result=await writeState(async()=>{
-    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!['running','submitting','submit_uncertain'].includes(current.status)||interruptedRuns.has(runId)&&!current.submitAttempted)return;
+    const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!(['running','submitting','submit_uncertain'].includes(current.status)||pageReadyResumeAllowed(current))||interruptedRuns.has(runId)&&!current.submitAttempted)return;
     if(expectedEpoch!==undefined&&current.contentEpoch!==expectedEpoch)return;
-    if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt đã giữ khóa gửi; chưa thể kết luận chưa gửi. Mở form kiểm tra kết quả trước khi xác minh; không tự tải lại hoặc gửi lại.`};current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;}
+    if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt này chưa thể kết luận chưa gửi. Giữ nguyên trang để kiểm tra; nếu lượt cho phép thử lại, extension tự tiếp tục khi đúng form sẵn sàng trở lại.`};current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;}
     else if(health.retryable&&health.issue&&['network','server_error','navigation'].includes(health.issue.reason)){
       const next=transientState(current,health.issue.reason as 'network'|'server_error'|'navigation',health.issue.message);await writeRunNow(next);return next;
     }else{
@@ -306,7 +306,7 @@ async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,exp
     }
     await writeRunNow(current);return current;
   });
-  if(result){scheduleRecovery(result);await haltDocument(result.tabId);}
+  if(result){scheduleRecovery(result);await haltDocument(result.tabId,true);}
   return result;
 }
 
@@ -494,6 +494,7 @@ async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
     formId,
     url:tab.url,
     mode,
+    autoContinue:true,retryOnReturn:true,
     status: "running",
     filled: existing?.filled ?? [],
     skipped: existing?.skipped ?? [],
@@ -516,7 +517,7 @@ async function haltRun(tabId:number,status:'idle'|'paused'):Promise<RunState|und
     const current=await getRun(tabId);if(!current||current.status==='completed')return current;
     if(current.runId)interruptedRuns.add(current.runId);
     cancelRecovery(current.runId);
-    const next=addLog({...current,activity:undefined,recovery:current.recovery?{...current.recovery,automatic:false}:undefined,status:current.submitAttempted?'submit_uncertain':status,recoveryRequired:false,blockingIssue:current.submitAttempted?current.blockingIssue:undefined},'info',status==='idle'?'Đã dừng. Giữ dữ liệu và khóa gửi của lượt.':'Đã tạm dừng theo yêu cầu.');
+    const next=addLog({...current,autoContinue:false,activity:undefined,recovery:current.recovery?{...current.recovery,automatic:false}:undefined,status:current.submitAttempted?'submit_uncertain':status,recoveryRequired:false,blockingIssue:current.submitAttempted?current.blockingIssue:undefined},'info',status==='idle'?'Đã dừng. Giữ dữ liệu và khóa gửi của lượt.':'Đã tạm dừng theo yêu cầu.');
     await writeRunNow(next);return next;
   });
   await haltDocument(tabId);
@@ -540,7 +541,7 @@ async function resumeRun(tabId: number,automatic=false): Promise<RunState | unde
     if(epoch!==interruptEpoch||latest?.runId!==current.runId)throw new Error('Có lệnh Dừng mới; không tiếp tục lượt cũ.');
     if(!automatic&&latest?.runId)interruptedRuns.delete(latest.runId);
     if(!latest||automatic&&(latest.runId!==current.runId||latest.contentEpoch!==current.contentEpoch||latest.status!=='waiting_manual'||latest.submitAttempted||latest.recoveryRequired||interruptedRuns.has(current.runId!)))throw new Error('Lượt đã dừng hoặc thay đổi; không tự tiếp tục.');
-    const next=addLog({...latest,status:'running',blockingIssue:undefined,updatedAt:now()},'info',automatic?'Dữ liệu đã được sửa hợp lệ; đang tự tiếp tục.':'Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.');
+    const next=addLog({...latest,status:'running',autoContinue:true,retryOnReturn:true,blockingIssue:undefined,recovery:undefined,updatedAt:now()},'info',automatic?'Trang đã sẵn sàng; đang tự tiếp tục từ dữ liệu hiện có.':'Đang quét lại trang hiện tại; các giá trị khác hồ sơ sẽ được cập nhật rồi tự đi tiếp.');
     await writeRunNow(next);return next;
   });
   // A reload may have erased the upload that used to block this run. Resume
@@ -549,15 +550,32 @@ async function resumeRun(tabId: number,automatic=false): Promise<RunState | unde
   return run;
 }
 
+async function authorizeLocalReturnedRetry(run:RunState,retries=(run.submissionRetries??0)+1,manual=false){
+  return writeState(async()=>{
+    const latest=await getRun(run.tabId);
+    if(latest&&latest.runId===run.runId&&latest.contentEpoch===run.contentEpoch&&!latest.submitAttempted&&latest.submissionRetries===retries)return latest;
+    if(!returnedSubmissionAllowed(manual&&latest?{...latest,autoContinue:true}:latest)||latest!.runId!==run.runId||latest!.contentEpoch!==run.contentEpoch||!manual&&interruptedRuns.has(run.runId!)||retries!==(latest!.submissionRetries??0)+1)throw new Error('Lượt/trang đã thay đổi; hủy thử gửi lại.');
+    const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};
+    if(locks[run.runId!])locks[run.runId!].retryReady=true;
+    await chrome.storage.local.set({submissionLocks:locks});
+    if(manual)interruptedRuns.delete(run.runId!);
+    const next=addLog({...latest!,autoContinue:true,submitAttempted:false,status:'waiting_manual',submissionRetries:retries,blockingIssue:{reason:'navigation',message:'Form đã trở lại. Đang tiếp tục theo chế độ cho phép gửi trùng.'}},'warning','Cho phép thử lại trên form đã khôi phục; kết quả lần gửi trước vẫn chưa rõ và có thể tạo phản hồi trùng.');
+    await writeRunNow(next,true);return next;
+  });
+}
+
 async function autoResumePage(message:Extract<ExtensionMessage,{type:'AUTO_RESUME'}>,sender:chrome.runtime.MessageSender){
   const tabId=sender.tab?.id;
   if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
   const run=await getRun(tabId);
-  if(!run?.runId||message.runId!==run.runId||message.epoch!==run.contentEpoch||run.formId!==canonicalFormId(sender.url??sender.tab?.url??'')||run.status!=='waiting_manual'||run.submitAttempted||run.recoveryRequired||interruptedRuns.has(run.runId)||!['validation','unknown_required','file_upload','unsupported'].includes(run.blockingIssue?.reason??''))throw new Error('Lượt đã dừng, thay đổi hoặc không chờ sửa dữ liệu.');
+  if(!run?.runId||message.runId!==run.runId||message.epoch!==run.contentEpoch||run.formId!==canonicalFormId(sender.url??sender.tab?.url??'')||run.recoveryRequired||interruptedRuns.has(run.runId)||!(message.source==='page_ready'?(pageReadyResumeAllowed(run)||returnedSubmissionAllowed(run)):!run.submitAttempted&&run.status==='waiting_manual'&&['validation','unknown_required','file_upload','unsupported'].includes(run.blockingIssue?.reason??'')))throw new Error('Lượt đã dừng, thay đổi hoặc không chờ sửa dữ liệu.');
+  if(message.source==='page_ready'){const health=await sendToForm<PageHealth>(tabId,{type:'PAGE_HEALTH'});if(health.issue||!health.ready)throw new Error('Form chưa sẵn sàng.');}
   if(run.managed){
     if(!native.isConnected())throw new Error('App mất kết nối; không tự tiếp tục.');
-    await native.request('AUTO_RESUME',run);
-  }else await resumeRun(tabId,true);
+    if(run.submitAttempted)await checkAccount(tabId,run.expectedEmail!);
+    if(message.source)await native.request('AUTO_RESUME',run,{source:run.submitAttempted?'returned_submit':message.source,epoch:run.contentEpoch,retries:run.submissionRetries??0});else await native.request('AUTO_RESUME',run);
+  }else {if(run.submitAttempted)await authorizeLocalReturnedRetry(run);await resumeRun(tabId,true);}
+  cancelRecovery(run.runId);
   return {ok:true,resumed:true};
 }
 
@@ -574,7 +592,7 @@ async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:
   let run = current;
   if(event.type==='activity'){run={...run,activity:{phase:event.phase,message:event.message,at:now()}};}
   else if(event.type==='corrections'){if(!validCorrections(event.answers))throw new Error('Đáp án sửa tay không hợp lệ.');run={...run,corrections:{...run.corrections,...event.answers}};}
-  else if(event.type==='transient_error'){if(run.submitAttempted){run=addLog({...run,status:'submit_uncertain',blockingIssue:{reason:'submit_uncertain',message:'Google lỗi sau khi đã khóa gửi. Giữ khóa để đối chiếu; không tự gửi lại.'}},'warning',event.message);}else run=transientState(run,event.reason,event.message);}
+  else if(event.type==='transient_error'){if(run.submitAttempted){run=addLog({...run,status:'submit_uncertain',blockingIssue:{reason:'submit_uncertain',message:'Google lỗi sau khi đã khóa gửi. Giữ lịch sử để đối chiếu; tự tiếp tục khi đúng form được khôi phục nếu lượt cho phép.'}},'warning',event.message);}else run=transientState(run,event.reason,event.message);}
   else if (event.type === "progress") {
     run = addLog({ ...run, status: "running", blockingIssue: undefined }, "info", event.message);
     if (event.filled && !run.filled.includes(event.filled)) run.filled = [...run.filled, event.filled];
@@ -659,7 +677,7 @@ const documentInspections=new Map<number,Promise<void>>();
 async function inspectLoadedDocument(tabId:number):Promise<void>{
   if(documentInspections.has(tabId))return documentInspections.get(tabId)!;
   const work=(async()=>{
-    const before=await getRun(tabId);if(!before||!['running','submitting','submit_uncertain'].includes(before.status)||before.recoveryRequired)return;
+    const before=await getRun(tabId);if(!before||!(['running','submitting','submit_uncertain'].includes(before.status)||pageReadyResumeAllowed(before))||before.recoveryRequired)return;
     const tab=await chrome.tabs.get(tabId).catch(()=>undefined);if(!tab)return;
     const externalIssue=/^https:\/\/accounts\.google\.com\//i.test(tab.url??'')?{reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản rồi bấm Tiếp tục.'}:/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(tab.url??'')?{reason:'captcha' as const,message:'Google chặn lưu lượng và yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'}:undefined;
     if(externalIssue){await blockPageProblem(before.runId!,{issue:externalIssue},tabId);return;}
@@ -668,7 +686,7 @@ async function inspectLoadedDocument(tabId:number):Promise<void>{
     try{health=await sendToForm<PageHealth>(tabId,{type:'PAGE_HEALTH'});}
     catch{health={issue:{reason:'network',message:'Trang Google không tải được hoặc extension chưa đọc được trang.'},retryable:true};}
     if(!health?.issue)return;
-    const latest=await getRun(tabId);if(!latest||latest.runId!==before.runId||!['running','submitting','submit_uncertain'].includes(latest.status)||latest.recoveryRequired||latest.contentEpoch!==before.contentEpoch)return;
+    const latest=await getRun(tabId);if(!latest||latest.runId!==before.runId||!(['running','submitting','submit_uncertain'].includes(latest.status)||pageReadyResumeAllowed(latest))||latest.recoveryRequired||latest.contentEpoch!==before.contentEpoch)return;
     await blockPageProblem(before.runId!,health,tabId,before.contentEpoch);
   })();documentInspections.set(tabId,work);try{await work;}finally{if(documentInspections.get(tabId)===work)documentInspections.delete(tabId);}
 }
@@ -677,7 +695,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   storedPickerUploads.cancel(tabId);
   cancelNavigationWatch(tabId);
   void releasePageAttention(tabId);
-  void writeState(async()=>{const run=await getRun(tabId);if(run&&!endedExecution(run)){cancelRecovery(run.runId);if(run.runId)interruptedRuns.add(run.runId);run.status=run.submitAttempted?'submit_uncertain':'idle';run.activity=undefined;if(run.recovery)run.recovery.automatic=false;run.recoveryRequired=false;run.blockingIssue=run.submitAttempted?run.blockingIssue:undefined;run.logs.push({at:now(),level:'warning',message:'Tab đăng ký đã đóng. Đã dừng lượt và giải phóng profile.'});await writeRunNow(run);}});
+  void writeState(async()=>{const run=await getRun(tabId);if(run&&!endedExecution(run)){cancelRecovery(run.runId);if(run.runId)interruptedRuns.add(run.runId);run.autoContinue=false;run.status=run.submitAttempted?'submit_uncertain':'idle';run.activity=undefined;if(run.recovery)run.recovery.automatic=false;run.recoveryRequired=false;run.blockingIssue=run.submitAttempted?run.blockingIssue:undefined;run.logs.push({at:now(),level:'warning',message:'Tab đăng ký đã đóng. Đã dừng lượt và giải phóng profile.'});await writeRunNow(run);}});
 });
 
 let messageQueue=Promise.resolve();
@@ -716,7 +734,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if(message.type==='NATIVE_UNLINK')return sendResponse(await native.unlink());
       if(message.type==='NATIVE_OPEN_MANAGER'){const url=cloudOrigin()||(await native.request('OPEN_MANAGER')).url;await chrome.tabs.create({url,active:true});return sendResponse({ok:true});}
       if(message.type==='CLAIM_DOCUMENT'){
-        if(sender.tab?.id===undefined||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
+        if(sender.tab?.id===undefined||sender.documentLifecycle&&sender.documentLifecycle!=='active'||!isFormsUrl(sender.url??sender.tab.url)||(sender.frameId??0)!==0)throw new Error('Trang không hợp lệ.');
         formReadiness.get(sender.tab.id)?.();
         const run=await getRun(sender.tab.id);
         if(run?.contentEpoch!==message.epoch){cancelNavigationWatch(sender.tab.id);storedPickerUploads.cancel(sender.tab.id);}
@@ -815,7 +833,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 });
 
 async function getManaged():Promise<RunState|undefined>{return (await chrome.storage.local.get('managedRun')).managedRun;}
-async function hasLocalLock(formId:string){const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};return Object.values(locks).some((v:any)=>v.formId===formId&&v.resolution!=='not_received');}
+async function hasLocalLock(formId:string,retryingRun?:string){const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};return Object.entries(locks).some(([id,v]:[string,any])=>v.formId===formId&&v.resolution!=='not_received'&&!(id===retryingRun&&v.retryReady===true));}
 async function checkAccount(tabId:number,expected:string){
   let result=await sendToForm<{email?:string;error?:string;health?:PageHealth}>(tabId,{type:'PAGE_ACCOUNT'});
   // Occluded Forms can have zero-width account headers before autofill starts.
@@ -873,7 +891,7 @@ async function startManaged(command:Command,sessionId:string){
   await acquireLease(command.runId,-1,true);
   ledger[command.runId]=now();await chrome.storage.local.set({managedRunLedger:ledger});
   if(interruptedRuns.has(command.runId))throw new Error('Lượt đã dừng trước khi mở form.');
-  let run:RunState={runId:command.runId,sessionId,managed:true,profileSnapshot:profile,finalQuestion:command.payload.finalQuestion,profileRevision:Number(command.payload.revision),attachmentHashes,recoveryRequired:true,expectedEmail:String(command.payload.expectedEmail),url:String(command.payload.url),tabId:-1,formId:'',mode:command.payload.mode as 'test'|'live',status:'running',activity:{phase:'opening',message:'Đang mở form trong đúng profile.',at:now()},filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:now(),startedAt:now(),eventSeq:0};
+  let run:RunState={runId:command.runId,sessionId,managed:true,autoContinue:true,retryOnReturn:true,profileSnapshot:profile,finalQuestion:command.payload.finalQuestion,profileRevision:Number(command.payload.revision),attachmentHashes,recoveryRequired:true,expectedEmail:String(command.payload.expectedEmail),url:String(command.payload.url),tabId:-1,formId:'',mode:command.payload.mode as 'test'|'live',status:'running',activity:{phase:'opening',message:'Đang mở form trong đúng profile.',at:now()},filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:now(),startedAt:now(),eventSeq:0};
   await saveRun(run);
   // Keep the registration tab selected in its own profile window. Background
   // tabs can throttle Forms initialization and the content script's timers.
@@ -959,7 +977,7 @@ async function managedControl(command:Command){
       return {...result,formId:canonicalFormId(tab.url!),url:tab.url};
     }finally{await disablePageRendering(tab.id,token);}
   }
-  const run=await getManaged();if(!run||run.runId!==command.runId)throw new Error('Lượt điều khiển không khớp.');
+  let run=await getManaged();if(!run||run.runId!==command.runId)throw new Error('Lượt điều khiển không khớp.');
   if(command.kind==='SET_FINAL_QUESTION'){
     validateFinalQuestion(command.payload.finalQuestion);
     if(!command.payload.finalQuestion||run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(run.status))throw new Error('Chỉ cập nhật câu hỏi cuối khi lượt đang chờ và chưa gửi.');
@@ -972,10 +990,11 @@ async function managedControl(command:Command){
   if(command.kind==='STOP'){interruptedRuns.add(run.runId!);return stopRun(run.tabId);}
   if(command.kind==='PAUSE'){interruptedRuns.add(run.runId!);return pauseRun(run.tabId);}
   if(command.kind==='RESUME'){
+    if(command.payload.retryReturned){const retry=command.payload.retryReturned as {epoch:string;retries:number};if(run.contentEpoch!==retry.epoch)throw new Error('Trang thử lại đã thay đổi.');run=await authorizeLocalReturnedRetry(run,retry.retries,command.payload.automatic!==true);}
     if(command.payload.automatic&&(run.status!=='waiting_manual'||run.recoveryRequired||interruptedRuns.has(run.runId!)))throw new Error('Lượt đã dừng; không tự tiếp tục.');
     if(run.submitAttempted)throw new Error('Lượt đã khóa gửi.');
     const epoch=interruptEpoch;
-    await native.request('CHECK_FORM',run);
+    if(!command.payload.retryReturned)await native.request('CHECK_FORM',run);
     if(epoch!==interruptEpoch)throw new Error('Có lệnh Dừng mới; không tiếp tục.');
     return prepareResume(run,command.payload.automatic===true,command.payload.recovery===true);
   }
@@ -990,11 +1009,11 @@ async function grantSubmit(message:Extract<ExtensionMessage,{type:'REQUEST_SUBMI
   if(initial!.managed){if(!native.isConnected())throw new Error('App đang mất kết nối.');await checkAccount(tabId,initial!.expectedEmail!);}
   const run=await writeState(async()=>{
     const latest=await getRun(tabId);if(!valid(latest))throw new Error('Lượt/trang đã dừng hoặc thay đổi trước khi cấp quyền gửi.');
-    if(await hasLocalLock(latest!.formId))throw new Error('Form có khóa gửi.');
+    if(await hasLocalLock(latest!.formId,latest!.runId))throw new Error('Form có khóa gửi.');
     if(epoch!==interruptEpoch)throw new Error('Có lệnh Dừng mới; không cấp quyền gửi.');
     const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};
     locks[latest!.runId!]={formId:latest!.formId,resolution:'uncertain',createdAt:now()};
-    await chrome.storage.local.set({submissionLocks:locks});latest!.submitAttempted=true;latest!.status='submitting';latest!.activity=undefined;latest!.recovery=undefined;cancelRecovery(latest!.runId);await writeRunNow(latest!);return latest!;
+    await chrome.storage.local.set({submissionLocks:locks});latest!.submitAttempted=true;latest!.submissionEpoch=latest!.contentEpoch;latest!.status='submitting';latest!.activity=undefined;latest!.recovery=undefined;cancelRecovery(latest!.runId);await writeRunNow(latest!);return latest!;
   });
   try{if(run.managed)await native.request('SUBMIT',run);}
   catch(error){await writeState(async()=>{const current=await getRun(tabId);if(current&&current.runId===run.runId){current.status='submit_uncertain';current.blockingIssue={reason:'submit_uncertain',message:(error as Error).message};await writeRunNow(current);}});throw error;}

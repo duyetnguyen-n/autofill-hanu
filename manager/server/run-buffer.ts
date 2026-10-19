@@ -60,7 +60,7 @@ export class RunBuffer {
     const entry = this.entries.get(id);
     if (!entry) return undefined;
     const current = entry.session.run, group = entry.group;
-    if (!validCloudProgress(run) || !current || run.runId !== current.runId || run.sessionId !== id ||
+    if (!validCloudProgress(run) || !current || (run.submissionRetries??0)!==(current.submissionRetries??0) || run.runId !== current.runId || run.sessionId !== id ||
         run.eventSeq! <= (current.eventSeq ?? 0) || current.submitAttempted && !run.submitAttempted ||
         (entry.halted || group.paused) && run.status === 'running' ||
         current.formId && run.formId !== current.formId ||
@@ -72,7 +72,7 @@ export class RunBuffer {
       if (run.eventSeq! > (entry.resuming.terminal?.eventSeq ?? -1)) entry.resuming.terminal = structuredClone(run);
       return false;
     }
-    entry.session.run = { ...structuredClone(run), mode: current.mode, managed: true,
+    entry.session.run = { ...structuredClone(run), mode: current.mode, managed: true, retryOnReturn:current.retryOnReturn,pendingReturnedRetry:current.pendingReturnedRetry,
       url: current.url, expectedEmail: current.expectedEmail, profileRevision: current.profileRevision,
       startedAt: current.startedAt, profileSnapshot: current.profileSnapshot, finalQuestion: current.finalQuestion };
     entry.session.error = run.blockingIssue?.message ?? (run.status === 'failed' ? run.logs.at(-1)?.message : undefined);
@@ -110,7 +110,7 @@ export class RunBuffer {
   submitted(id: string, seq?: number) {
     const entry = this.entries.get(id);
     if (entry?.session.run) {
-      entry.session.run.submitAttempted = true; entry.session.run.status = 'submitting';
+      entry.session.run.pendingReturnedRetry=undefined;entry.session.run.submitAttempted = true; entry.session.run.status = 'submitting';
       if (seq !== undefined && (entry.session.run.eventSeq ?? 0) <= seq) entry.runDirty = false;
     }
   }
