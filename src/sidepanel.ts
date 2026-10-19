@@ -259,6 +259,21 @@ function updateRun(next: RunState | undefined): void {
   renderRun();
 }
 
+// Chrome can suspend the panel while switching to the new tab created by
+// Restart. Reconcile missed broadcasts without replacing unsaved profile edits.
+let runRefresh:Promise<void>|undefined;
+function refreshRunOnly():Promise<void>{
+  if(runRefresh)return runRefresh;
+  const pending=send<{run?:RunState}>({type:'GET_PANEL_STATE',tabId:targetTabId}).then(state=>{
+    if(state.run)updateRun(state.run);
+  });
+  runRefresh=pending;void pending.finally(()=>{if(runRefresh===pending)runRefresh=undefined;}).catch(()=>{});
+  return pending;
+}
+const reconcileVisibleRun=()=>{if(document.visibilityState!=='hidden')void refreshRunOnly().catch(()=>{});};
+window.addEventListener('focus',reconcileVisibleRun);
+document.addEventListener('visibilitychange',reconcileVisibleRun);
+
 $(HTMLButtonElement, "#saveProfile").addEventListener("click", () => void saveProfile());
 $(HTMLSelectElement, "#runMode").addEventListener("change", renderModeHelp);
 $(HTMLButtonElement, "#scanForm").addEventListener("click", async () => {
@@ -342,7 +357,8 @@ if(cloudOrigin()){
 }
 $(HTMLButtonElement,'#unlinkProfile').addEventListener('click',async()=>{try{await send({type:'NATIVE_UNLINK'});await refreshNative();}catch(e){$(HTMLElement,'#nativeStatus').textContent=(e as Error).message;}});
 $(HTMLButtonElement,'#pairProfile').addEventListener('click',async()=>{const button=$(HTMLButtonElement,'#pairProfile');button.disabled=true;button.textContent='Đang liên kết...';try{await send({type:'NATIVE_PAIR',code:$(HTMLInputElement,'#pairCode').value});await refreshNative();}catch(e){const status=$(HTMLElement,'#nativeStatus');status.textContent=(e as Error).message;status.className='native-error';}finally{button.disabled=false;button.textContent='Liên kết profile';}});
-void refreshNative();setInterval(()=>void refreshNative(),3000);
+void refreshNative();const statusTimer=setInterval(()=>{void refreshNative();reconcileVisibleRun();},3000);
+window.addEventListener('pagehide',()=>{clearInterval(statusTimer);window.removeEventListener('focus',reconcileVisibleRun);document.removeEventListener('visibilitychange',reconcileVisibleRun);},{once:true});
 $(HTMLButtonElement,'#copyExtensionId').addEventListener('click',async()=>{await navigator.clipboard.writeText($(HTMLElement,'#extensionId').textContent??'');$(HTMLButtonElement,'#copyExtensionId').textContent='Đã sao chép';});
 $(HTMLButtonElement,'#openCoordinator').addEventListener('click',()=>void send({type:'NATIVE_OPEN_MANAGER'}));
 $(HTMLElement, "#buildVersion").textContent = `v${chrome.runtime.getManifest().version}`;

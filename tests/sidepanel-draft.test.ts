@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
 
-afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.resetModules();document.body.replaceChildren();});
+afterEach(()=>{window.dispatchEvent(new Event('pagehide'));vi.useRealTimers();vi.unstubAllGlobals();vi.resetModules();document.body.replaceChildren();});
 it('keeps unsaved values, custom fields and mappings when uploading, then saves them with the new image',async()=>{
   vi.useFakeTimers();
   document.body.innerHTML=readFileSync('sidepanel.html','utf8');
@@ -59,4 +59,33 @@ it('follows a managed Start into its new tab and ignores an older acknowledgemen
   document.querySelector<HTMLButtonElement>('#pauseRun')!.click();
   await vi.waitFor(()=>expect(sent.find(m=>m.type==='PAUSE_RUN')).toMatchObject({tabId:2}));
   await vi.waitFor(()=>expect(document.querySelector('#stateBadge')!.textContent).toBe('Đã tạm dừng'));
+});
+
+it('recovers missed new-tab broadcasts on visible polling and focus without overwriting a profile draft',async()=>{
+  vi.useFakeTimers();vi.stubGlobal('__HANU_CLOUD_ORIGIN__','https://fixture.example');
+  Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});
+  document.body.innerHTML=readFileSync('sidepanel.html','utf8');
+  const profile=emptyProfile();profile.values.fullName='Saved candidate';
+  let current:any={runId:'previous',managed:true,tabId:1,mode:'test',status:'ready_to_submit',eventSeq:2,startedAt:'2026-10-19T00:00:00Z',logs:[]};
+  const sent:any[]=[];
+  vi.stubGlobal('chrome',{runtime:{getManifest:()=>({version:'test'}),onMessage:{addListener:vi.fn()},sendMessage:async(m:any)=>{
+    sent.push(structuredClone(m));
+    if(m.type==='GET_PANEL_STATE')return {profile:structuredClone(profile),run:structuredClone(current),tabId:current.tabId};
+    if(m.type==='NATIVE_STATUS')return {extensionId:'a'.repeat(32),connected:true};
+    return current;
+  }}});
+  await import('../src/sidepanel');
+  await vi.waitFor(()=>expect(document.querySelector<HTMLInputElement>('#field-fullName')?.value).toBe('Saved candidate'));
+  document.querySelector<HTMLInputElement>('#field-fullName')!.value='Unsaved candidate';
+  current={...current,runId:'restarted',tabId:2,status:'waiting_manual',startedAt:'2026-10-19T01:00:00Z',logs:[{at:'2026-10-19T01:00:01Z',message:'New tab progress'}]};
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(document.querySelector('#runLog')!.textContent).toContain('New tab progress');
+  expect(document.querySelector<HTMLInputElement>('#field-fullName')!.value).toBe('Unsaved candidate');
+  document.querySelector<HTMLButtonElement>('#pauseRun')!.click();
+  await vi.waitFor(()=>expect(sent.find(m=>m.type==='PAUSE_RUN')).toMatchObject({tabId:2}));
+  current={...current,runId:'latest',tabId:3,startedAt:'2026-10-19T02:00:00Z',logs:[{at:'2026-10-19T02:00:01Z',message:'Focus recovered progress'}]};
+  window.dispatchEvent(new Event('focus'));
+  await vi.waitFor(()=>expect(document.querySelector('#runLog')!.textContent).toContain('Focus recovered progress'));
+  expect(document.querySelector<HTMLInputElement>('#field-fullName')!.value).toBe('Unsaved candidate');
+  expect(sent.some(m=>m.type==='SAVE_PROFILE')).toBe(false);
 });
