@@ -96,6 +96,8 @@ try{
   expect(denied.ok()).toBe(false);
   await page.getByRole('button',{name:'Xác minh kết quả',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Xác minh kết quả gửi',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Nhật ký lượt chạy',exact:true}).click();
+  await expect(page.locator('.run-summary')).toContainText('Chạy lại đang khóa');
   await expect(page.getByRole('button',{name:'Đã xác minh chưa gửi',exact:true})).toBeDisabled();
   await expect(page.getByText(/không chọn “chưa gửi” chỉ vì trang lỗi hoặc CAPTCHA/).last()).toBeVisible();
   await page.screenshot({path:'test-results/manager-submission-review.png',fullPage:true});
