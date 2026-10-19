@@ -2,7 +2,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
-import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
+import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, canStartSeparateTest, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
 import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
 import {AttentionQueue} from './attention';
@@ -141,7 +141,7 @@ export class Coordinator {
         if(message.kind==='START'){
           if(!this.cloud)throw new Error('Lệnh bắt đầu không được hỗ trợ.');
           if(!allowedFormUrl(message.url)||!['test','live'].includes(message.mode))throw new Error('Link Google Forms hoặc chế độ không hợp lệ.');
-          if(s.execution||s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status))throw new Error('Profile đang có lượt chạy. Dừng lượt hiện tại trước.');
+          if(s.execution||s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status)&&!canStartSeparateTest(s.run,message.url,message.mode))throw new Error('Profile đang có lượt chạy. Dừng lượt hiện tại trước.');
           // Same import, account quotas, Live permission and durable start gate
           // as the manager. The authenticated socket can start only its profile.
           const imported=await this.pull(id);
@@ -286,7 +286,7 @@ export class Coordinator {
         const form=canonicalFormId(url);
         if(form&&await this.store.blocked(member,form)||!form&&s.run?.submitAttempted&&s.run.status!=='idle')throw new Error('Xác minh khóa gửi trước khi chạy form này.');
         if(s.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');
-        if(s.run&&!['idle','completed','ready_to_submit','failed','submit_uncertain'].includes(s.run.status))throw new Error('Hãy dừng lượt hiện tại trước.');
+        if(s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status)&&!canStartSeparateTest(s.run,url,mode))throw new Error('Hãy dừng lượt hiện tại hoặc xác minh kết quả trước.');
         const hashes:Record<string,string>={};
         await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.store.attachmentInfo(member,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}));
         if((this.intents.get(member)??0)!==intents.get(member))throw new Error('Đã hủy Bắt đầu vì có lệnh Dừng hoặc Tạm dừng mới.');

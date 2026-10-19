@@ -146,3 +146,26 @@ it('starts from the linked extension through the same quota and Live gates as th
   expect(other.messages.filter(m => m.type === 'COMMAND' && m.kind === 'START')).toHaveLength(0);
   expect((await f.pool.query('SELECT * FROM hanu.locks')).rows).toEqual([]);
 });
+
+it.each(['manager','extension'] as const)('allows a separate Test via %s without resolving an old uncertain submission',async entry=>{
+  const f=await setup(),a=await connectExtension(f),store=f.repository.store(users[0]);
+  const coordinator=f.app.runtimes.get(users[0])!.coordinator;
+  await coordinator.edit(a.sessionId,{expectedEmail:'an@example.test'});
+  const previous={runId:'uncertain-live',sessionId:a.sessionId,managed:true,formId:'old-live',url:'https://docs.google.com/forms/d/e/old-live/viewform',tabId:1,mode:'live',status:'submit_uncertain',autoContinue:false,submitAttempted:true,eventSeq:1,filled:[],skipped:[],logs:[],updatedAt:new Date().toISOString()} as const;
+  await f.pool.query('INSERT INTO hanu.groups(owner,id,data) VALUES($1,$2,$3)',[users[0],previous.runId,JSON.stringify({id:previous.runId,members:[a.sessionId],mode:'live'})]);
+  const session=await store.session(a.sessionId);session.run=previous as any;await store.saveSession(session);await store.saveRun(a.sessionId,previous as any);
+  await f.pool.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,'old-live',$3,'uncertain')",[users[0],a.sessionId,previous.runId]);
+  const start=async(requestId:string,url:string,mode:string)=>{
+    if(entry==='manager'){const response=await f.api('start',0,{requestId,ids:[a.sessionId],url,mode});return {ok:response.ok,...await response.json()};}
+    a.ws.send(JSON.stringify({protocol:1,sessionId:a.sessionId,type:'REQUEST',requestId,kind:'START',url,mode}));
+    await expect.poll(()=>a.messages.find(m=>m.requestId===requestId)).toBeTruthy();return a.messages.find(m=>m.requestId===requestId);
+  };
+  expect(await start('same-form-test','https://docs.google.com/forms/d/e/old-live/viewform','test')).toMatchObject({ok:false});
+  expect(await start('other-form-live','https://docs.google.com/forms/d/e/new-test/viewform','live')).toMatchObject({ok:false});
+  expect(await start('short-link-test','https://forms.gle/unknown-form','test')).toMatchObject({ok:false});
+  expect(await start('separate-form-test','https://docs.google.com/forms/d/e/new-test/viewform','test')).toMatchObject({ok:true});
+  await expect.poll(async()=>(await store.session(a.sessionId)).run?.mode).toBe('test');
+  expect(await store.blocked(a.sessionId,'old-live')).toBe(true);
+  expect((await store.history(a.sessionId)).find(r=>r.runId===previous.runId)).toMatchObject({status:'submit_uncertain',autoContinue:false,submitAttempted:true});
+  expect(a.messages.filter(m=>m.type==='COMMAND'&&m.kind==='START')).toHaveLength(1);
+});

@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {FluentProvider,Button,Input,Select,Checkbox,Field,Spinner,Dialog,DialogTrigger,DialogSurface,DialogBody,DialogTitle,DialogContent,DialogActions,Popover,PopoverTrigger,PopoverSurface} from '@fluentui/react-components';
 import {AddRegular,ArrowSyncRegular,OpenRegular,DismissRegular,PlayRegular,PauseRegular,StopRegular,CheckmarkCircleRegular,WarningRegular,PlugConnectedRegular,SearchRegular,WeatherMoonRegular,WeatherSunnyRegular,AppsListRegular,DocumentCheckmarkRegular,ShieldCheckmarkRegular,LinkRegular,ArrowRightRegular,DocumentImageRegular,MoreHorizontalRegular} from '@fluentui/react-icons';
 import type {SessionView,GroupView} from '../../src/protocol';
+import {canStartSeparateTest} from '../../src/protocol';
 import type {Profile,RunState,FinalQuestion} from '../../src/shared';
 import {FinalQuestionEditor} from './FinalQuestionEditor';
 import {CloudGate,type Account} from './CloudLogin';
@@ -34,7 +35,8 @@ const attention=(s:SessionView)=>s.linked!==false&&(!s.connected||!!s.error||!!s
 const shownRun=(s:SessionView)=>displayedRun(s.run,s.execution);
 const isRunning=(s:SessionView)=>s.connected&&(s.execution?['running','submitting'].includes(s.execution.status)&&(s.execution.active===true||!s.execution.tabOpen):['running','submitting'].includes(s.run?.status??''));
 const needsStop=(s:SessionView)=>!!s.execution||!!s.run&&!['idle','completed','ready_to_submit'].includes(s.run.status);
-const sessionReady=(s:SessionView)=>s.connected&&s.synced&&!!s.profile&&!s.conflict&&!s.execution&&(!s.run||['idle','completed','failed','ready_to_submit'].includes(s.run.status))&&(!s.error||!!s.run&&['idle','failed','ready_to_submit'].includes(s.run.status))&&/^\S+@\S+\.\S+$/.test(s.expectedEmail);
+const profileReady=(s:SessionView)=>s.connected&&s.synced&&!!s.profile&&!s.conflict&&!s.execution&&/^\S+@\S+\.\S+$/.test(s.expectedEmail);
+const sessionReady=(s:SessionView)=>profileReady(s)&&(!s.run||['idle','completed','failed','ready_to_submit'].includes(s.run.status))&&(!s.error||!!s.run&&['idle','failed','ready_to_submit'].includes(s.run.status));
 const canRestart=(s:SessionView)=>s.connected&&!!s.profile&&!s.conflict&&/^\S+@\S+\.\S+$/.test(s.expectedEmail)&&!!s.run?.url&&!s.run.submitAttempted&&['idle','paused','waiting_manual','failed','ready_to_submit','running'].includes(s.run.status);
 async function restartSession(s:SessionView){if(!canRestart(s))throw new Error('Profile chưa sẵn sàng chạy lại.');return api(`sessions/${s.id}/restart`,{expectedRunId:s.run!.runId,requestId:crypto.randomUUID()});}
 const status=(s:SessionView)=>s.linked===false?'Đã hủy liên kết':!s.connected?'Mất kết nối':s.conflict?'Xung đột hồ sơ':s.execution?`${s.execution.mode==='test'?'Test':'Live'} · ${s.execution.status==='running'&&!isRunning(s)?(s.execution.active===false?'Form không tự chạy, còn giữ profile':'Lượt còn giữ profile'):runStatusLabel({...s.run,...s.execution})}${s.execution.managed?'':' trong extension'}`:s.error&&!s.run?'Cần kiểm tra':s.run?runStatusLabel(s.run):!s.expectedEmail?'Cần gán email':s.synced?'Đã chuẩn bị':'Chưa đồng bộ';
@@ -83,7 +85,7 @@ function App({cloud=false,account,logout}:{cloud?:boolean;account?:Account;logou
   const selected=state.sessions.filter(s=>selection.has(s.id));
   const duplicate=selected.filter((s,i)=>{const key=s.profile?.values.identityType==='HỘ CHIẾU'?s.profile?.values.passportNumber||s.profile?.values.identityNumber:s.profile?.values.identityNumber;return key&&selected.some((other,j)=>j!==i&&(other.profile?.values.identityType==='HỘ CHIẾU'?other.profile?.values.passportNumber||other.profile?.values.identityNumber:other.profile?.values.identityNumber)===key);});
   const sessions=state.sessions.filter(s=>(filter==='all'||filter==='attention'&&attention(s)||filter==='ready'&&sessionReady(s)||filter==='completed'&&s.run?.status==='completed')&&`${s.name} ${s.expectedEmail} ${s.profile?.values.fullName??''}`.toLowerCase().includes(query.toLowerCase()));
-  const group=state.groups[0];const ready=selected.length>0&&selected.some(sessionReady);
+  const group=state.groups[0];const ready=selected.some(s=>sessionReady(s)||profileReady(s)&&canStartSeparateTest(s.run,url,mode));
   function toggle(id:string){setSelection(old=>{const next=new Set(old);next.has(id)?next.delete(id):next.add(id);return next;});}
   function signOut(){setBusy(true);void logout!().catch(e=>setError((e as Error).message)).finally(()=>setBusy(false));}
   function openPair(){setReplaceSession(undefined);setPairOpen(true);setPairError('');setCode('');setCopied(false);setPairBaseline(state.sessions.map(s=>s.id));if(!extensionId)setExtensionId(state.allowedExtensionIds[0]??'');}

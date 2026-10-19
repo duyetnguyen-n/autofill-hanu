@@ -60,6 +60,12 @@ export function allowedFormUrl(url: string): boolean {
       (u.hostname === 'forms.gle' || Boolean(canonicalFormId(url))&&/\/(?:viewform|formResponse)(?:\/|$)/.test(u.pathname));
   } catch { return false; }
 }
+/** A stopped uncertain submission keeps its lock, but need not block a different Test form. */
+export function canStartSeparateTest(run:RunState|undefined,url:string,mode:RunMode):boolean {
+  if(!run||run.status!=='submit_uncertain'||!run.submitAttempted||run.autoContinue!==false||mode!=='test')return false;
+  const previous=run.formId||canonicalFormId(run.url??''),next=canonicalFormId(url);
+  return !!previous&&!!next&&previous!==next&&allowedFormUrl(url);
+}
 export function validateProfile(value: unknown): asserts value is Profile {
   const p = value as Profile;
   if (!p || typeof p !== 'object' || !p.values || !p.attachments || !p.mappings || !Array.isArray(p.customFields)) throw new Error('Hồ sơ không hợp lệ.');
