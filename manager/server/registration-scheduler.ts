@@ -52,6 +52,11 @@ export class RegistrationScheduler {
   }
   async manual(level:unknown,url:unknown){const result=await this.exclusive(async()=>{if(!this.active)throw new Error('Chưa có lịch đang chờ.');this.setManual(level,url);await this.persist();return structuredClone(this.value);});void this.tick().catch(this.hooks.error);return result;}
   async cancel(){this.cancelling=true;this.cancelledId=this.value?.id;return this.exclusive(async()=>{if(!this.value)return;this.value.status='cancelled';await this.persist();void this.stopWatcher();return structuredClone(this.value);});}
+  async focusWatcher(){
+    const s=this.value,w=s?.watcher;
+    if(!this.active||!s||!w?.ready||!this.hooks.connected(w.id))throw new Error('Chưa có cửa sổ Facebook đang theo dõi. Kiểm tra quyền Facebook ở extension.');
+    return this.hooks.command(w.id,'WATCH_FACEBOOK',{focus:true,token:w.token,scheduleId:s.id});
+  }
   hold(id:string){const s=this.value,m=s?.members.find(m=>m.id===id);if(!s||!this.active||!m||!['waiting','starting'].includes(m.status))return;
     // Synchronous fence: a pending durable START also observes this before send.
     m.status='held';m.error='Đã bỏ chờ theo lệnh Dừng/Tạm dừng của profile.';void this.exclusive(()=>this.persist()).catch(this.hooks.error);
@@ -76,7 +81,10 @@ export class RegistrationScheduler {
     if(this.preparing.has(key)||this.prepared.get(key)===session.revision&&session.synced&&!session.conflict&&!session.execution||this.now()-(this.prepareAttempt.get(attempt)??-Infinity)<5000)return;
     this.prepared.delete(key);this.prepareAttempt.set(attempt,this.now());
     this.preparing.add(key);
-    void this.hooks.prepare(session.id).then(()=>{if(this.value?.id===s.id)this.prepared.set(key,session.revision);}).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id){const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting')m.error=(e as Error).message;await this.persist();}})).finally(()=>this.preparing.delete(key)).catch(this.hooks.error);
+    void this.hooks.prepare(session.id).then(()=>this.exclusive(async()=>{
+      if(this.value?.id!==s.id)return;this.prepared.set(key,session.revision);
+      const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting'&&m.error){delete m.error;await this.persist();}
+    })).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id){const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting')m.error=(e as Error).message;await this.persist();}})).finally(()=>this.preparing.delete(key)).catch(this.hooks.error);
   }
   private watch(s:RegistrationSchedule,sessions:SessionView[]){
     if(this.watcherBusy||this.now()-this.watcherSent<10000)return;
@@ -84,11 +92,16 @@ export class RegistrationScheduler {
     if(!w||!this.hooks.connected(w.id)||this.watcherFailures.has(w.id)){
       if(w&&this.hooks.connected(w.id))void this.hooks.command(w.id,'WATCH_FACEBOOK',{stop:true,token:w.token}).catch(()=>{});
       const next=sessions.find(p=>this.hooks.connected(p.id)&&p.linked!==false&&!this.watcherFailures.has(p.id));
-      if(!next){s.lastError='Chưa có profile cho phép đọc Facebook. Mở extension → Cho phép theo dõi Facebook, hoặc dán link HSK.';if(this.now()-this.watcherSent>=10000)this.watcherFailures.clear();return;}
+      if(!next){
+        // Back off after trying all peers. Resetting the timestamp to zero on
+        // every failure used to cycle through every old/ungranted profile again
+        // immediately, producing repeated misleading errors.
+        this.watcherSent=this.now();this.watcherFailures.clear();return;
+      }
       w=s.watcher={id:next.id,token:randomUUID(),ready:false};
     }
     this.watcherBusy=true;this.watcherSent=this.now();const token=w.token,id=w.id;
-    void this.hooks.command(id,'WATCH_FACEBOOK',{scheduleId:s.id,token,postUrl:s.postUrl,watchAt:s.watchAt,expiresAt:s.expiresAt}).then(()=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){s.watcher.ready=true;s.watcher.error=undefined;await this.persist();}})).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){s.watcher.ready=false;s.watcher.error=(e as Error).message;s.lastError=(e as Error).message;this.watcherFailures.add(id);this.watcherSent=0;await this.persist();}})).finally(()=>{this.watcherBusy=false;}).catch(this.hooks.error);
+    void this.hooks.command(id,'WATCH_FACEBOOK',{scheduleId:s.id,token,postUrl:s.postUrl,watchAt:s.watchAt,expiresAt:s.expiresAt}).then(()=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){const oldError=s.watcher.error;s.watcher.ready=true;s.watcher.error=undefined;if(oldError&&s.lastError?.endsWith(oldError))s.lastError=undefined;await this.persist();}})).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){s.watcher.ready=false;s.watcher.error=(e as Error).message;s.lastError=`${sessions.find(p=>p.id===id)?.name??id}: ${(e as Error).message}`;this.watcherFailures.add(id);this.watcherSent=0;await this.persist();}})).finally(()=>{this.watcherBusy=false;}).catch(this.hooks.error);
   }
   tick(){return this.exclusive(async()=>{
     const s=this.value;if(!s||!this.active)return;const now=this.now();

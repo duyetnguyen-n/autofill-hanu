@@ -108,4 +108,27 @@ describe('durable scheduled dispatch',()=>{
     const f=fixture();await expect(f.arm({links:{'4':'https://evil.test/'}})).rejects.toThrow('không hợp lệ');expect(f.engine.active).toBe(false);
     f.sessions[0].hskLevel=undefined;await expect(f.arm()).rejects.toThrow('chưa khai báo HSK');expect(f.engine.active).toBe(false);
   });
+  it('backs off after all watchers fail instead of continuously cycling through profiles',async()=>{
+    const f=fixture();f.hooks.command.mockRejectedValue(new Error('Cần cấp quyền Facebook'));
+    await f.arm();f.setTime(start-30000);
+    for(let i=0;i<15;i++)await f.tick();
+    const attempts=()=>f.hooks.command.mock.calls.filter((c:any)=>!c[2]?.stop).length;
+    expect(attempts()).toBe(10);
+    expect(f.engine.value?.lastError).toBe('P9: Cần cấp quyền Facebook');
+    f.setTime(start-20200);await f.tick();expect(attempts()).toBe(10);
+    f.setTime(start-20000);for(let i=0;i<15;i++)await f.tick();expect(attempts()).toBe(20);
+  });
+  it('clears a stale preparation error when that profile is updated, without holding up other profiles',async()=>{
+    const f=fixture();f.hooks.prepare.mockRejectedValueOnce(new Error('Cập nhật extension'));
+    await f.arm({links:{'4':four,'5':five}});f.setTime(start-30000);await f.tick();
+    expect(f.engine.value?.members[0].error).toBe('Cập nhật extension');
+    f.setTime(start-24000);await f.tick();expect(f.engine.value?.members[0].error).toBeUndefined();
+    f.setTime(start);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);
+  });
+  it('focuses only the current ready watcher and rejects focus after cancellation',async()=>{
+    const f=fixture();await f.arm();await expect(f.engine.focusWatcher()).rejects.toThrow('Chưa có');
+    f.setTime(start-30000);await f.tick();const w=f.engine.value!.watcher!;
+    await f.engine.focusWatcher();expect(f.hooks.command).toHaveBeenLastCalledWith(w.id,'WATCH_FACEBOOK',{focus:true,token:w.token,scheduleId:f.engine.value!.id});
+    await f.engine.cancel();await expect(f.engine.focusWatcher()).rejects.toThrow('Chưa có');
+  });
 });

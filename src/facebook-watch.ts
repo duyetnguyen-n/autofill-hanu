@@ -18,15 +18,27 @@ export class FacebookWatcher {
   stop(){this.generation++;this.watch=undefined;clearInterval(this.timer);this.timer=undefined;void chrome.storage.local.remove('facebookWatch');}
   async command(payload:Record<string,unknown>){
     if(payload.stop){this.revoked.add(String(payload.token));if(this.watch?.token===payload.token||!this.watch)this.stop();return {stopped:true};}
+    if(payload.focus){
+      const w=this.watch;
+      if(!w||w.token!==payload.token||w.scheduleId!==payload.scheduleId||!this.connected()||Date.now()>w.leaseUntil||Date.now()>=Date.parse(w.expiresAt))throw new Error('Cửa sổ theo dõi đã dừng hoặc đổi lịch.');
+      const tab=await chrome.tabs.get(w.tabId);
+      if(this.watch!==w||facebookPostKey(tab.url??'')!==facebookPostKey(w.postUrl))throw new Error('Cửa sổ không còn ở bài Facebook đã chọn.');
+      await chrome.tabs.update(w.tabId,{active:true});
+      if(tab.windowId!==undefined)await chrome.windows.update(tab.windowId,{focused:true,state:'normal'});
+      return {ready:true,tabId:w.tabId};
+    }
     if(typeof payload.postUrl!=='string'||!facebookPostKey(payload.postUrl)||typeof payload.scheduleId!=='string'||typeof payload.token!=='string'||!Number.isFinite(Date.parse(String(payload.watchAt)))||!Number.isFinite(Date.parse(String(payload.expiresAt)))||Date.parse(String(payload.expiresAt))<=Date.now())throw new Error('Lịch theo dõi Facebook không hợp lệ hoặc đã hết giờ.');
     if(this.revoked.has(payload.token))throw new Error('Phiên theo dõi đã dừng.');
     const generation=this.generation;await enableFacebookWatch();if(generation!==this.generation)throw new Error('Lượt theo dõi đã thay đổi.');
     if(this.watch?.token===payload.token&&await chrome.tabs.get(this.watch.tabId).catch(()=>undefined)){this.watch.leaseUntil=Date.now()+25000;return {ready:true};}
     const saved=(await chrome.storage.local.get('facebookWatch')).facebookWatch as Watch|undefined;
     if(generation!==this.generation)throw new Error('Lượt theo dõi đã thay đổi.');this.stop();const current=this.generation;
-    const reusable=saved?.scheduleId===payload.scheduleId?await chrome.tabs.get(saved.tabId).catch(()=>undefined):undefined;
-    const tab=reusable??await chrome.tabs.create({url:'about:blank',active:false});
-    if(current!==this.generation)throw new Error('Lượt theo dõi đã hủy trước khi mở bài.');
+    const candidate=saved?.scheduleId===payload.scheduleId?await chrome.tabs.get(saved.tabId).catch(()=>undefined):undefined;
+    const reusable=candidate&&facebookPostKey(candidate.url??'')===facebookPostKey(payload.postUrl)?candidate:undefined;
+    const popup=reusable?undefined:await chrome.windows.create({url:'about:blank',type:'popup',width:520,height:720,focused:false});
+    const tab=reusable??popup?.tabs?.[0]??(popup?.id!==undefined?(await chrome.tabs.query({windowId:popup.id}))[0]:undefined);
+    if(current!==this.generation){if(popup?.id!==undefined)await chrome.windows.remove(popup.id).catch(()=>{});throw new Error('Lượt theo dõi đã hủy trước khi mở bài.');}
+    if(tab?.id===undefined)throw new Error('Không mở được cửa sổ Facebook nhỏ.');
     this.watch={scheduleId:payload.scheduleId,token:payload.token,postUrl:payload.postUrl,watchAt:String(payload.watchAt),expiresAt:String(payload.expiresAt),tabId:tab.id!,leaseUntil:Date.now()+25000};
     await chrome.storage.local.set({facebookWatch:this.watch});
     this.nextReload=Date.now()+10000;this.loadingSince=Date.now();

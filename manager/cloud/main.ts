@@ -324,6 +324,7 @@ export async function serveCloud(options: {
         if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req,16384);return json(res,await coordinator.assignHsk(b.ids,b.level));}
         if(path==='/api/registration-schedule'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,b.mode);return json(res,await coordinator.scheduler.arm(b));}
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
+        if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.focusWatcher());}
         if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.stopScheduledRuns());}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req,8192);return json(res,await coordinator.scheduler.manual(b.level,b.url));}
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }

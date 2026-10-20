@@ -1,5 +1,11 @@
 # Cập nhật website HANU sau này
 
+**v1.7.1 — sửa tương thích săn link và cửa sổ Facebook nhỏ (20/10/2026):**
+backend kiểm tra khả năng của đúng kết nối trước khi gửi lệnh Facebook, tránh
+extension cũ hiểu nhầm là lệnh điều khiển form. Thử hết profile lỗi thì chờ
+10 giây trước vòng mới. Cần Reload extension 1.7.1 để có cửa sổ popup riêng
+và nút Xem cửa sổ Facebook trên màn quản lý. Không cần migration mới.
+
 **v1.7.0 — đặt lịch săn link theo HSK (20/10/2026):** chạy migration bổ sung
 `supabase/migrations/202610200001_registration_schedule.sql` trước khi deploy,
 rồi build/Reload extension 1.7.0 vào đúng thư mục cũ. Cấp quyền Facebook tùy chọn

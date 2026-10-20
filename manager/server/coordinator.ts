@@ -14,6 +14,7 @@ export class Coordinator {
   readonly scheduler:RegistrationScheduler;
   peers=new Map<string,WebSocket>();
   pending=new Map<string,{session:string;resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+  private facebookPeers=new Map<string,{peer:WebSocket;capabilities:string[]}>();
   failures=new Map<string,Map<string,number>>();
   changed=()=>{};
   progressChanged=()=>this.changed();
@@ -63,6 +64,7 @@ export class Coordinator {
   }
   async disconnect(id:string,ws:WebSocket) {
     if(this.peers.get(id)!==ws)return;this.peers.delete(id);
+    this.facebookPeers.delete(id);
     this.runBuffer?.halt(id);
     const write=this.transition(id,async()=>{await this.runBuffer?.flush(id);this.runBuffer?.forget(id);await this.store.connected(id,false);});
     await this.attention.cancel(id);
@@ -71,6 +73,19 @@ export class Coordinator {
   }
   async command(id:string,kind:CommandKind,payload:Record<string,unknown>={},runId?:string,timeout=45000):Promise<any> {
     const peer=this.peers.get(id);if(!peer||peer.readyState!==1)throw new Error('Profile chưa kết nối.');
+    if(kind==='WATCH_FACEBOOK'){
+      let verified=this.facebookPeers.get(id);
+      if(verified?.peer!==peer){
+        const ping=await this.command(id,'PING',{},undefined,5000);
+        if(this.peers.get(id)!==peer)throw new Error('Kết nối profile đã thay đổi.');
+        const capabilities=Array.isArray(ping?.capabilities)?ping.capabilities.filter((v:unknown)=>typeof v==='string'):[];
+        verified={peer,capabilities};this.facebookPeers.set(id,verified);
+      }
+      // Older extensions route unknown commands to form controls. Never let a
+      // watcher command reach that fallback, including cleanup and focus.
+      if(!verified.capabilities.includes('scheduledHskLinks'))throw new Error('Extension của profile này chưa hỗ trợ săn link. Cập nhật/Reload extension 1.7.1 trong đúng profile.');
+      if(payload.focus&&!verified.capabilities.includes('facebookWatchWindow'))throw new Error('Cập nhật/Reload extension 1.7.1 để mở cửa sổ Facebook nhỏ.');
+    }
     const commandId=randomUUID(),at=new Date(this.receiptClock=Math.max(Date.now(),this.receiptClock+1)).toISOString();
     const tracked=['START','PAUSE','RESUME','STOP','STOP_PROFILE'].includes(kind);
     const receipt:ControlReceipt={commandId,kind:kind as ControlReceipt['kind'],runId,state:'pending',requestedAt:at,updatedAt:at};

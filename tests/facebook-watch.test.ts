@@ -3,7 +3,7 @@ import {FacebookWatcher} from '../src/facebook-watch';
 
 let updated:Function,removed:Function,connected=true;let data:Record<string,any>;let api:any;
 const config={scheduleId:'schedule',token:'token',postUrl:'https://www.facebook.com/story.php?story_fbid=123&id=456',watchAt:new Date(100000).toISOString(),expiresAt:new Date(400000).toISOString()};
-beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(90000);data={};connected=true;api={permissions:{contains:vi.fn(async()=>true)},scripting:{getRegisteredContentScripts:vi.fn(async()=>[]),registerContentScripts:vi.fn(async()=>{})},storage:{local:{get:vi.fn(async()=>structuredClone(data)),set:vi.fn(async(v:any)=>Object.assign(data,v)),remove:vi.fn(async(k:string)=>{delete data[k];})}},tabs:{onUpdated:{addListener:(f:Function)=>{updated=f;}},onRemoved:{addListener:(f:Function)=>{removed=f;}},create:vi.fn(async()=>({id:17})),update:vi.fn(async()=>({id:17})),get:vi.fn(async()=>({id:17,url:config.postUrl})),reload:vi.fn(async()=>{})}};vi.stubGlobal('chrome',api);});
+beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(90000);data={};connected=true;api={permissions:{contains:vi.fn(async()=>true)},scripting:{getRegisteredContentScripts:vi.fn(async()=>[]),registerContentScripts:vi.fn(async()=>{})},storage:{local:{get:vi.fn(async()=>structuredClone(data)),set:vi.fn(async(v:any)=>Object.assign(data,v)),remove:vi.fn(async(k:string)=>{delete data[k];})}},windows:{create:vi.fn(async()=>({id:9,tabs:[{id:17,windowId:9}]})),update:vi.fn(async()=>({})),remove:vi.fn(async()=>{})},tabs:{onUpdated:{addListener:(f:Function)=>{updated=f;}},onRemoved:{addListener:(f:Function)=>{removed=f;}},create:vi.fn(async()=>({id:17})),update:vi.fn(async()=>({id:17})),get:vi.fn(async()=>({id:17,windowId:9,url:config.postUrl})),reload:vi.fn(async()=>{})}};vi.stubGlobal('chrome',api);});
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
 it('starts the short polling phase before the hour, never overlaps a loading request',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>{}));await watcher.command(config);updated(17,{status:'complete'});
@@ -22,7 +22,7 @@ it('accepts only the matching top-frame tab and rejects stale tokens',async()=>{
 });
 it('does not request extra permissions or open a tab without the user grant',async()=>{
   api.permissions.contains.mockResolvedValue(false);const watcher=new FacebookWatcher(()=>connected,vi.fn());
-  await expect(watcher.command(config)).rejects.toThrow('Cho phép');expect(api.tabs.create).not.toHaveBeenCalled();
+  await expect(watcher.command(config)).rejects.toThrow('Cho phép');expect(api.windows.create).not.toHaveBeenCalled();
 });
 it('stops on lost coordinator / expired lease / closed watcher tab',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command(config);connected=false;await vi.advanceTimersByTimeAsync(200);const n=api.tabs.reload.mock.calls.length;
@@ -34,4 +34,27 @@ it('a Stop fences a WATCH still waiting for permission lookup',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn()),opening=watcher.command(config);
   await watcher.command({stop:true,token:'token'});release(true);await expect(opening).rejects.toThrow('thay đổi');expect(api.tabs.create).not.toHaveBeenCalled();
   await expect(watcher.command(config)).rejects.toThrow('đã dừng');
+});
+it('opens one small separate window and focuses only its matching schedule on request',async()=>{
+  const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command(config);await watcher.command(config);
+  expect(api.windows.create).toHaveBeenCalledExactlyOnceWith({url:'about:blank',type:'popup',width:520,height:720,focused:false});
+  expect(api.tabs.create).not.toHaveBeenCalled();expect(api.windows.update).not.toHaveBeenCalled();
+  await expect(watcher.command({focus:true,token:'old',scheduleId:config.scheduleId})).rejects.toThrow('đổi lịch');
+  await watcher.command({focus:true,token:config.token,scheduleId:config.scheduleId});
+  expect(api.windows.update).toHaveBeenCalledWith(9,{focused:true,state:'normal'});
+  expect(api.tabs.update).toHaveBeenCalledWith(17,{active:true});watcher.stop();
+});
+it('closes only its newly-created blank window when cancellation overtakes window creation',async()=>{
+  let release!:(v:any)=>void;api.windows.create.mockImplementation(()=>new Promise(r=>release=r));
+  const watcher=new FacebookWatcher(()=>connected,vi.fn()),opening=watcher.command(config);
+  await vi.advanceTimersByTimeAsync(0);expect(api.windows.create).toHaveBeenCalledOnce();
+  await watcher.command({stop:true,token:config.token});release({id:9,tabs:[{id:17,windowId:9}]});
+  await expect(opening).rejects.toThrow('đã hủy');expect(api.windows.remove).toHaveBeenCalledWith(9);expect(api.tabs.update).not.toHaveBeenCalled();
+});
+it('reuses its saved post window after worker restart and never focuses another page',async()=>{
+  data.facebookWatch={...config,tabId:17,leaseUntil:115000};
+  const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command({...config,token:'renewed'});
+  expect(api.windows.create).not.toHaveBeenCalled();api.tabs.get.mockResolvedValue({id:17,windowId:9,url:'https://www.facebook.com/'});
+  await expect(watcher.command({focus:true,token:'renewed',scheduleId:config.scheduleId})).rejects.toThrow('đã chọn');
+  expect(api.windows.update).not.toHaveBeenCalled();watcher.stop();
 });
