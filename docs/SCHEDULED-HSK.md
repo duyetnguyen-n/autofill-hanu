@@ -31,3 +31,24 @@ Nếu Facebook không đọc được, dán link trực tiếp vào ô HSK (past
 Chạy migration bổ sung `supabase/migrations/202610200001_registration_schedule.sql` trước khi deploy backend. Migration chỉ thêm bảng riêng có RLS; không xóa/chỉnh dữ liệu hồ sơ cũ. Nạp extension 1.7.0 vào đúng thư mục extension cũ, Reload, không Remove hoặc xóa storage.
 
 Độ trễ 1,5 giây là khoảng mục tiêu giữa các lần yêu cầu khi trang tải bình thường, không phải cam kết Facebook cập nhật trong 1,5 giây. Phiên đăng nhập, giao diện Facebook thay đổi, mạng, giới hạn truy cập, CAPTCHA và tốc độ Google vẫn có thể làm chậm. Chạy Test trước khi dùng Live; Test vẫn có thể truyền hồ sơ/ảnh sang form đích, luôn kiểm tra đúng đích và dữ liệu được phép dùng.
+
+## 1.7.2 — phiên Facebook, tín hiệu nội dung và diễn tập
+
+Cửa sổ nhỏ dùng phiên Facebook của đúng Chrome/Cốc Cốc profile chứa extension;
+không dùng cookie/mật khẩu của profile hoặc trình duyệt khác. Có thể chọn
+**Profile đọc Facebook** riêng với các profile đăng ký. Nếu đã đăng nhập trong
+profile đó, cửa sổ dùng ngay phiên sẵn có. Với bài công khai đã tải được, extension
+đóng lời mời đăng nhập tùy chọn và mở rộng nội dung bài; trang đăng nhập/checkpoint
+không có bài công khai vẫn được giữ để người dùng xử lý.
+
+Không lấy HTTP `complete` làm dấu hiệu Facebook đã dựng xong bài. Chỉ khi bộ đọc
+xác nhận nội dung bài mới thả chốt tải lại; lượt chưa đọc được có tối đa 8 giây để
+khôi phục. Cửa sổ sở hữu được dùng lại khi đặt lịch mới cho cùng bài.
+
+Link đọc được vẫn hiển thị khi ngày bài không khớp lịch, kèm lỗi chặn rõ ràng.
+Không tự chạy link của một đợt cũ trong lịch thường/Live. Muốn kiểm tra trọn luồng
+với bài cũ: chọn Test và bật **Diễn tập bằng form thử trong bài**. Tool vẫn phân
+loại link HSK, nhưng mọi profile chỉ mở link được ghi rõ là form thử trong chính
+bài. Thiếu/mâu thuẫn/xóa link form thử thì giữ chờ; không chuyển sang form thật.
+Diễn tập không dùng được với Live và luôn dừng trước Gửi. Test vẫn truyền dữ liệu
+hồ sơ và ảnh lên Google, nên chỉ chọn hồ sơ được phép dùng trên mẫu thử đó.

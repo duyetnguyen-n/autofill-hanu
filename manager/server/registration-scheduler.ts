@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {SessionView,GroupView} from '../../src/protocol';
 import {validateFinalQuestion} from '../../src/shared';
-import {activeSchedule,facebookPostKey,formLink,isHskLevel,parseHskLinks,registrationDateError,type HskLevel,type RegistrationSchedule} from '../../src/registration-schedule';
+import {activeSchedule,facebookPostKey,formLink,isHskLevel,parseHskLinks,parseTestForm,registrationDateError,type HskLevel,type RegistrationSchedule} from '../../src/registration-schedule';
 
 interface Hooks {
   load():Promise<RegistrationSchedule|undefined>;save(s:RegistrationSchedule):Promise<void>;
@@ -32,16 +32,19 @@ export class RegistrationScheduler {
     if(!facebookPostKey(String(input.postUrl??'')))throw new Error('Dùng link trực tiếp story.php hoặc /posts/ của đúng bài Facebook.');
     if(!['test','live'].includes(input.mode)||!Array.isArray(input.ids)||!input.ids.length||input.ids.length>100||new Set(input.ids).size!==input.ids.length)throw new Error('Chọn các profile và chế độ chạy hợp lệ.');
     validateFinalQuestion(input.finalQuestion);
+    if(input.rehearsal!==undefined&&typeof input.rehearsal!=='boolean'||input.rehearsal&&input.mode!=='test')throw new Error('Diễn tập chỉ dùng chế độ Test, luôn dừng trước Gửi.');
     if(input.links!==undefined&&(!input.links||typeof input.links!=='object'||Array.isArray(input.links)))throw new Error('Bảng link HSK không hợp lệ.');
     for(const [level,url]of Object.entries(input.links??{}))if(!isHskLevel(level)||typeof url!=='string'||url.trim()&&!formLink(url.trim()))throw new Error(`Link HSK ${level} không hợp lệ.`);
-    const sessions=await this.hooks.sessions(),members=input.ids.map((id:string)=>{
+    const sessions=await this.hooks.sessions();
+    if(input.watcherProfileId!==undefined&&(typeof input.watcherProfileId!=='string'||!sessions.some(s=>s.id===input.watcherProfileId&&s.linked!==false)))throw new Error('Profile đọc Facebook không thuộc tài khoản hoặc không còn liên kết.');
+    const members=input.ids.map((id:string)=>{
       const s=sessions.find(s=>s.id===id);if(!s||s.linked===false)throw new Error('Profile không còn liên kết.');
       if(!isHskLevel(s.hskLevel))throw new Error(`${s.name} chưa khai báo HSK. Chọn các profile cùng cấp độ rồi dùng Gán HSK.`);
       return {id,level:s.hskLevel,status:'waiting' as const,requestId:randomUUID()};
     });
     this.cancelling=false;this.cancelledId=undefined;this.prepared.clear();this.watcherFailures.clear();this.watcherSent=0;
     const previous=this.value;
-    this.value={id:randomUUID(),postUrl:input.postUrl,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+120000).toISOString(),mode:input.mode,status:'armed',members,links:{},finalQuestion:input.finalQuestion,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
+    this.value={id:randomUUID(),postUrl:input.postUrl,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+120000).toISOString(),mode:input.mode,rehearsal:input.rehearsal===true,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
     for(const [key,url]of Object.entries(input.links??{}))if(url)this.setManual(key,url);
     try{await this.persist();}catch(e){this.value=previous;throw e;}return structuredClone(this.value);
   });}
@@ -66,11 +69,17 @@ export class RegistrationScheduler {
     await this.exclusive(async()=>{
       const s=this.value,w=s?.watcher;if(!s||!this.active||!w||id!==w.id||payload.token!==w.token||payload.scheduleId!==s.id)throw new Error('Thông báo thuộc lịch/profile theo dõi cũ.');
       if(typeof payload.text!=='string'||payload.text.length>120000||payload.postKey!==facebookPostKey(s.postUrl))throw new Error('Nội dung không thuộc bài được theo dõi.');
-      const at=new Date(this.now()).toISOString();s.lastObservedAt=at;s.lastError=payload.error?String(payload.error).slice(0,300):registrationDateError(payload.text,s.startsAt);
-      if(!payload.error){const found=parseHskLinks(payload.text,s.startsAt);
+      const at=new Date(this.now()).toISOString();s.lastObservedAt=at;
+      s.dateWarning=payload.error?undefined:registrationDateError(payload.text,s.startsAt);
+      s.lastError=payload.error?String(payload.error).slice(0,300):s.rehearsal?undefined:s.dateWarning;
+      if(!payload.error){
+        s.lastReadAt=at;
+        const found=parseHskLinks(payload.text,s.rehearsal||s.dateWarning?undefined:s.startsAt),sample=parseTestForm(payload.text);
+        s.testForm=sample?{...sample,source:'facebook',observedAt:at}:undefined;
         // A newer observation replaces automatic entries, including conflicts
         // and removed links. Explicit manual entries always win.
-        for(const level of ['1','2','3','4','5','6'] as HskLevel[]){if(s.links[level]?.source==='manual')continue;const next=found[level];if(next)s.links[level]={...next,source:'facebook',observedAt:at};else delete s.links[level];}
+        for(const level of ['1','2','3','4','5','6'] as HskLevel[]){if(s.links[level]?.source==='manual')continue;const next=found[level];if(next)s.links[level]={...next,error:next.error??(!s.rehearsal?s.dateWarning:undefined),source:'facebook',observedAt:at};else delete s.links[level];}
+        if(s.rehearsal&&!s.testForm?.url)s.lastError=s.testForm?.error??'Chưa thấy link được ghi rõ là form thử trong bài. Không mở form đăng ký thật.';
       }
       await this.persist();
     });
@@ -89,9 +98,9 @@ export class RegistrationScheduler {
   private watch(s:RegistrationSchedule,sessions:SessionView[]){
     if(this.watcherBusy||this.now()-this.watcherSent<10000)return;
     let w=s.watcher;
-    if(!w||!this.hooks.connected(w.id)||this.watcherFailures.has(w.id)){
+    if(!w||!this.hooks.connected(w.id)||this.watcherFailures.has(w.id)||s.watcherProfileId&&w.id!==s.watcherProfileId){
       if(w&&this.hooks.connected(w.id))void this.hooks.command(w.id,'WATCH_FACEBOOK',{stop:true,token:w.token}).catch(()=>{});
-      const next=sessions.find(p=>this.hooks.connected(p.id)&&p.linked!==false&&!this.watcherFailures.has(p.id));
+      const next=sessions.find(p=>this.hooks.connected(p.id)&&p.linked!==false&&!this.watcherFailures.has(p.id)&&(!s.watcherProfileId||p.id===s.watcherProfileId));
       if(!next){
         // Back off after trying all peers. Resetting the timestamp to zero on
         // every failure used to cycle through every old/ungranted profile again
@@ -119,8 +128,9 @@ export class RegistrationScheduler {
       const session=sessions.find(p=>p.id===member.id),link=s.links[member.level];
       if(!session||!this.hooks.connected(member.id)||!session.synced||session.conflict||!session.profile||this.prepared.get(`${s.id}:${session.id}`)!==session.revision)continue;
       if(!link?.url||link.error||link.source==='facebook'&&(s.lastError||now-Date.parse(s.lastObservedAt??'')>10000))continue;
+      if(s.rehearsal&&(s.mode!=='test'||!s.testForm?.url||s.testForm.error||s.lastError||now-Date.parse(s.testForm.observedAt)>10000))continue;
       // Persist individual intent before dispatch. Slow peers never gate others.
-      member.status='starting';member.url??=link.url;member.dispatchedAt??=new Date(now).toISOString();
+      member.status='starting';member.url??=s.rehearsal?s.testForm!.url!:link.url;member.dispatchedAt??=new Date(now).toISOString();
       dispatch.push(member);
     }
     // One durable write for link routing, then independent STARTs. Do not put

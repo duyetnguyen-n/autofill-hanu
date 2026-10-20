@@ -1,5 +1,10 @@
 # Cập nhật website HANU sau này
 
+**v1.7.2 — đọc bài Facebook tới khi sẵn sàng và diễn tập trọn luồng:**
+deploy backend/UI và Reload extension trong các profile. Thêm chọn profile
+đọc Facebook, dùng lại cửa sổ cùng phiên, hiển thị link bị chặn do sai ngày
+và chế độ diễn tập chỉ dùng form thử ghi trong bài. Không có migration mới.
+
 **v1.7.1 — sửa tương thích săn link và cửa sổ Facebook nhỏ (20/10/2026):**
 backend kiểm tra khả năng của đúng kết nối trước khi gửi lệnh Facebook, tránh
 extension cũ hiểu nhầm là lệnh điều khiển form. Thử hết profile lỗi thì chờ

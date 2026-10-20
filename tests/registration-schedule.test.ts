@@ -1,7 +1,7 @@
 import {describe,it,expect,vi} from 'vitest';
 import {JSDOM} from 'jsdom';
-import {facebookMessage} from '../src/facebook-document';
-import {facebookPostKey,formLink,parseHskLinks,registrationDateError,type RegistrationSchedule} from '../src/registration-schedule';
+import {facebookMessage,prepareFacebookPost} from '../src/facebook-document';
+import {facebookPostKey,formLink,parseHskLinks,parseTestForm,registrationDateError,type RegistrationSchedule} from '../src/registration-schedule';
 import {RegistrationScheduler} from '../manager/server/registration-scheduler';
 import {emptyProfile} from '../src/rules';
 import type {SessionView,GroupView} from '../src/protocol';
@@ -11,6 +11,18 @@ const four='https://forms.gle/LevelFour',five='https://forms.gle/LevelFive';
 const start=Date.parse('2026-10-21T08:00:00+07:00');
 const flush=()=>new Promise<void>(r=>setImmediate(r));
 describe('post / level / form identity',()=>{
+  it('finds only explicitly labelled Test forms, rejecting conflicting sample links',()=>{
+    expect(parseTestForm('MẪU FORM ĐĂNG KÝ THÍ SINH CÓ THỂ ĐIỀN THỬ:\nhttps://forms.gle/Sample\nHSK 4: '+four)).toEqual({url:'https://forms.gle/Sample'});
+    expect(parseTestForm('HSK 4: '+four)).toBeUndefined();
+    expect(parseTestForm('Form thử: https://forms.gle/A\nForm thử: https://forms.gle/B')?.error).toMatch(/nhiều form thử/);
+  });
+  it('scopes the story correctly when a separate login invitation is the first dialog',()=>{
+    const d=new JSDOM('<div role="dialog"><form id="login_popup_cta_form"></form><button aria-label="Close"></button></div><div role="dialog"><div data-ad-rendering-role="story_message"><div data-ad-preview="message">HSK 4: '+four+'</div></div></div>');
+    const close=vi.fn();d.window.document.querySelector('button')!.addEventListener('click',close);
+    expect(facebookMessage(d.window.document)).toContain(four);prepareFacebookPost(d.window.document);prepareFacebookPost(d.window.document);expect(close).toHaveBeenCalledOnce();d.window.close();
+    const loginOnly=new JSDOM('<div role="dialog"><form id="login_popup_cta_form"></form><button aria-label="Close"></button></div>');
+    const noClose=vi.fn();loginOnly.window.document.querySelector('button')!.addEventListener('click',noClose);prepareFacebookPost(loginOnly.window.document);expect(noClose).not.toHaveBeenCalled();loginOnly.window.close();
+  });
   it('binds bilingual labels, excludes test, deduplicates repeated links',()=>{
     const text=`MẪU FORM ĐĂNG KÝ THÍ SINH CÓ THỂ ĐIỀN THỬ:\nhttps://forms.gle/Test\nCác thí sinh có thể bắt đầu đăng ký từ 08:00 ngày 21.10.2026:\nHSK 4 + HSK Khẩu ngữ Trung cấp:\n${four}\nHSK 5 + HSK Khẩu ngữ Cao cấp: ${five}\nHSK4级 + HSK口语中级：\n${four}\nHSK5级 + HSK口语高级：${five}`;
     expect(parseHskLinks(text,new Date(start).toISOString())).toEqual({'4':{url:four},'5':{url:five}});
@@ -56,6 +68,28 @@ function fixture(seed?:RegistrationSchedule){
   return {engine,hooks,sessions,online,arm,observe,tick,setTime:(at:number)=>{clock=at;},saved:()=>saved};
 }
 describe('durable scheduled dispatch',()=>{
+  it('rehearses all 10 profiles on the labelled Test form, retaining accurate per-HSK links',async()=>{
+    const f=fixture();await f.arm({rehearsal:true,watcherProfileId:'profile-4'});f.setTime(start-30000);await f.tick();
+    expect(f.engine.value?.watcher?.id).toBe('profile-4');
+    f.setTime(start);await f.observe('MẪU FORM ĐIỀN THỬ:\nhttps://forms.gle/Sample\nĐăng ký từ 08:00 ngày 20.10.2026\nHSK 4: '+four+'\nHSK 5: '+five);await f.tick();
+    expect(f.hooks.start).toHaveBeenCalledTimes(10);expect(f.hooks.start.mock.calls.every(c=>c[1]==='https://forms.gle/Sample'&&c[2].mode==='test')).toBe(true);
+    expect(f.engine.value?.links['4']?.url).toBe(four);expect(f.engine.value?.links['5']?.url).toBe(five);expect(f.engine.value?.dateWarning).toMatch(/khác lịch/);
+  });
+  it.each(['missing','conflicting','removed'] as const)('never falls back to a real registration form when the Test link is %s',async problem=>{
+    const f=fixture();await f.arm({rehearsal:true,links:{'4':four}});f.setTime(start-30000);await f.tick();
+    if(problem==='removed')await f.observe('Form thử: https://forms.gle/Sample\nHSK 4: '+four);
+    f.setTime(start);await f.observe((problem==='conflicting'?'Form thử: https://forms.gle/A\nForm thử: https://forms.gle/B\n':'')+'HSK 4: '+four);await f.tick();
+    expect(f.hooks.start).not.toHaveBeenCalled();expect(f.engine.value?.lastError).toMatch(/form thử/);
+  });
+  it('shows discovered links with a blocking date error during a normal run',async()=>{
+    const f=fixture();await f.arm();f.setTime(start-30000);await f.tick();f.setTime(start);
+    await f.observe('Đăng ký từ 08:00 ngày 20.10.2026\nHSK 4: '+four);await f.tick();
+    expect(f.engine.value?.links['4']).toMatchObject({url:four,error:expect.stringContaining('khác lịch')});expect(f.hooks.start).not.toHaveBeenCalled();
+  });
+  it('rejects Live rehearsals and watcher profiles from another account',async()=>{
+    const f=fixture();await expect(f.arm({mode:'live',rehearsal:true})).rejects.toThrow('chỉ dùng chế độ Test');
+    await expect(f.arm({watcherProfileId:'another-owner'})).rejects.toThrow('không thuộc tài khoản');
+  });
   it('prepares 5 minutes early, watches before the hour, never starts early',async()=>{
     const f=fixture();await f.arm();await f.tick();expect(f.hooks.prepare).not.toHaveBeenCalled();
     f.setTime(start-300000);await f.tick();expect(f.hooks.prepare).toHaveBeenCalledTimes(10);expect(f.hooks.command).toHaveBeenCalled();

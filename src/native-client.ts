@@ -97,7 +97,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const readOnly=['WATCH_FACEBOOK','PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
     if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-20-watch-window-1.7.1',capabilities:['sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-20-facebook-post-ready-1.7.2',capabilities:['sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='WATCH_FACEBOOK'){if(!adapter.watchFacebook)throw new Error('Extension chưa hỗ trợ theo dõi Facebook.');result=await adapter.watchFacebook(p);}
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};

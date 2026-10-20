@@ -8,6 +8,7 @@ afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
 it('starts the short polling phase before the hour, never overlaps a loading request',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>{}));await watcher.command(config);updated(17,{status:'complete'});
   await vi.advanceTimersByTimeAsync(10000);expect(api.tabs.reload).toHaveBeenCalledTimes(1);updated(17,{status:'complete'});
+  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
   await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(2000);expect(api.tabs.reload).toHaveBeenCalledTimes(2);watcher.stop();
 });
@@ -57,4 +58,19 @@ it('reuses its saved post window after worker restart and never focuses another 
   expect(api.windows.create).not.toHaveBeenCalled();api.tabs.get.mockResolvedValue({id:17,windowId:9,url:'https://www.facebook.com/'});
   await expect(watcher.command({focus:true,token:'renewed',scheduleId:config.scheduleId})).rejects.toThrow('đã chọn');
   expect(api.windows.update).not.toHaveBeenCalled();watcher.stop();
+});
+it('does not mistake HTTP complete for readable SPA content and starve it with rapid reloads',async()=>{
+  vi.setSystemTime(100000);const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({accepted:true})));
+  await watcher.command(config);updated(17,{status:'complete'});
+  await vi.advanceTimersByTimeAsync(2000);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'',error:'loading'});
+  await vi.advanceTimersByTimeAsync(5600);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(400);expect(api.tabs.reload).toHaveBeenCalledTimes(1);
+  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
+  await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalledTimes(2);watcher.stop();
+});
+it('reuses its owned post window across schedules instead of opening more login windows',async()=>{
+  const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command(config);watcher.stop();
+  await watcher.command({...config,token:'new-token',scheduleId:'next-schedule'});
+  expect(api.windows.create).toHaveBeenCalledTimes(1);expect(data.facebookWatch.scheduleId).toBe('next-schedule');watcher.stop();
 });

@@ -10,8 +10,9 @@ export interface RegistrationSchedule {
   id:string;postUrl:string;startsAt:string;expiresAt:string;prepareAt:string;watchAt:string;
   mode:RunMode;status:'armed'|'preparing'|'watching'|'running'|'finished'|'cancelled'|'expired';
   members:ScheduledMember[];links:Partial<Record<HskLevel,HskLink>>;finalQuestion?:FinalQuestion;
+  rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
   watcher?:{id:string;token:string;ready:boolean;error?:string};
-  lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
+  lastReadAt?:string;lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
 }
 export const activeSchedule=(s?:RegistrationSchedule)=>!!s&&!['finished','cancelled','expired'].includes(s.status);
 export function facebookPostKey(value:string):string|undefined {
@@ -36,6 +37,17 @@ export function formLink(value:string):string|undefined {
 const normalized=(s:string)=>s.normalize('NFKD').replace(/[\u0300-\u036f\u200b-\u200d\ufeff]/g,'').replace(/[đĐ]/g,'d').toLowerCase();
 const testWords=(s:string)=>/\b(?:form\s*(?:thu|test)|mau\s*form|dien\s*thu|test\s*form)\b|测试|試填|试填/.test(normalized(s));
 /** Labels bind only to their following section, never to comments or URL order. */
+export function parseTestForm(text:string):{url?:string;error?:string}|undefined {
+  const found=new Set<string>();let test=false,gap=0;
+  for(const line of text.normalize('NFKC').split(/\r?\n/)){
+    if(testWords(line)){test=true;gap=0;}
+    else if(/\bHSK\s*[1-6](?:\b|级|級)/i.test(line)||registrationTime(line)!==undefined){test=false;}
+    else if(line.trim()&&++gap>2)test=false;
+    if(!test)continue;
+    for(const m of line.matchAll(/https:\/\/[^\s<>"“”]+/gi)){const url=formLink(m[0].replace(/[),.;，。；）]+$/g,''));if(url)found.add(url);}
+  }
+  return found.size===1?{url:[...found][0]}:found.size?{error:'Bài có nhiều form thử khác nhau; chưa tự chọn form.'}:undefined;
+}
 function registrationTime(line:string):number|undefined {
   const s=normalized(line);if(!/dang ky|bao danh|报名/.test(s))return;
   const time=s.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/),cn=s.match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/),date=s.match(/\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b/)??(cn?['',cn[3],cn[2],cn[1]]:undefined);
