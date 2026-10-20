@@ -905,7 +905,7 @@ async function startManaged(command:Command,sessionId:string){
   // Keep the registration tab selected in its own profile window. Background
   // tabs can throttle Forms initialization and the content script's timers.
   try{
-    const window=chrome.windows?.getLastFocused?await chrome.windows.getLastFocused():undefined;
+    const window=chrome.windows?.getLastFocused?await chrome.windows.getLastFocused({windowTypes:['normal']}):undefined;
     if(window?.id!==undefined&&window.state==='minimized')await chrome.windows.update(window.id,{state:'normal',focused:false});
     const tab=await chrome.tabs.create({url:run.url,active:true,...(window?.id!==undefined?{windowId:window.id}:{})});run.tabId=tab.id!;
     if(interruptedRuns.has(run.runId!)){run.status='idle';run.recoveryRequired=false;await saveRun(run);return getManaged();}
