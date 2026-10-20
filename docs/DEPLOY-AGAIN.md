@@ -1,5 +1,11 @@
 # Cập nhật website HANU sau này
 
+**v1.7.3 — sửa thoát đăng nhập giả khi mạng lỗi, bàn giao render và chạy ngay khi có link:**
+
+- Reload extension 1.7.3 trong từng Chrome profile để nhận sửa bàn giao trang.
+- Lịch mới mặc định chạy ngay khi nhận link đúng HSK; bỏ chọn nếu cần chờ đúng giờ.
+- Không có migration mới.
+
 **v1.7.2 — đọc bài Facebook tới khi sẵn sàng và diễn tập trọn luồng:**
 deploy backend/UI và Reload extension trong các profile. Thêm chọn profile
 đọc Facebook, dùng lại cửa sổ cùng phiên, hiển thị link bị chặn do sai ngày

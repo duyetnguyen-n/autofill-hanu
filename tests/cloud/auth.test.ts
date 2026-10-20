@@ -11,7 +11,7 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
   const encoded=(v:unknown)=>Buffer.from(JSON.stringify(v)).toString('base64url');
   const token=`${encoded({alg:'HS256',typ:'JWT'})}.${encoded({sub:userId,session_id:sessionId,exp:Math.floor(Date.now()/1000)+3600})}.fixture-signature`;
   const user={id:userId,email:'auth@example.test',app_metadata:{provider:'google'},user_metadata:{full_name:'Auth thử nghiệm',email_verified:true},identities:[{id:userId,user_id:userId,provider:'google',identity_data:{sub:'google-fixture',email:'auth@example.test',email_verified:true}}],aud:'authenticated',created_at:new Date().toISOString()};
-  let verifiedCalls=0,codeChallenge='',codeVerifier='';
+  let verifiedCalls=0,authStatus=200,codeChallenge='',codeVerifier='';
   let origin='';
   const server=createServer(async(req,res)=>{
     const path=new URL(req.url!,origin).pathname;
@@ -23,7 +23,7 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
         res.end(JSON.stringify({access_token:token,refresh_token:'fixture-refresh-token',expires_in:3600,token_type:'bearer',user}));return;
       }
       if(path==='/auth/v1/user'){
-        verifiedCalls++;if(req.headers.authorization!==`Bearer ${token}`){res.statusCode=401;res.end(JSON.stringify({message:'Invalid token'}));return;}
+        verifiedCalls++;if(authStatus!==200){res.statusCode=authStatus;res.end(JSON.stringify({message:'Auth service unavailable'}));return;}if(req.headers.authorization!==`Bearer ${token}`){res.statusCode=401;res.end(JSON.stringify({message:'Invalid token'}));return;}
         res.end(JSON.stringify(user));return;
       }
       if(path==='/auth/v1/logout'){res.statusCode=204;res.end();return;}
@@ -36,7 +36,7 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
       if(path==='/me'){res.end(JSON.stringify(await auth.user()??null));return;}
       if(path==='/logout'){await auth.logout();res.end('{}');return;}
       res.statusCode=404;res.end();
-    }catch(e){res.statusCode=400;res.end(JSON.stringify({error:(e as Error).message}));}
+    }catch(e){res.statusCode=(e as {status?:number}).status??400;res.end(JSON.stringify({error:(e as Error).message}));}
   });
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   cleanups.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
@@ -51,6 +51,9 @@ it('uses real Supabase SDK PKCE, HttpOnly cookies and server verification; rejec
   user.identities[0].identity_data.email_verified=false;
   expect(await(await request('/me')).json()).toMatchObject({emailVerified:false});
   user.identities[0].identity_data.email_verified=true;
+  // Auth outages must not masquerade as a signed-out browser or clear its cookies.
+  authStatus=503;const unavailable=await request('/me');expect(unavailable.status).toBe(503);expect(unavailable.headers.getSetCookie().some(c=>c.includes('Max-Age=0'))).toBe(false);
+  authStatus=200;expect(await(await request('/me')).json()).toMatchObject({id:userId});
   // The SDK must consult Auth, rather than trust the user payload in its cookie.
   const cookieKey=[...jar.keys()].find(key=>key.includes('auth-token')&&!key.includes('code-verifier'))!;
   const value=jar.get(cookieKey)!;

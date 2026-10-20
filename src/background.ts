@@ -73,6 +73,8 @@ async function checkNavigationWatch(watch:NavigationWatch){
   if(navigationWatches.get(watch.tabId)===watch)watch.timer=setTimeout(()=>void checkNavigationWatch(watch).catch(()=>{}),Math.max(1,NAVIGATION_LIMIT_MS-(Date.now()-watch.started)));
 }
 const pageAttention=new Map<number,{token:string;epoch:string;run:RunState;timer?:ReturnType<typeof setInterval>}>();
+const attentionReleasing=new Map<number,Promise<void>>();
+const attentionAcquiring=new Map<number,{epoch:string;runId?:string;promise:Promise<unknown>}>();
 interface RenderGuard {token:string;cancelled:boolean;attached:boolean;ready:Promise<void>;finish:()=>void}
 const renderGuards=new Map<number,RenderGuard>();
 async function enablePageRendering(tabId:number,token:string,foreground=false){
@@ -118,12 +120,26 @@ async function prepareFormWindow(tabId:number,focused=false){
   if(focused)await chrome.windows.update(tab.windowId,{focused:true});
 }
 async function releasePageAttention(tabId:number,token?:string){
-  const lease=pageAttention.get(tabId);if(!lease||token&&lease.token!==token)return;
+  const lease=pageAttention.get(tabId);if(!lease||token&&lease.token!==token){await attentionReleasing.get(tabId);return;}
   pageAttention.delete(tabId);clearInterval(lease.timer);
-  await disablePageRendering(tabId,lease.token);
-  if(lease.run.managed)await native.request('ATTENTION_RELEASE',lease.run,{token:lease.token}).catch(()=>{});
+  const previous=attentionReleasing.get(tabId);
+  const releasing=(async()=>{
+    await previous;
+    try{await disablePageRendering(tabId,lease.token);}
+    finally{if(lease.run.managed)await native.request('ATTENTION_RELEASE',lease.run,{token:lease.token}).catch(()=>{});}
+  })();
+  attentionReleasing.set(tabId,releasing);
+  try{await releasing;}finally{if(attentionReleasing.get(tabId)===releasing)attentionReleasing.delete(tabId);}
 }
 async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE_ATTENTION_ACQUIRE'}>,sender:chrome.runtime.MessageSender){
+  const tabId=sender.tab?.id;if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
+  const pending=attentionAcquiring.get(tabId);
+  if(pending?.epoch===message.epoch&&pending.runId===message.runId)return pending.promise;
+  const promise=(async()=>{await pending?.promise.catch(()=>{});return acquirePageAttentionOnce(message,sender);})();
+  const entry={epoch:message.epoch,runId:message.runId,promise};attentionAcquiring.set(tabId,entry);
+  try{return await promise;}finally{if(attentionAcquiring.get(tabId)===entry)attentionAcquiring.delete(tabId);}
+}
+async function acquirePageAttentionOnce(message:Extract<ExtensionMessage,{type:'PAGE_ATTENTION_ACQUIRE'}>,sender:chrome.runtime.MessageSender){
   const tabId=sender.tab?.id;
   if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
   let run=await getRun(tabId);
@@ -131,6 +147,8 @@ async function acquirePageAttention(message:Extract<ExtensionMessage,{type:'PAGE
   if(!valid(run))throw new Error('Lượt/trang đã dừng; không mở cửa sổ.');
   const old=pageAttention.get(tabId);if(old?.epoch===message.epoch)return {ok:true,token:old.token};
   await releasePageAttention(tabId);
+  run=await getRun(tabId);
+  if(!valid(run))throw new Error('Lượt/trang đã dừng; không mở cửa sổ.');
   const rendering=typeof chrome.debugger?.attach==='function'?'background':'foreground';
   run={...run!,activity:{phase:/chuyển trang/i.test(message.purpose)?'navigating':/upload|tải ảnh|tệp/i.test(message.purpose)?'uploading':'filling',message:message.purpose.slice(0,200),at:now()}};
   run=addLog(run!,'info',`Đang xử lý${rendering==='background'?' đồng thời':''}: ${message.purpose.slice(0,100)}`);await saveRun(run);

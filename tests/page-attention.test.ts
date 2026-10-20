@@ -89,3 +89,25 @@ it('releases a pending mouse press outside the control if Stop arrives before mo
  await f.ask({type:'TRUSTED_CLICK',x:10,y:10,runId:'run',epoch:'document'});
  expect(sendCommand).toHaveBeenCalledWith({tabId:7},'Input.dispatchMouseEvent',expect.objectContaining({type:'mouseReleased',x:-1,y:-1}));
 });
+it('waits for the old remote release before granting the next document lease',async()=>{
+ const f=await fixture();await f.ask(f.acquire);let release!:()=>void;
+ native.request.mockImplementation(async(kind:string)=>{if(kind==='ATTENTION_RELEASE')await new Promise<void>(r=>release=r);return kind==='ATTENTION_ACQUIRE'?{token:'next',mode:'background'}:{renewed:true};});
+ const dropping=f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+ f.data['run:7'].contentEpoch='next-document';const next=f.ask({...f.acquire,epoch:'next-document'});
+ await new Promise(r=>setTimeout(r,10));expect(native.request.mock.calls.filter((c:any)=>c[0]==='ATTENTION_ACQUIRE')).toHaveLength(1);
+ release();await dropping;expect(await next).toMatchObject({ok:true,token:'next'});
+ native.request.mockResolvedValue({});await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'next'});
+});
+it('coalesces simultaneous acquires until renderer setup finishes',async()=>{
+ const f=await fixture();let grant!:(v:any)=>void;native.request.mockImplementationOnce(()=>new Promise(r=>grant=r));
+ const first=f.ask(f.acquire),second=f.ask(f.acquire);await vi.waitFor(()=>expect(grant).toBeTypeOf('function'));
+ expect(native.request.mock.calls.filter((c:any)=>c[0]==='ATTENTION_ACQUIRE')).toHaveLength(1);
+ grant({token:'lease',mode:'background'});expect(await first).toMatchObject({ok:true});expect(await second).toMatchObject({ok:true});
+});
+it('Stop while a predecessor is releasing prevents the queued acquire from touching Chrome',async()=>{
+ const f=await fixture();await f.ask(f.acquire);let release!:()=>void;
+ native.request.mockImplementation(async(kind:string)=>{if(kind==='ATTENTION_RELEASE')await new Promise<void>(r=>release=r);return {token:'next',mode:'background'};});
+ const dropping=f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+ const next=f.ask(f.acquire);await new Promise(r=>setTimeout(r,0));f.data['run:7'].status='idle';release();await dropping;
+ expect(await next).toMatchObject({ok:false,error:expect.stringContaining('dừng')});expect(native.request.mock.calls.filter((c:any)=>c[0]==='ATTENTION_ACQUIRE')).toHaveLength(1);
+});

@@ -62,12 +62,27 @@ function fixture(seed?:RegistrationSchedule){
   const online=new Set(sessions.map(s=>s.id));
   const hooks={load:vi.fn(async()=>saved),save:vi.fn(async(s:RegistrationSchedule)=>{saved=structuredClone(s);}),sessions:vi.fn(async()=>structuredClone(sessions)),connected:(id:string)=>online.has(id),command:vi.fn(async()=>({ready:true})),prepare:vi.fn(async()=>{}),start:vi.fn(async(id:string,url:string,s:RegistrationSchedule,valid:()=>boolean):Promise<GroupView>=>{if(!valid())throw Error('cancelled');return {id:`run-${id}`,url,mode:s.mode,members:[id],paused:false,createdAt:new Date(clock).toISOString()};}),changed:vi.fn(),error:vi.fn()};
   const engine=new RegistrationScheduler(hooks,()=>clock);
-  const arm=(extra={})=>engine.arm({postUrl:post,startsAt:new Date(start).toISOString(),ids:sessions.map(s=>s.id),mode:'test',...extra});
+  const arm=(extra={})=>engine.arm({postUrl:post,startsAt:new Date(start).toISOString(),ids:sessions.map(s=>s.id),mode:'test',startOnLink:false,...extra});
   const observe=(text:string)=>engine.observe(engine.value!.watcher!.id,{scheduleId:engine.value!.id,token:engine.value!.watcher!.token,postKey:facebookPostKey(post),text});
   const tick=async()=>{await engine.tick();await flush();await engine.tick();await flush();};
   return {engine,hooks,sessions,online,arm,observe,tick,setTime:(at:number)=>{clock=at;},saved:()=>saved};
 }
 describe('durable scheduled dispatch',()=>{
+  it('prepares immediately and dispatches matching links before the hour when enabled',async()=>{
+    const f=fixture();await f.arm({startOnLink:true});await f.tick();expect(f.hooks.prepare).toHaveBeenCalledTimes(10);
+    await f.observe(`HSK 4: ${four}`);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(5);
+    expect(f.hooks.start.mock.calls.every(c=>c[1]===four)).toBe(true);
+    await f.observe(`HSK 4: ${four}\nHSK 5: ${five}`);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);
+    await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);
+  });
+  it('does not let a loading report revoke correct links at the scheduled instant',async()=>{
+    const f=fixture();await f.arm({rehearsal:true});f.setTime(start-30000);await f.tick();
+    await f.observe(`Form thử: https://forms.gle/Sample\nHSK 4: ${four}\nHSK 5: ${five}`);
+    f.setTime(start);const w=f.engine.value!.watcher!;
+    await f.engine.observe(w.id,{scheduleId:f.engine.value!.id,token:w.token,postKey:facebookPostKey(post),text:'',error:'Đang tải Facebook'});
+    await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);expect(f.engine.value?.lastError).toBeUndefined();
+  });
+
   it('rehearses all 10 profiles on the labelled Test form, retaining accurate per-HSK links',async()=>{
     const f=fixture();await f.arm({rehearsal:true,watcherProfileId:'profile-4'});f.setTime(start-30000);await f.tick();
     expect(f.engine.value?.watcher?.id).toBe('profile-4');
@@ -123,10 +138,10 @@ describe('durable scheduled dispatch',()=>{
     await f.observe('Link sẽ có sau');expect(f.engine.value?.links).toEqual({});
     f.setTime(start);await f.tick();expect(f.hooks.start).not.toHaveBeenCalled();
   });
-  it('does not dispatch stale links or a previous registration date',async()=>{
+  it('keeps verified links through slow refreshes but blocks a previous registration date',async()=>{
     const f=fixture();await f.arm();f.setTime(start-30000);await f.tick();await f.observe(`HSK 4: ${four}`);
-    f.setTime(start);await f.tick();expect(f.hooks.start).not.toHaveBeenCalled();
-    await f.observe(`Đăng ký từ 08:00 ngày 20.10.2026\nHSK 4: ${four}`);await f.tick();expect(f.hooks.start).not.toHaveBeenCalled();expect(f.engine.value?.lastError).toMatch(/khác lịch/);
+    f.setTime(start);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(5);
+    await f.observe(`Đăng ký từ 08:00 ngày 20.10.2026\nHSK 5: ${five}`);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(5);expect(f.engine.value?.lastError).toMatch(/khác lịch/);
   });
   it('holds only the stopped profile and cancellation fences queued starts',async()=>{
     const f=fixture();await f.arm({links:{'4':four,'5':five}});f.setTime(start-30000);await f.tick();

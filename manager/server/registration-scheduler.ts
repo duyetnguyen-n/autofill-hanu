@@ -32,6 +32,7 @@ export class RegistrationScheduler {
     if(!facebookPostKey(String(input.postUrl??'')))throw new Error('Dùng link trực tiếp story.php hoặc /posts/ của đúng bài Facebook.');
     if(!['test','live'].includes(input.mode)||!Array.isArray(input.ids)||!input.ids.length||input.ids.length>100||new Set(input.ids).size!==input.ids.length)throw new Error('Chọn các profile và chế độ chạy hợp lệ.');
     validateFinalQuestion(input.finalQuestion);
+    if(input.startOnLink!==undefined&&typeof input.startOnLink!=='boolean')throw new Error('Chế độ chạy khi có link không hợp lệ.');
     if(input.rehearsal!==undefined&&typeof input.rehearsal!=='boolean'||input.rehearsal&&input.mode!=='test')throw new Error('Diễn tập chỉ dùng chế độ Test, luôn dừng trước Gửi.');
     if(input.links!==undefined&&(!input.links||typeof input.links!=='object'||Array.isArray(input.links)))throw new Error('Bảng link HSK không hợp lệ.');
     for(const [level,url]of Object.entries(input.links??{}))if(!isHskLevel(level)||typeof url!=='string'||url.trim()&&!formLink(url.trim()))throw new Error(`Link HSK ${level} không hợp lệ.`);
@@ -44,7 +45,7 @@ export class RegistrationScheduler {
     });
     this.cancelling=false;this.cancelledId=undefined;this.prepared.clear();this.watcherFailures.clear();this.watcherSent=0;
     const previous=this.value;
-    this.value={id:randomUUID(),postUrl:input.postUrl,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+120000).toISOString(),mode:input.mode,rehearsal:input.rehearsal===true,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
+    this.value={id:randomUUID(),postUrl:input.postUrl,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+120000).toISOString(),mode:input.mode,startOnLink:input.startOnLink!==false,rehearsal:input.rehearsal===true,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
     for(const [key,url]of Object.entries(input.links??{}))if(url)this.setManual(key,url);
     try{await this.persist();}catch(e){this.value=previous;throw e;}return structuredClone(this.value);
   });}
@@ -115,20 +116,22 @@ export class RegistrationScheduler {
   tick(){return this.exclusive(async()=>{
     const s=this.value;if(!s||!this.active)return;const now=this.now();
     if(now>=Date.parse(s.expiresAt)){s.status='expired';await this.persist();void this.stopWatcher();return;}
-    if(now<Date.parse(s.prepareAt))return;
+    if(now<Date.parse(s.prepareAt)&&!s.startOnLink)return;
     const sessions=await this.hooks.sessions();if(!this.active)return;const old=s.status;
     s.status=now<Date.parse(s.watchAt)?'preparing':now<Date.parse(s.startsAt)?'watching':'running';
     if(old!==s.status)await this.persist();
     for(const member of s.members){const session=sessions.find(p=>p.id===member.id);if(member.status==='waiting'&&session&&this.hooks.connected(member.id))this.prepare(s,session);}
     this.watch(s,sessions);
-    if(now<Date.parse(s.startsAt))return;
+    if(now<Date.parse(s.startsAt)&&!s.startOnLink)return;
     const dispatch:typeof s.members=[];
     for(const member of s.members){
       if(!['waiting','starting'].includes(member.status)||this.launching.has(member.id))continue;
       const session=sessions.find(p=>p.id===member.id),link=s.links[member.level];
       if(!session||!this.hooks.connected(member.id)||!session.synced||session.conflict||!session.profile||this.prepared.get(`${s.id}:${session.id}`)!==session.revision)continue;
-      if(!link?.url||link.error||link.source==='facebook'&&(s.lastError||now-Date.parse(s.lastObservedAt??'')>10000))continue;
-      if(s.rehearsal&&(s.mode!=='test'||!s.testForm?.url||s.testForm.error||s.lastError||now-Date.parse(s.testForm.observedAt)>10000))continue;
+      // A loading/error observation does not revoke previously verified links.
+      // Only a readable newer post can remove or invalidate a specific HSK URL.
+      if(!link?.url||link.error)continue;
+      if(s.rehearsal&&(s.mode!=='test'||!s.testForm?.url||s.testForm.error))continue;
       // Persist individual intent before dispatch. Slow peers never gate others.
       member.status='starting';member.url??=s.rehearsal?s.testForm!.url!:link.url;member.dispatchedAt??=new Date(now).toISOString();
       dispatch.push(member);
@@ -145,6 +148,6 @@ export class RegistrationScheduler {
         await this.exclusive(async()=>{if(this.value?.id!==s.id)return;member.runId=group.id;member.status='started';member.error=undefined;await this.persist();});
       })().catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&member.status==='starting'){member.status='failed';member.error=(e as Error).message;await this.persist();}})).finally(()=>this.launching.delete(member.id)).catch(this.hooks.error);
     }
-    if(s.members.every(m=>['started','failed','held'].includes(m.status))){s.status='finished';await this.persist();void this.stopWatcher();}
+    if(s.members.every(m=>['started','failed','held'].includes(m.status))){s.status='finished';s.lastError=undefined;await this.persist();void this.stopWatcher();}
   });}
 }

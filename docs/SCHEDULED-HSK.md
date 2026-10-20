@@ -52,3 +52,10 @@ loại link HSK, nhưng mọi profile chỉ mở link được ghi rõ là form 
 bài. Thiếu/mâu thuẫn/xóa link form thử thì giữ chờ; không chuyển sang form thật.
 Diễn tập không dùng được với Live và luôn dừng trước Gửi. Test vẫn truyền dữ liệu
 hồ sơ và ảnh lên Google, nên chỉ chọn hồ sơ được phép dùng trên mẫu thử đó.
+
+## 1.7.3 — chạy ngay khi có link và giữ màn quản lý khi mạng lỗi
+
+- Lịch mới mặc định chuẩn bị ngay sau khi bật; có link hợp lệ đúng HSK là phát lệnh, kể cả trước giờ đặt. Có thể bỏ chọn để chờ đúng giờ.
+- Link đã xác nhận không mất hiệu lực chỉ vì Facebook đang dựng lại trang; nội dung bài mới đọc được vẫn thay thế/xóa link và chặn nhầm ngày, cấp độ hoặc form thử nhập nhằng.
+- Lỗi mạng/502/503 khi kiểm tra đăng nhập không đưa người dùng về màn Google. Chỉ auth/me xác nhận 401 mới kết thúc phiên; dịch vụ xác thực gián đoạn trả 503 thay vì 401.
+- Bàn giao quyền render giữa trang cũ và mới chờ thao tác nhả quyền thực sự hoàn tất; gộp yêu cầu xin quyền trùng cùng trang. Mỗi profile vẫn độc lập.

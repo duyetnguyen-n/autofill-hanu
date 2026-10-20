@@ -49,8 +49,15 @@ export function supabaseAuth(config: CloudConfig): WebAuth {
         if (checked) return verified;
         checked = true;
         const { data, error } = await client.auth.getUser();
-        if (error || !data.user || !data.user.identities?.some(i => i.provider === 'google')) return;
-        const { data: session } = await client.auth.getSession();
+        if (error) {
+          if (error.name === 'AuthRetryableFetchError' || !error.status || error.status === 429 || error.status >= 500)
+            throw new CloudError('Dịch vụ xác thực đang gián đoạn. Phiên đăng nhập được giữ để thử lại.', 503);
+          return;
+        }
+        if (!data.user || !data.user.identities?.some(i => i.provider === 'google')) return;
+        const { data: session, error: sessionError } = await client.auth.getSession();
+        if (sessionError) throw new CloudError('Chưa làm mới được phiên đăng nhập. Thử lại sau.', 503);
+        if (!session.session) return;
         // The token was verified above. These claims only schedule channel
         // expiry and select which browser channels to close on local logout.
         const claims = JSON.parse(Buffer.from(session.session!.access_token.split('.')[1], 'base64url').toString());

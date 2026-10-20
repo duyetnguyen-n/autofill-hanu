@@ -20,23 +20,25 @@ export function CloudLogin({error,onLogin,pending}:{error:string;onLogin:()=>voi
 }
 
 export function CloudGate({children}:{children:(account:Account,logout:()=>Promise<void>)=>React.ReactNode}){
-  const [account,setAccount]=useState<Account>(),[checking,setChecking]=useState(true),[pending,setPending]=useState(false);
+  const [account,setAccount]=useState<Account>(),[checking,setChecking]=useState(true),[pending,setPending]=useState(false),[unavailable,setUnavailable]=useState(false),[attempt,setAttempt]=useState(0);
   const [error,setError]=useState(new URLSearchParams(location.search).has('auth_error')?'Đăng nhập chưa hoàn tất. Bấm Tiếp tục với Google để thử lại.':'');
-  const refresh=useCallback(async()=>{const response=await fetch('/api/auth/me',{cache:'no-store'});const result=await response.json();if(response.status===401){setAccount(undefined);return;}if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');setAccount(result);},[]);
+  const refresh=useCallback(async()=>{const response=await fetch('/api/auth/me',{cache:'no-store'});const result=await response.json();if(response.status===401){setUnavailable(false);setAccount(undefined);return;}if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');setAccount(result);},[]);
   useEffect(()=>{
-    let stopped=false,generation=0;
-    async function check(){const current=++generation;try{
+    let stopped=false,generation=0,inFlight=false;let retry:ReturnType<typeof setTimeout>|undefined;
+    async function check(){if(inFlight)return;clearTimeout(retry);inFlight=true;const current=++generation;try{
       const response=await fetch('/api/auth/me',{cache:'no-store'});const result=await response.json();if(stopped||current!==generation)return;
-      if(response.status===401)setAccount(undefined);else if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');else setAccount(result);
-    }catch(e){if(!stopped&&current===generation){setAccount(undefined);setError((e as Error).message);}}finally{if(!stopped&&current===generation)setChecking(false);}}
-    const expired=()=>{setAccount(undefined);setChecking(true);void check();};
+      if(response.status===401){setUnavailable(false);setAccount(undefined);setError('Phiên đăng nhập đã hết hạn. Đăng nhập lại bằng Google.');}else if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');else{setAccount(result);setUnavailable(false);setError('');}
+    }catch(e){if(!stopped&&current===generation){setUnavailable(true);setError('Chưa kiểm tra được phiên đăng nhập. Đang thử lại…');retry=setTimeout(()=>void check(),5000);}}finally{inFlight=false;if(!stopped&&current===generation)setChecking(false);}}
+    // A row-level 401 or a transient outage must not unmount the workspace.
+    // Only /auth/me can confirm that this browser's login has ended.
+    const expired=()=>{void check();};
     const visible=()=>{if(document.visibilityState==='visible')void check();};
     const updated=()=>void check();
     window.addEventListener('hanu-auth-expired',expired);window.addEventListener('hanu-account-updated',updated);document.addEventListener('visibilitychange',visible);
     const timer=setInterval(()=>void check(),30000);void check();
     if(location.search)history.replaceState(null,'',location.pathname);
-    return()=>{stopped=true;clearInterval(timer);window.removeEventListener('hanu-auth-expired',expired);window.removeEventListener('hanu-account-updated',updated);document.removeEventListener('visibilitychange',visible);};
-  },[]);
+    return()=>{stopped=true;clearTimeout(retry);clearInterval(timer);window.removeEventListener('hanu-auth-expired',expired);window.removeEventListener('hanu-account-updated',updated);document.removeEventListener('visibilitychange',visible);};
+  },[attempt]);
   async function login(){setPending(true);setError('');try{
     const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const data=await response.json();
     if(!response.ok)throw new Error(data.error??'Không mở được đăng nhập.');location.assign(data.url);
@@ -50,5 +52,6 @@ export function CloudGate({children}:{children:(account:Account,logout:()=>Promi
     if(!allowed||location.pathname==='/account')return <AccountPage key={account.id} account={account} logout={logout} refresh={refresh}/>;
     return <React.Fragment key={account.id}>{children(account,logout)}</React.Fragment>;
   }
+  if(unavailable)return <div className="login-loading" role="status"><span>{error}</span><Button onClick={()=>setAttempt(v=>v+1)}>Thử kết nối lại</Button></div>;
   return <CloudLogin error={error} pending={pending} onLogin={()=>void login()}/>;
 }

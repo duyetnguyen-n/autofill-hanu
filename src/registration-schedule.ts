@@ -10,7 +10,7 @@ export interface RegistrationSchedule {
   id:string;postUrl:string;startsAt:string;expiresAt:string;prepareAt:string;watchAt:string;
   mode:RunMode;status:'armed'|'preparing'|'watching'|'running'|'finished'|'cancelled'|'expired';
   members:ScheduledMember[];links:Partial<Record<HskLevel,HskLink>>;finalQuestion?:FinalQuestion;
-  rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
+  startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
   watcher?:{id:string;token:string;ready:boolean;error?:string};
   lastReadAt?:string;lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
 }
