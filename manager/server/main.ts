@@ -22,7 +22,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   const webSockets=new WebSocketServer({noServer:true,maxPayload:1024*1024});const browsers=new Set<WebSocket>();
   let origin='';const cookie=`hanu=${uiToken}`;const authenticate=(req:IncomingMessage)=>req.headers.cookie?.split(';').some(c=>c.trim()===cookie)===true;
   let emergencyError='';
-  const state=()=>({sessions:store.sessions(),groups:store.groups(),platform:{os:process.platform,arch:process.arch},allowedExtensionIds:allowedIds(),emergencyError});
+  const state=()=>({sessions:store.sessions(),groups:store.groups(),registrationSchedule:coordinator.scheduler.value,platform:{os:process.platform,arch:process.arch},allowedExtensionIds:allowedIds(),emergencyError});
   function failClosed(error:unknown){if(!/database or disk is full|disk I\/O error/i.test(String(error)))return;emergencyError='Không lưu được tiến độ do ổ đĩa đầy hoặc lỗi ghi. Đã dừng các phiên. Giải phóng dung lượng rồi mở lại app.';for(const ws of coordinator.peers.values())if(ws.readyState===1){ws.send(JSON.stringify({type:'EMERGENCY_STOP',error:emergencyError}));ws.close(1011,'Storage unavailable');}try{coordinator.changed();}catch{}}
   function allowedIds():string[]{try{return JSON.parse(readFileSync(join(dir,'allowed-extensions.json'),'utf8'));}catch{return [];}}
   const peerLastSeen=new Map<string,number>();
@@ -48,6 +48,11 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
         if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion,b.requestId));}
+        if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req);return json(await coordinator.assignHsk(b.ids,b.level));}
+        if(path==='/api/registration-schedule'&&req.method==='POST')return json(await coordinator.scheduler.arm(await body(req)));
+        if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.cancel());}
+        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req);return json(await coordinator.stopScheduledRuns());}
+        if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.manual(b.level,b.url));}
         if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion,b.resume===true));}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
@@ -98,8 +103,9 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   privateWrite(join(dir,'connection.json'),JSON.stringify({port:address.port,bridgeToken,pid:process.pid,launchUrl:url}));
   const heartbeat=setInterval(()=>{const now=Date.now();for(const[id,ws]of coordinator.peers){const seen=peerLastSeen.get(id)??0;if(now-seen>15000)ws.terminate();}},5000);
   coordinator.launchUrl=url;
+  coordinator.scheduler.open();
   if(options.open)openManager(url);
-  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){closing=true;clearTimeout(changeTimer);coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();await coordinator.settledConnections();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
+  return {server,store,coordinator,origin,url,uiToken,bridgeToken,async close(){closing=true;coordinator.scheduler.close();clearTimeout(changeTimer);coordinator.attention.close();clearInterval(heartbeat);await Promise.all([...webSockets.clients].map(ws=>new Promise<void>(resolve=>{ws.once('close',()=>resolve());ws.terminate();})));await new Promise<void>(resolve=>server.close(()=>resolve()));webSockets.close();await coordinator.settledConnections();store.close();try{rmSync(join(dir,'connection.json'));}catch{}}};
 }
 if(process.argv.includes('--serve')){
   const dir=dataDirectory();mkdirSync(dir,{recursive:true,mode:0o700});const lock=join(dir,'instance.lock');

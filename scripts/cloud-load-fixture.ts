@@ -34,6 +34,7 @@ export async function loadFixture(databaseUrl?: string) {
     await pg.query(await readFile('supabase/migrations/202610130001_cloud.sql', 'utf8'));
     await pg.query(await readFile('supabase/migrations/202610150001_user_access.sql', 'utf8'));
     await pg.query(await readFile('supabase/migrations/202610150002_google_approval_only.sql', 'utf8'));
+    await pg.query(await readFile('supabase/migrations/202610200001_registration_schedule.sql', 'utf8'));
     const blobs = new Map<string, Buffer>();
     const objects: PrivateObjects = {
       async put(path, bytes) { blobs.set(path, Buffer.from(bytes)); },

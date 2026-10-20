@@ -1,5 +1,10 @@
 # Cập nhật website HANU sau này
 
+**v1.7.0 — đặt lịch săn link theo HSK (20/10/2026):** chạy migration bổ sung
+`supabase/migrations/202610200001_registration_schedule.sql` trước khi deploy,
+rồi build/Reload extension 1.7.0 vào đúng thư mục cũ. Cấp quyền Facebook tùy chọn
+ở một profile theo dõi. Xem [hướng dẫn lịch và kiểm tra link](SCHEDULED-HSK.md).
+
 **v1.5.1 — chuẩn bị ảnh song song và chọn đúng document Picker (18/10/2026):**
 build `npm run build:cloud-extension`, giữ đúng origin production, chép vào đúng
 thư mục extension đang nạp rồi Reload từng profile. Giữ nguyên ID, liên kết,

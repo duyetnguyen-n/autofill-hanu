@@ -39,6 +39,8 @@ export async function transaction<T>(pool: SqlPool, fn: (db: SqlConnection) => P
 }
 
 export class PostgresStore implements DataStore {
+  async registrationSchedule():Promise<import('../../src/registration-schedule').RegistrationSchedule|undefined>{return (await this.pool.query('SELECT data FROM hanu.registration_schedules WHERE owner=$1',[this.owner])).rows[0]?.data;}
+  async saveRegistrationSchedule(s:import('../../src/registration-schedule').RegistrationSchedule){await transaction(this.pool,async db=>{await this.assertLease(db);await db.query('INSERT INTO hanu.registration_schedules(owner,data) VALUES($1,$2) ON CONFLICT(owner) DO UPDATE SET data=excluded.data',[this.owner,JSON.stringify(s)]);});}
   private versions = new WeakMap<SessionView, number>();
   private baselines = new WeakMap<SessionView, SessionView>();
   constructor(public pool: SqlPool, public owner: string, public objects: PrivateObjects, public instance: string) {}

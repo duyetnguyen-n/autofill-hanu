@@ -1,0 +1,37 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {FacebookWatcher} from '../src/facebook-watch';
+
+let updated:Function,removed:Function,connected=true;let data:Record<string,any>;let api:any;
+const config={scheduleId:'schedule',token:'token',postUrl:'https://www.facebook.com/story.php?story_fbid=123&id=456',watchAt:new Date(100000).toISOString(),expiresAt:new Date(400000).toISOString()};
+beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(90000);data={};connected=true;api={permissions:{contains:vi.fn(async()=>true)},scripting:{getRegisteredContentScripts:vi.fn(async()=>[]),registerContentScripts:vi.fn(async()=>{})},storage:{local:{get:vi.fn(async()=>structuredClone(data)),set:vi.fn(async(v:any)=>Object.assign(data,v)),remove:vi.fn(async(k:string)=>{delete data[k];})}},tabs:{onUpdated:{addListener:(f:Function)=>{updated=f;}},onRemoved:{addListener:(f:Function)=>{removed=f;}},create:vi.fn(async()=>({id:17})),update:vi.fn(async()=>({id:17})),get:vi.fn(async()=>({id:17,url:config.postUrl})),reload:vi.fn(async()=>{})}};vi.stubGlobal('chrome',api);});
+afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
+it('starts the short polling phase before the hour, never overlaps a loading request',async()=>{
+  const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>{}));await watcher.command(config);updated(17,{status:'complete'});
+  await vi.advanceTimersByTimeAsync(10000);expect(api.tabs.reload).toHaveBeenCalledTimes(1);updated(17,{status:'complete'});
+  await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(2000);expect(api.tabs.reload).toHaveBeenCalledTimes(2);watcher.stop();
+});
+it('accepts only the matching top-frame tab and rejects stale tokens',async()=>{
+  const report=vi.fn(async()=>({accepted:true})),watcher=new FacebookWatcher(()=>connected,report);await watcher.command(config);
+  const sender={tab:{id:17},frameId:0,url:config.postUrl} as chrome.runtime.MessageSender;
+  const payload={...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'};
+  await watcher.observation(sender,payload);expect(report).toHaveBeenCalledTimes(1);
+  await expect(watcher.observation({...sender,frameId:1},payload)).rejects.toThrow('không thuộc');
+  await expect(watcher.observation({...sender,tab:{id:18} as any},payload)).rejects.toThrow('không thuộc');
+  await expect(watcher.observation(sender,{...payload,token:'old'})).rejects.toThrow('không thuộc');watcher.stop();
+});
+it('does not request extra permissions or open a tab without the user grant',async()=>{
+  api.permissions.contains.mockResolvedValue(false);const watcher=new FacebookWatcher(()=>connected,vi.fn());
+  await expect(watcher.command(config)).rejects.toThrow('Cho phép');expect(api.tabs.create).not.toHaveBeenCalled();
+});
+it('stops on lost coordinator / expired lease / closed watcher tab',async()=>{
+  const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command(config);connected=false;await vi.advanceTimersByTimeAsync(200);const n=api.tabs.reload.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(30000);expect(api.tabs.reload).toHaveBeenCalledTimes(n);
+  connected=true;await watcher.command({...config,token:'new'});removed(17);await vi.advanceTimersByTimeAsync(10000);expect(api.tabs.reload).toHaveBeenCalledTimes(n);
+});
+it('a Stop fences a WATCH still waiting for permission lookup',async()=>{
+  let release!:(v:boolean)=>void;api.permissions.contains.mockImplementation(()=>new Promise<boolean>(r=>{release=r;}));
+  const watcher=new FacebookWatcher(()=>connected,vi.fn()),opening=watcher.command(config);
+  await watcher.command({stop:true,token:'token'});release(true);await expect(opening).rejects.toThrow('thay đổi');expect(api.tabs.create).not.toHaveBeenCalled();
+  await expect(watcher.command(config)).rejects.toThrow('đã dừng');
+});

@@ -157,6 +157,9 @@ export interface FormQuestionSummary {
 }
 
 export type ExtensionMessage =
+  | {type:'FACEBOOK_ENABLE'}
+  | {type:'FACEBOOK_WATCH_CONFIG'}
+  | {type:'FACEBOOK_WATCH_REPORT';scheduleId:string;token:string;postKey:string;text:string;error?:string}
   | { type: "NATIVE_STATUS" }
   | { type: "NATIVE_PAIR"; code: string }
   | { type: "NATIVE_UNLINK" }

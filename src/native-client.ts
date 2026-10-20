@@ -12,6 +12,7 @@ interface Adapter {
   interrupt?(command:Command):Promise<void>;
   reconcile():Promise<unknown>;
   execution?():Promise<ExecutionView|null>;
+  watchFacebook?(payload:Record<string,unknown>):Promise<unknown>;
 }
 export function createNativeClient(adapter:Adapter,options:{origin?:string;connector?:Connector}={}){
   const origin=options.origin??cloudOrigin(),cloud=!!origin;
@@ -74,15 +75,15 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const work=async()=>{
       if(!connected||port!==current||version!==generation)return;
       try{
-        if(!priority&&epoch!==commandEpoch)throw new Error('Lệnh đã bị hủy bởi Dừng hoặc Tạm dừng.');
+        if(!priority&&m.kind!=='WATCH_FACEBOOK'&&epoch!==commandEpoch)throw new Error('Lệnh đã bị hủy bởi Dừng hoặc Tạm dừng.');
         const preparation=prepared?await prepared:undefined;
         if(preparation&&'error' in preparation)throw preparation.error;
         const result=preparation?.replay.done?preparation.replay.result:await execute(m,priority);
         if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:true,result});
       }catch(e){if(connected&&port===current&&version===generation)send({type:'RESULT',commandId:m.commandId,ok:false,error:(e as Error).message});}
-      reportExecution();
+      if(m.kind!=='WATCH_FACEBOOK')reportExecution();
     };
-    if(priority)interrupts=interrupts.then(work).catch(()=>undefined);else queue=queue.then(work).catch(()=>undefined);
+    if(m.kind==='WATCH_FACEBOOK')void work();else if(priority)interrupts=interrupts.then(work).catch(()=>undefined);else queue=queue.then(work).catch(()=>undefined);
   }
   function updateJournal<T>(operation:(journal:Record<string,{done:boolean;result?:unknown}>)=>T):Promise<T>{
     const work=journalWrites.then(async()=>{
@@ -93,10 +94,11 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   }
   function claimCommand(c:Command){return updateJournal(journal=>{const old=journal[c.commandId];if(old){if(old.done)return {done:true,result:old.result};throw new Error('Lệnh đã được nhận trước đó; hãy đối chiếu trạng thái, không chạy lại.');}journal[c.commandId]={done:false};return {done:false,result:undefined as unknown};});}
   async function execute(c:Command,claimed=false){
-    const readOnly=['PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
+    const readOnly=['WATCH_FACEBOOK','PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
     if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:cloud?'2026-10-16-resilience-1.4.0':'2026-10-16-resilience-1.4.0',capabilities:['sharedFinalQuestion','reliableRuns',...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-20-scheduled-hsk-1.7.0',capabilities:['sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    else if(c.kind==='WATCH_FACEBOOK'){if(!adapter.watchFacebook)throw new Error('Extension chưa hỗ trợ theo dõi Facebook.');result=await adapter.watchFacebook(p);}
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){

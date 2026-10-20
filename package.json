@@ -1,6 +1,6 @@
 {
   "name": "hanu-hsk-autofill",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,9 +9,10 @@
     "build:panel": "vite build --mode panel",
     "build:background": "vite build --mode background",
     "build:content": "vite build --mode content",
+    "build:facebook": "vite build --mode facebook-content",
     "test": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run",
     "test:watch": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs",
-    "build:extension": "npm run clean && npm run build:panel && npm run build:background && npm run build:content",
+    "build:extension": "npm run clean && npm run build:panel && npm run build:background && npm run build:content && npm run build:facebook",
     "build:manager": "node scripts/run-node24.mjs scripts/build-manager.mjs",
     "build:manager:assets": "node scripts/run-node24.mjs scripts/build-manager.mjs --skip-native-exe",
     "build": "npm run build:extension && npm run build:manager",

@@ -17,6 +17,7 @@ export class Store implements DataStore {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,token TEXT NOT NULL,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY,data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS registration_schedule(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS runs(id TEXT,session TEXT,data TEXT NOT NULL,seq INTEGER DEFAULT 0,PRIMARY KEY(id,session));
       CREATE TABLE IF NOT EXISTS locks(session TEXT,form TEXT,run TEXT,resolution TEXT,created TEXT,PRIMARY KEY(session,form,run));
       CREATE TABLE IF NOT EXISTS pairing(code TEXT PRIMARY KEY,expires INTEGER);
@@ -49,6 +50,8 @@ export class Store implements DataStore {
     this.audit(id,undefined,'pair','Đã liên kết profile.'); return token;
   }); }
   saveGroup(g: GroupView) { this.db.prepare('INSERT OR REPLACE INTO groups VALUES(?,?)').run(g.id,JSON.stringify(g)); }
+  registrationSchedule():import('../../src/registration-schedule').RegistrationSchedule|undefined {const row=this.db.prepare('SELECT data FROM registration_schedule WHERE id=1').get() as {data:string}|undefined;return row?JSON.parse(row.data):undefined;}
+  saveRegistrationSchedule(s:import('../../src/registration-schedule').RegistrationSchedule){this.db.prepare('INSERT OR REPLACE INTO registration_schedule VALUES(1,?)').run(JSON.stringify(s));}
   groups(): GroupView[] { return (this.db.prepare('SELECT data FROM groups ORDER BY rowid DESC').all() as {data:string}[]).map(r=>JSON.parse(r.data)); }
   group(id: string) { const r=this.db.prepare('SELECT data FROM groups WHERE id=?').get(id) as {data:string}|undefined; if (!r) throw new Error('Không tìm thấy lượt nhóm.'); return JSON.parse(r.data) as GroupView; }
   groupForRequest(requestId:string){const row=this.db.prepare("SELECT data FROM groups WHERE json_extract(data,'$.requestId')=? LIMIT 1").get(requestId) as {data:string}|undefined;return row?JSON.parse(row.data) as GroupView:undefined;}

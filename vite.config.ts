@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 export default defineConfig(({ mode }) => {
   const cloudOrigin=process.env.HANU_CLOUD_ORIGIN??'';
   const common={outDir:cloudOrigin?(process.env.HANU_CLOUD_OUT_DIR??'dist-cloud'):'dist',define:{__HANU_CLOUD_ORIGIN__:JSON.stringify(cloudOrigin)}};
-  if (mode === "background" || mode === "content") {
+  if (mode === "background" || mode === "content" || mode === 'facebook-content') {
     return {
       define:common.define,
       build: {
@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
         lib: {
           entry: resolve(__dirname, `src/${mode}.ts`),
           formats: ["iife"],
-          name: `Hanu${mode[0].toUpperCase()}${mode.slice(1)}`,
+          name: `Hanu${mode.split('-').map(p=>p[0].toUpperCase()+p.slice(1)).join('')}`,
           fileName: () => `${mode}.js`
         },
         outDir: common.outDir,

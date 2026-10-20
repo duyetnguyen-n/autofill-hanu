@@ -6,6 +6,8 @@ type Result<T> = T | Promise<T>;
 // SQLite and PostgreSQL implement the same domain operations. Transactions stay
 // inside the store so a submit grant is durable before it leaves the server.
 export interface DataStore {
+  registrationSchedule?():Result<import('../../src/registration-schedule').RegistrationSchedule|undefined>;
+  saveRegistrationSchedule?(schedule:import('../../src/registration-schedule').RegistrationSchedule):Result<void>;
   sessions(): Result<SessionView[]>;
   session(id: string): Result<SessionView>;
   saveSession(session: SessionView): Result<void>;

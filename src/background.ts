@@ -6,6 +6,7 @@ import { createNativeClient } from './native-client';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed,returnedSubmissionAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
 import { cloudOrigin } from './coordinator-transport';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
+import {FacebookWatcher,enableFacebookWatch} from './facebook-watch';
 
 const RUN_PREFIX = "run:";
 const interruptedRuns = new Set<string>();
@@ -15,7 +16,8 @@ let runWriteQueue=Promise.resolve();
 const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
 function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.then(fn);runWriteQueue=work.then(()=>undefined,()=>undefined);return work;}
 async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
-const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:parkManaged,reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
+const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:async()=>{facebookWatcher.stop();await parkManaged();},watchFacebook:p=>facebookWatcher.command(p),reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
+const facebookWatcher=new FacebookWatcher(()=>native.isConnected(),payload=>native.request('FACEBOOK_OBSERVATION',undefined,payload));
 const recoveryTimers=new Map<string,ReturnType<typeof setTimeout>>();
 const recoveriesInFlight=new Map<string,Promise<void>>();
 interface NavigationWatch {token:string;tabId:number;runId:string;epoch?:string;started:number;timer?:ReturnType<typeof setTimeout>}
@@ -700,6 +702,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 let messageQueue=Promise.resolve();
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  if(['FACEBOOK_ENABLE','FACEBOOK_WATCH_CONFIG','FACEBOOK_WATCH_REPORT'].includes(message.type)){
+    void (async()=>{
+      if(message.type==='FACEBOOK_ENABLE'){if(sender.tab)throw new Error('Cấp quyền tại panel extension.');await enableFacebookWatch();return {ok:true};}
+      if(message.type==='FACEBOOK_WATCH_CONFIG')return facebookWatcher.configuration(sender)??{active:false};
+      return facebookWatcher.observation(sender,message);
+    })().then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
+  }
   // Panel controls can wait for a coordinator command which itself needs page
   // messages (CLAIM_DOCUMENT, FORM_EVENT, GET_RUN_FOR_TAB). Keep that queue free.
   if(['START_RUN','RESTART_RUN','PAUSE_RUN','RESUME_RUN','STOP_RUN'].includes(message.type)){

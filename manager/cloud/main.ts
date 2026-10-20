@@ -127,7 +127,7 @@ export async function serveCloud(options: {
   const state = async (runtime: Runtime) => {
     runtime.snapshot ??= Promise.all([runtime.store.sessions(), runtime.store.groups()]).then(([sessions, groups]) => ({sessions,groups}));
     const saved = await runtime.snapshot;
-    return {sessions: runtime.coordinator.runBuffer!.overlay(saved.sessions),groups:saved.groups,owner:runtime.store.owner,
+    return {sessions: runtime.coordinator.runBuffer!.overlay(saved.sessions),groups:saved.groups,registrationSchedule:runtime.coordinator.scheduler.value,owner:runtime.store.owner,
       allowedExtensionIds: [], platform: { os: 'cloud', arch: '' }, cloud: true, emergencyError};
   };
   function failClosed(error: unknown) {
@@ -135,6 +135,7 @@ export async function serveCloud(options: {
     emergencyError = 'Bộ điều phối không lưu hoặc xác nhận được tiến độ. Đã ngừng cấp lệnh; kết nối lại và đối chiếu trước khi tiếp tục.';
     console.error('Cloud coordinator stopped:', error instanceof CloudError ? error.message : 'Database or transport unavailable');
     for (const runtime of runtimes.values()) {
+      runtime.coordinator.scheduler.close();
       runtime.coordinator.attention.close();
       for (const ws of runtime.coordinator.peers.values()) {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'EMERGENCY_STOP', error: emergencyError }));
@@ -184,6 +185,7 @@ export async function serveCloud(options: {
         if(!current.broadcastTimer)current.broadcastTimer=setTimeout(()=>{current.broadcastTimer=undefined;void broadcast(current);},100);
       };
       runtimes.set(owner, result);
+      coordinator.scheduler.open();
     }
     result.touched = Date.now();
     return result;
@@ -193,6 +195,7 @@ export async function serveCloud(options: {
     for (const [key, ticket] of tickets) if (ticket.user.id === owner) tickets.delete(key);
     const current = runtimes.get(owner);
     if (!current) return;
+    await current.coordinator.scheduler.cancel();
     for (const ws of current.browsers) {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ACCESS_CHANGED', error: message }));
       ws.close(1008, 'Access changed');
@@ -318,6 +321,11 @@ export async function serveCloud(options: {
           return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
         }
         if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId)); }
+        if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req,16384);return json(res,await coordinator.assignHsk(b.ids,b.level));}
+        if(path==='/api/registration-schedule'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,b.mode);return json(res,await coordinator.scheduler.arm(b));}
+        if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
+        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.stopScheduledRuns());}
+        if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req,8192);return json(res,await coordinator.scheduler.manual(b.level,b.url));}
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
         if (group && req.method === 'POST') { await body(req); return json(res, await coordinator.groupControl(group[1], group[2].toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP')); }
@@ -518,14 +526,14 @@ export async function serveCloud(options: {
     for (const [owner, entry] of accessCache) if (Date.now() - entry.checked > 300000) accessCache.delete(owner);
     for (const [ws, seen] of lastSeen) if (Date.now() - seen > 65000 && !browserUsers.has(ws)) ws.terminate();
     for (const [key, ticket] of tickets) if (ticket.expires < Date.now()) tickets.delete(key);
-    for (const [owner, current] of runtimes) if (!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.attention.close(); runtimes.delete(owner); }
+    for (const [owner, current] of runtimes) if (!current.coordinator.scheduler.active&&!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.scheduler.close();current.coordinator.attention.close(); runtimes.delete(owner); }
   }, 5000);
   return { server, repository, runtimes, async close() {
     closing = true; ready = false; clearInterval(heartbeat); clearInterval(leaseTimer); clearTimeout(retryTimer);
     // An in-flight claim/recovery must finish before release, or a closing
     // waiting instance could acquire a lease after its cleanup had completed.
     await activation?.catch(() => {}); clearInterval(leaseTimer); await renewal; await accessCheck;
-    for (const current of runtimes.values()) {clearTimeout(current.broadcastTimer);current.coordinator.attention.close();}
+    for (const current of runtimes.values()) {current.coordinator.scheduler.close();clearTimeout(current.broadcastTimer);current.coordinator.attention.close();}
     await Promise.all([...sockets.clients].map(ws => new Promise<void>(resolve => { ws.once('close', () => resolve()); ws.terminate(); })));
     // close callbacks schedule persistence; finish it before releasing the lease.
     for (const current of runtimes.values()) for (const [id, ws] of [...current.coordinator.peers]) await current.coordinator.disconnect(id, ws).catch(() => {});

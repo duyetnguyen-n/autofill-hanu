@@ -1,5 +1,6 @@
 import "./sidepanel.css";
 import {cloudOrigin} from './coordinator-transport';
+import {FACEBOOK_ORIGINS} from './facebook-watch';
 import {runStatusLabel} from './run-presentation';
 import { HSK_RULES } from "./rules";
 import { AttachmentRef, CustomField, FieldRule, FormQuestionSummary, Profile, RunMode, RunState } from "./shared";
@@ -18,6 +19,14 @@ let tabId: number | undefined;
 let audit: FormQuestionSummary[] = [];
 const targetTabParam = new URLSearchParams(location.search).get("tabId");
 const targetTabId = targetTabParam && /^\d+$/.test(targetTabParam) ? Number(targetTabParam) : undefined;
+document.getElementById('enableFacebook')?.addEventListener('click',()=>{
+  // Request directly in the click gesture. Never widen permissions on load.
+  void chrome.permissions.request({origins:FACEBOOK_ORIGINS}).then(async granted=>{
+    if(!granted)throw new Error('Chưa cấp quyền; vẫn có thể dán link HSK trên màn quản lý.');
+    const result=await chrome.runtime.sendMessage({type:'FACEBOOK_ENABLE'});if(result?.ok===false)throw new Error(result.error);
+    document.getElementById('facebookPermissionStatus')!.textContent='Đã cho phép đọc bài Facebook khi có lịch. Không cần bật trên các profile khác.';
+  }).catch(e=>{document.getElementById('facebookPermissionStatus')!.textContent=(e as Error).message;});
+});
 
 const stateLabels: Record<string, string> = {
   idle: "Sẵn sàng",

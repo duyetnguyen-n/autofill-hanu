@@ -7,8 +7,11 @@ import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type R
 import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
+import {RegistrationScheduler} from './registration-scheduler';
+import {isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
+  readonly scheduler:RegistrationScheduler;
   peers=new Map<string,WebSocket>();
   pending=new Map<string,{session:string;resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
   failures=new Map<string,Map<string,number>>();
@@ -37,7 +40,22 @@ export class Coordinator {
     void next.finally(()=>{if(this.connectionWrites.get(id)===next)this.connectionWrites.delete(id);}).catch(()=>{});return next;
   }
   async settledConnections(){await Promise.allSettled([...this.connectionWrites.values()]);}
-  constructor(public store:DataStore,public attention=new AttentionQueue(),public cloud=false,public runBuffer?:RunBuffer) {}
+  constructor(public store:DataStore,public attention=new AttentionQueue(),public cloud=false,public runBuffer?:RunBuffer) {
+    this.scheduler=new RegistrationScheduler({
+      load:async()=>store.registrationSchedule?.(),
+      save:async s=>{if(!store.saveRegistrationSchedule)throw new Error('Server chưa hỗ trợ lưu lịch.');await store.saveRegistrationSchedule(s);},
+      sessions:async()=>store.sessions(),connected:id=>this.peers.has(id),
+      command:(id,kind,payload)=>this.command(id,kind,payload,undefined,5000),
+      prepare:async id=>{
+        const ping=await this.command(id,'PING',{},undefined,5000);if(!ping?.capabilities?.includes('scheduledHskLinks'))throw new Error('Cập nhật extension để dùng lịch HSK.');
+        let s=await store.session(id);if(!s.synced)s=await this.pull(id);
+        if(!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail)||s.execution)throw new Error('Chuẩn bị hồ sơ, email và dừng lượt cũ trước giờ chạy.');
+        await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.command(id,'ATTACHMENT_INFO',{id:a.id},undefined,5000);if(info.size!==a.size)throw new Error('Ảnh chưa sẵn sàng.');}));
+      },
+      start:(id,url,s,guard)=>this.start([id],url,s.mode,s.finalQuestion,s.members.find(m=>m.id===id)!.requestId,undefined,guard),
+      changed:()=>this.changed(),error:e=>this.unavailable(e)
+    });
+  }
   async connect(id:string,ws:WebSocket) {
     if(this.peers.has(id))throw new Error('Mã phiên đã kết nối ở cửa sổ khác.');
     this.peers.set(id,ws);
@@ -75,6 +93,10 @@ export class Coordinator {
   }
   async receive(id:string,message:any) {
     if(message.type==='RESULT'){const p=this.pending.get(message.commandId);if(!p||p.session!==id)return;clearTimeout(p.timer);this.pending.delete(message.commandId);message.ok?p.resolve(message.result):p.reject(new Error(message.error??'Lệnh thất bại.'));return;}
+    if(message.type==='REQUEST'&&message.kind==='FACEBOOK_OBSERVATION'&&typeof message.requestId==='string'){
+      try{const result=await this.scheduler.observe(id,message);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,...result}));}
+      catch(e){this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:false,error:(e as Error).message}));}return;
+    }
     if(this.runBuffer){
       const live=this.runBuffer.touch(id);
       if(live&&message.type==='HEARTBEAT')return;
@@ -199,7 +221,16 @@ export class Coordinator {
     for(const a of Object.values(s.profile.attachments)){if(!a)continue;const bytes=await this.store.attachment(id,a.id);const info=await this.command(id,'ATTACHMENT_INFO',{id:a.id}).catch(()=>undefined);if(info?.hash===bytes.hash)continue;const transferId=randomUUID();await this.command(id,'ATTACHMENT_BEGIN',{transferId,attachment:a,hash:bytes.hash});for(let offset=0;offset<bytes.data.length;offset+=CHUNK_BYTES)await this.command(id,'ATTACHMENT_CHUNK',{transferId,index:offset/CHUNK_BYTES,base64:bytes.data.subarray(offset,offset+CHUNK_BYTES).toString('base64')});await this.command(id,'ATTACHMENT_FINISH',{transferId});}
     const result=await this.command(id,'COMMIT_PROFILE',{profile:s.profile,baseRevision:current.revision});s.revision=result.revision;s.synced=true;s.managerDraft=undefined;s.conflict=undefined;s.error=undefined;await this.store.saveSession(s);this.changed();return s;
   }
-  async edit(id:string,values:Partial<SessionView>){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;s.managerDraft=true;}await this.store.saveSession(s);this.changed();return s;}
+  async edit(id:string,values:Partial<Omit<SessionView,'hskLevel'>>&{hskLevel?:HskLevel|null}){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.hskLevel!==undefined){if(values.hskLevel===null)delete s.hskLevel;else{if(!isHskLevel(values.hskLevel))throw new Error('HSK phải từ 1 đến 6.');s.hskLevel=values.hskLevel;}}if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;s.managerDraft=true;}await this.store.saveSession(s);this.changed();return s;}
+  async assignHsk(ids:string[],level:unknown){if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length||level!==null&&!isHskLevel(level))throw new Error('Chọn profile và cấp độ HSK hợp lệ.');return Promise.all(ids.map(async id=>{try{await this.edit(id,{hskLevel:level});return {id,ok:true};}catch(e){return {id,ok:false,error:(e as Error).message};}}));}
+  async stopScheduledRuns(){
+    const schedule=await this.scheduler.cancel();if(!schedule)return [];
+    return Promise.all(schedule.members.map(async m=>{try{
+      const s=await this.store.session(m.id),g=this.store.groupForRequest?await this.store.groupForRequest(m.requestId):undefined;
+      if(!s.run?.runId||s.run.runId!==(m.runId??g?.id))return {id:m.id,ok:true,skipped:true};
+      await this.control(m.id,'STOP',s.run.runId);return {id:m.id,ok:true};
+    }catch(e){return {id:m.id,ok:false,error:(e as Error).message};}}));
+  }
   async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion,resume=false){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):finalQuestion;
@@ -248,7 +279,8 @@ export class Coordinator {
     })();
     this.restarts.set(id,work);try{return await work;}finally{if(this.restarts.get(id)===work)this.restarts.delete(id);}
   }
-  async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion,requestId?:string,restartOf?:string){
+  async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion,requestId?:string,restartOf?:string,guard?:()=>boolean){
+    if(guard&&!guard())throw new Error('Lịch đã hủy hoặc profile đã bỏ chờ.');
     if(requestId!==undefined&&(typeof requestId!=='string'||!/^[-a-zA-Z0-9]{8,100}$/.test(requestId)))throw new Error('Mã yêu cầu không hợp lệ.');
     const intents=new Map((Array.isArray(ids)?ids:[]).map(id=>[id,this.intents.get(id)??0]));
     const signature=createHash('sha256').update(JSON.stringify({ids:Array.isArray(ids)?[...ids].sort():ids,url,mode,finalQuestion})).digest('hex');
@@ -257,11 +289,11 @@ export class Coordinator {
       if(old){if(old.requestSignature!==signature)throw new Error('Mã yêu cầu đã dùng cho thao tác khác.');return old;}
       const pending=this.starts.get(requestId);if(pending){const g=await pending;if(g.requestSignature!==signature)throw new Error('Mã yêu cầu đã dùng cho thao tác khác.');return g;}
     }
-    const work=this.startGroup(ids,url,mode,finalQuestion,requestId,signature,restartOf,intents);
+    const work=this.startGroup(ids,url,mode,finalQuestion,requestId,signature,restartOf,intents,guard);
     if(requestId)this.starts.set(requestId,work);
     try{return await work;}finally{if(requestId&&this.starts.get(requestId)===work)this.starts.delete(requestId);}
   }
-  private async startGroup(ids:string[],url:string,mode:RunMode,finalQuestion:FinalQuestion|undefined,requestId:string|undefined,requestSignature:string,restartOf:string|undefined,intents:Map<string,number>){
+  private async startGroup(ids:string[],url:string,mode:RunMode,finalQuestion:FinalQuestion|undefined,requestId:string|undefined,requestSignature:string,restartOf:string|undefined,intents:Map<string,number>,guard?:()=>boolean){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):undefined;
     if(finalQuestion?.formId&&canonicalFormId(url)&&finalQuestion.formId!==canonicalFormId(url))throw new Error('Câu hỏi cuối đã chọn thuộc form khác. Đọc lại câu hỏi hoặc nhập nội dung cho form này.');
@@ -289,11 +321,11 @@ export class Coordinator {
         if(s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status)&&!canStartSeparateTest(s.run,url,mode))throw new Error('Hãy dừng lượt hiện tại hoặc xác minh kết quả trước.');
         const hashes:Record<string,string>={};
         await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.store.attachmentInfo(member,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}));
-        if((this.intents.get(member)??0)!==intents.get(member))throw new Error('Đã hủy Bắt đầu vì có lệnh Dừng hoặc Tạm dừng mới.');
+        if((this.intents.get(member)??0)!==intents.get(member)||guard&&!guard())throw new Error('Đã hủy Bắt đầu vì lịch đã hủy hoặc có lệnh Dừng/Tạm dừng mới.');
         s.run={runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,autoContinue:true,retryOnReturn:true,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
         await this.store.beginGroup(group,[s],true);this.runBuffer?.begin([s],group);this.changed();
         const gate=await this.store.group(id);this.runBuffer?.groupGate(gate);
-        if((this.intents.get(member)??0)!==intents.get(member)||gate.paused){await failed(member,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'),true);return {id:member,ok:false,error:'Đã dừng trước khi mở form.'};}
+        if((this.intents.get(member)??0)!==intents.get(member)||gate.paused||guard&&!guard()){await failed(member,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'),true);return {id:member,ok:false,error:'Đã dừng trước khi mở form.'};}
         if(this.runBuffer?.has(member)&&!this.runBuffer.allowed(member,id))return {id:member,ok:false,error:'Lượt đã dừng.'};
         void this.command(member,'START',{url,mode,finalQuestion,revision:s.revision,expectedEmail:s.expectedEmail,attachmentHashes:hashes},id,120000).catch(error=>failed(member,error)).catch(this.unavailable);
         return {id:member,ok:true};
@@ -312,6 +344,7 @@ export class Coordinator {
     return this.control(id,'RESUME',runId,'returned_submit');
   }
   async control(id:string,kind:'PAUSE'|'STOP'|'RESUME',expectedRunId?:string,automatic:boolean|'recovery'|'page_ready'|'returned_submit'=false) {
+    if(kind!=='RESUME'&&!automatic)this.scheduler.hold(id);
     if(kind!=='RESUME')this.intents.set(id,(this.intents.get(id)??0)+1);
     const key=JSON.stringify([id,kind,expectedRunId,automatic]);const pending=this.controls.get(key);if(pending)return pending;
     const work=this.controlOne(id,kind,expectedRunId,automatic);this.controls.set(key,work);
