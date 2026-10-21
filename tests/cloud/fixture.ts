@@ -66,8 +66,9 @@ export async function databaseFixture() {
   return { db, pool, objects, blobs, repository, pair, async close() { await db.close(); } };
 }
 
-export async function httpFixture(uiDir?: string) {
+export async function httpFixture(uiDir?: string, hcmueEnabled = false) {
   const fixture = await databaseFixture();
+  if (hcmueEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610210001_hcmue_runners.sql','utf8'));
   const authorized = new Set(['account-a', 'account-b']);
   let loginUser = 0;
   const auth: WebAuth = { request(req, res) {
@@ -88,7 +89,7 @@ export async function httpFixture(uiDir?: string) {
     };
   } };
   const config = { origin: 'http://127.0.0.1:0', host: '127.0.0.1', port: 0, development: true,
-    supabaseUrl: 'http://127.0.0.1:54321', publishableKey: 'fixture-only', secretKey: 'fixture-only', databaseUrl: 'fixture-only' };
+    supabaseUrl: 'http://127.0.0.1:54321', publishableKey: 'fixture-only', secretKey: 'fixture-only', databaseUrl: 'fixture-only', hcmueEnabled };
   const app = await serveCloud({ config, repository: fixture.repository, auth, port: 0, uiDir });
   config.origin = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
   const api = async (path: string, owner = 0, data?: unknown, method = data === undefined ? 'GET' : 'POST') => fetch(`${config.origin}/api/${path}`, {

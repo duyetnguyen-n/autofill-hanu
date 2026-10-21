@@ -1,9 +1,11 @@
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
+# Runner downloads are built here; no changes to the existing extension.
+RUN apt-get update && apt-get install -y --no-install-recommends zip unzip && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN node scripts/build-cloud-server.mjs
+RUN node scripts/build-cloud-server.mjs && node scripts/package-hcmue.mjs
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000

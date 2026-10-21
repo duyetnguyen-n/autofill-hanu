@@ -2,6 +2,18 @@
 
 App cục bộ quản lý nhiều Chrome profile, mỗi profile giữ một hồ sơ thí sinh và ảnh riêng. Người dùng tự mở profile, đăng nhập Google, liên kết extension rồi chọn các phiên để chạy Test hoặc Live. Bản này chưa dùng AI.
 
+## HSK HCMUE (chức năng tùy chọn)
+
+Trang `/hcmue` điều khiển Runner riêng trên Mac/Windows: đăng nhập HCMUE,
+chuẩn bị câu hỏi theo đợt, đặt giờ gửi, chạy Test hoặc Live và đối chiếu mã đăng ký.
+Tối đa 20 tài khoản mỗi máy, trong giới hạn quyền website. Phiên được mã hóa trên
+máy; lịch đã bật tiếp tục khi website mất kết nối. Luồng Google Forms giữ nguyên.
+
+Mặc định tắt. Cần migration riêng và `HANU_HCMUE_ENABLED=1` trên backend để bật.
+Xem [hướng dẫn sử dụng](docs/hcmue/HUONG-DAN.md),
+[kiến trúc, build và bật chức năng](docs/hcmue/IMPLEMENTATION.md) và
+[kết quả kiểm thử cùng giới hạn](docs/hcmue/VALIDATION.md).
+
 ## Săn link tức thì, câu xác thực theo HSK
 
 Bản 1.9.0 chuẩn bị sẵn tab/hồ sơ khi bật, có link hợp lệ đúng HSK là chạy ngay,

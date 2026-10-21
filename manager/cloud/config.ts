@@ -9,6 +9,7 @@ export interface CloudConfig {
   trustProxy?: boolean;
   // Render starts a replacement before terminating the existing instance.
   rollingDeploy?: boolean;
+  hcmueEnabled?: boolean;
   bootstrapAdminEmail?: string;
 }
 export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
@@ -32,7 +33,7 @@ export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
     supabaseUrl: supabaseUrl.origin, publishableKey: required('SUPABASE_PUBLISHABLE_KEY'),
     secretKey: required('SUPABASE_SECRET_KEY'), databaseUrl: required('DATABASE_URL'),
     databaseCa: env.PGSSLROOTCERT ? readFileSync(env.PGSSLROOTCERT, 'utf8') : undefined,trustProxy:env.TRUST_PROXY==='1',
-    rollingDeploy: env.RENDER === 'true', bootstrapAdminEmail };
+    rollingDeploy: env.RENDER === 'true', hcmueEnabled:env.HANU_HCMUE_ENABLED==='1', bootstrapAdminEmail };
 }
 export function databasePool(config: CloudConfig) {
   const url = new URL(config.databaseUrl);

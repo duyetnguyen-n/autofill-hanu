@@ -41,7 +41,14 @@
     "bench:fixture": "node scripts/run-node24.mjs scripts/benchmark.mjs",
     "bench:state-stream": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/benchmark-state-stream.ts",
     "test:state-stream-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/state-stream-ui-check.ts",
-    "test:cloud-reliability": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=2 --faults"
+    "test:cloud-reliability": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/background-flow-check.mjs --cloud --profiles=2 --faults",
+    "build:hcmue": "node scripts/run-node24.mjs scripts/build-hcmue.mjs",
+    "hcmue:runner": "node scripts/run-node24.mjs build/hcmue/runner/main.mjs",
+    "package:hcmue": "node scripts/run-node24.mjs scripts/package-hcmue.mjs",
+    "test:hcmue": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue",
+    "test:hcmue-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-ui-check.ts",
+    "bench:hcmue": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-benchmark.ts",
+    "test:hcmue-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-runner-smoke.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
@@ -71,6 +78,7 @@
     "pg": "^8.23.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "tough-cookie": "^6.0.2",
     "ws": "^8.22.0"
   }
 }
