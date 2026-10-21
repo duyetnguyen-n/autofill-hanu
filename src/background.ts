@@ -350,7 +350,8 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
       await waitForForm(run.tabId,run.runId);await valid();tab=await chrome.tabs.get(run.tabId);
     }
     const actual=canonicalFormId(tab.url??'');
-    if(actual&&actual!==run.formId||!actual&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))throw new PageProblem({issue:{reason:'account',message:'Tab đã chuyển sang trang khác. Mở đúng form rồi Tiếp tục hoặc Chạy lại.'}});
+    const expected=run.formId||canonicalFormId(run.url??'');
+    if(actual&&expected&&actual!==expected||!actual&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))throw new PageProblem({issue:{reason:'account',message:'Tab đã chuyển sang trang khác. Mở đúng form rồi Tiếp tục hoặc Chạy lại.'}});
     const health=actual?await sendToForm<PageHealth>(run.tabId,{type:'PAGE_HEALTH'}).catch(()=>({issue:{reason:'network' as const,message:'Không đọc được trang Google Forms.'},retryable:true})):({issue:{reason:'network' as const,message:'Trang tải lỗi.'},retryable:true});
     await valid();
     if(health.issue&&!health.retryable)throw new PageProblem(health);
@@ -363,8 +364,17 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
     // before dispatch. Repeating it here adds another browser/server round trip.
     await valid();
     const current=run.managed?await getManaged():await getRun(run.tabId);if(!current)return;
+    // Initial navigation may fail before waitForForm learns the form ID.
+    // Bind the recovered document before CHECK_FORM; an empty ID cannot
+    // authorize input, and must not be mistaken for a different form either.
+    const recoveredForm=canonicalFormId((await chrome.tabs.get(run.tabId)).url??'');
+    if(!recoveredForm||expected&&recoveredForm!==expected)throw new Error('Không xác định được đúng form sau phục hồi.');
+    const newlyBound=!current.formId;
+    current.formId=recoveredForm;
     current.recoveryRequired=false;current.activity=undefined;if(current.recovery)current.recovery.automatic=false;
-    await saveRun(current);await valid();return resumeRun(run.tabId);
+    await saveRun(current);await valid();
+    if(newlyBound&&current.managed){await native.request('CHECK_FORM',current);await valid();}
+    return resumeRun(run.tabId);
   }catch(error){
     if(epoch!==interruptEpoch||interruptedRuns.has(run.runId!))throw error;
     return blockPageProblem(run.runId!,error instanceof PageProblem?error.health:{issue:{reason:'navigation',message:(error as Error).message},retryable:/Không tải|Không đọc|Receiving end|Could not establish|network/i.test((error as Error).message)},run.tabId);
@@ -1037,7 +1047,7 @@ async function managedControl(command:Command){
     if(command.payload.automatic&&(run.status!=='waiting_manual'||run.recoveryRequired||interruptedRuns.has(run.runId!)))throw new Error('Lượt đã dừng; không tự tiếp tục.');
     if(run.submitAttempted)throw new Error('Lượt đã khóa gửi.');
     const epoch=interruptEpoch;
-    if(!command.payload.retryReturned)await native.request('CHECK_FORM',run);
+    if(!command.payload.retryReturned&&run.formId)await native.request('CHECK_FORM',run);
     if(epoch!==interruptEpoch)throw new Error('Có lệnh Dừng mới; không tiếp tục.');
     return prepareResume(run,command.payload.automatic===true,command.payload.recovery===true);
   }

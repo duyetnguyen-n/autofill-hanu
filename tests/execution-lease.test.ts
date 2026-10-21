@@ -139,3 +139,11 @@ it('hard disconnect never creates transport auto-resume intent',async()=>{
  const f=await fixture();await adapter.start(command('START'),'session');await adapter.disconnected();nativeRequest.mockClear();await adapter.reconcile();
  expect(f.data.managedRun.transportRecovery).toBe(false);expect(nativeRequest).not.toHaveBeenCalledWith('AUTO_RESUME',expect.anything(),expect.anything());
 });
+it('binds a recovered form before checking its locks when initial navigation never learned its ID',async()=>{
+ const f=await fixture();await adapter.start(command('START'),'session');
+ for(const key of ['managedRun','run:55'])Object.assign(f.data[key],{formId:'',status:'waiting_manual',blockingIssue:{reason:'network',message:'Không tải được form'},recovery:{reason:'network',attempt:1,automatic:true,retryAt:new Date(0).toISOString()},recoveryRequired:false});
+ nativeRequest.mockClear();nativeRequest.mockImplementation(async(kind:string,run:RunState)=>{if(kind==='CHECK_FORM'&&!run.formId)throw Error('empty form');return {};});
+ await adapter.control({...command('RESUME'),payload:{recovery:true}});
+ expect(f.data.managedRun).toMatchObject({formId:'lease-fixture',status:'running',recoveryRequired:false});
+ expect(nativeRequest).toHaveBeenCalledWith('CHECK_FORM',expect.objectContaining({formId:'lease-fixture'}));
+});
