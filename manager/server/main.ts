@@ -53,6 +53,8 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.cancel());}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.focusWatcher());}
         if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req);return json(await coordinator.stopScheduledRuns());}
+        if(path==='/api/registration-schedule/replace'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.replace(b.level,b.url));}
+        if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.manual(b.level,b.url));}
         if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion,b.resume===true));}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
@@ -63,6 +65,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
           if(req.method==='POST'){
             if(action==='ping')return json(await coordinator.command(id,'PING',{},undefined,5000));
             if(action==='focus')return json(await coordinator.command(id,'FOCUS'));
+            if(action==='verification')return json(await coordinator.scanVerification(id));
             if(action==='scan')return json(await coordinator.command(id,'SCAN_FORM'));
             if(action==='pull')return json(await coordinator.pull(id));
             if(action==='push'){const b=await body(req);return json(await coordinator.push(id,b.force===true));}

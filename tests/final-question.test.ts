@@ -36,3 +36,7 @@ it('removes stale checkbox answers so the common answer is the exact selection',
 it('scans the stable target ID, actual kind and visible options',async()=>{await run(card('Câu hỏi cuối','123','<select name="entry.789"><option>Choose</option><option>Đáp án A</option></select>'));let result:any;listener({type:'SCAN_FORM'},{},(r:any)=>result=r);expect(result.questions[0]).toMatchObject({targetId:'entry.789',kind:'dropdown',options:['Đáp án A']});});
 it('normalizes numbering, accents and required markers but never title fragments',()=>{expect(matchesFinalQuestionLabel('12. Năm nay là năm bao nhiêu? *',label)).toBe(true);expect(matchesFinalQuestionLabel('Năm nay là năm bao nhiêu? / Một câu khác',label)).toBe(false);});
 it('validates nonempty answers, supported types and form-scoped IDs',()=>{for(const value of [{label,value:''},{label,value:'2026',kind:'file'},{label,value:'2026',questionId:'entry.123'}])expect(()=>validateFinalQuestion(value)).toThrow();expect(()=>validateFinalQuestion(undefined)).not.toThrow();});
+
+it('reports the actual verification title, stable entry and field kind without a separate scan',async()=>{
+ const f=await run(card());expect(f.events.at(-1)).toMatchObject({type:'block',issue:{reason:'verification',questionLabel:label+' *',question:{targetId:'entry.123',kind:'text',verification:true}}});
+});

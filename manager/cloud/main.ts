@@ -326,6 +326,8 @@ export async function serveCloud(options: {
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.focusWatcher());}
         if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.stopScheduledRuns());}
+        if(path==='/api/registration-schedule/replace'&&req.method==='POST'){const b=await body(req,8192);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduler.replace(b.level,b.url));}
+        if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req,8192);return json(res,await coordinator.scheduler.manual(b.level,b.url));}
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
@@ -348,6 +350,7 @@ export async function serveCloud(options: {
             const value = await body(req);
             if (action === 'ping') return json(res, await coordinator.command(id, 'PING', {}, undefined, 5000));
             if (action === 'focus') return json(res, await coordinator.command(id, 'FOCUS'));
+            if (action === 'verification') return json(res, await coordinator.scanVerification(id));
             if (action === 'scan') return json(res, await coordinator.command(id, 'SCAN_FORM'));
             if (action === 'pull') return json(res, await coordinator.pull(id));
             if (action === 'push') return json(res, await coordinator.push(id, value.force === true));

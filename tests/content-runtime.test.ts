@@ -639,3 +639,23 @@ describe("compiled content-script behavior", () => {
     expect(trigger.getAttribute("aria-valuetext")).toBe("Nam | 男");
   });
 });
+
+it.each([false,true])('retains a same-document page advance until the renderer release completes, respecting Stop=%s',async stop=>{
+ document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Next</button>';
+ vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockReturnValue({width:640,height:80} as DOMRect);
+ Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:()=>{}});
+ const profile=emptyProfile();profile.values.fullName='THI SINH THU';const sent:any[]=[];let listener:any,release!:()=>void;
+ const released=new Promise<void>(r=>release=r);let releases=0;
+ document.querySelector('button')!.onclick=()=>{document.querySelector('[role="listitem"]')!.remove();document.querySelector('button')!.textContent='Submit';};
+ vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:async(m:any)=>{
+   sent.push(m);if(m.type==='GET_PROFILE')return profile;if(m.type==='PAGE_ATTENTION_ACQUIRE')return {ok:true,token:'renderer'};
+   if(m.type==='PAGE_ATTENTION_RELEASE'&&releases++===0)await released;return {ok:true};
+ }}});
+ await import('../src/content');listener({type:'RUN_CURRENT_PAGE',mode:'test'});
+ await vi.waitFor(()=>expect(sent.some(m=>m.type==='PAGE_ATTENTION_RELEASE')).toBe(true));
+ await new Promise(r=>setTimeout(r,25));expect(sent.some(m=>m.event?.type==='ready_to_submit')).toBe(false);
+ if(stop)listener({type:'HALT_RUN'});release();
+ if(stop){await new Promise(r=>setTimeout(r,50));expect(sent.some(m=>m.event?.type==='ready_to_submit')).toBe(false);}
+ else await vi.waitFor(()=>expect(sent.some(m=>m.event?.type==='ready_to_submit')).toBe(true));
+ listener({type:'HALT_RUN'});
+});

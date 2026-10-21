@@ -83,6 +83,7 @@ export interface BlockingIssue {
   questionId?: string;
   questionLabel?: string;
   candidates?: string[];
+  question?:FormQuestionSummary;
 }
 
 export interface RunActivity {
@@ -147,6 +148,7 @@ export interface RunState {
 }
 
 export interface FormQuestionSummary {
+  verification?:boolean;
   targetId?: string;
   id: string;
   label: string;

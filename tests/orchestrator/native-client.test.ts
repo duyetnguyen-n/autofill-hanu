@@ -40,7 +40,7 @@ it('reports standalone execution ownership on heartbeat without leaking its prof
 async function connectedFixture(){
  const f=fixture(),pairing=f.client.pair('ABCDEF123456');await vi.waitFor(()=>expect(f.ports).toHaveLength(1));
  const port=f.ports[0];port.messages.forEach((fn:any)=>fn({type:'PAIRED',token:'token'}));await pairing;
- const deliver=(kind:string,commandId:string)=>port.messages.forEach((fn:any)=>fn({type:'COMMAND',protocol:1,sessionId:f.storage.coordinatorIdentity.sessionId,kind,commandId,runId:'run',payload:{}}));
+ const deliver=(kind:string,commandId:string,payload:Record<string,unknown>={})=>port.messages.forEach((fn:any)=>fn({type:'COMMAND',protocol:1,sessionId:f.storage.coordinatorIdentity.sessionId,kind,commandId,runId:'run',payload}));
  return {...f,port,deliver};
 }
 it('acknowledges Stop while Start is still awaiting a page and preserves both command journal entries',async()=>{
@@ -63,4 +63,13 @@ it('cancels queued pre-Stop commands and does not interrupt a new run when an ac
  expect(f.adapter.start).toHaveBeenCalledOnce();const interrupted=f.adapter.disconnected.mock.calls.length;
  f.deliver('STOP_PROFILE','stop');await vi.waitFor(()=>expect(f.port.sent.filter((m:any)=>m.commandId==='stop'&&m.ok)).toHaveLength(2));
  expect(f.adapter.disconnected).toHaveBeenCalledTimes(interrupted);expect(f.adapter.control).toHaveBeenCalledOnce();
+});
+
+it('reads verification immediately while START is still pending, without interrupting the run',async()=>{
+ const f=await connectedFixture();let finish!:()=>void;
+ f.adapter.start.mockImplementation(()=>new Promise<void>(r=>finish=r));f.adapter.control.mockResolvedValue({questions:[]});
+ f.deliver('START','loading');await vi.waitFor(()=>expect(f.adapter.start).toHaveBeenCalledOnce());
+ f.deliver('SCAN_FORM','read-now',{verificationOnly:true});
+ await vi.waitFor(()=>expect(f.port.sent).toContainEqual(expect.objectContaining({commandId:'read-now',ok:true})));
+ expect(f.port.sent.some((m:any)=>m.commandId==='loading'&&m.type==='RESULT')).toBe(false);expect(f.adapter.disconnected).not.toHaveBeenCalled();finish();
 });

@@ -311,3 +311,28 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - Panel theo run mới sang tab mới, không nhận đè acknowledgement eventSeq thấp,
   tabId=-1 hoặc sự kiện của lượt cũ; có test trực tiếp với DOM sidepanel.
 - Sau bổ sung: typecheck và 301 ca / 39 file qua; build production v1.3.2 qua.
+
+
+## 1.8.0 — chạy ngay, tab chờ, link sai và xác thực từng HSK (21/10/2026)
+
+- Sửa fence revision sau đồng bộ: bước chuẩn bị trả về revision đã xác nhận, hoàn tất là tự đánh thức dispatch. Bỏ gate chờ giờ; phát từng HSK/profile độc lập. Lý do chờ hiển thị trong lịch.
+- Ngừng reload Facebook khi đã chốt nguồn cho các cấp còn chờ; phản hồi nhận link trả trạng thái pause cùng revision để lease cũ không bật reload trở lại. Link bị loại thủ công không được nguồn Facebook ghi đè.
+- Thủ công không cần Facebook/giờ đặt; chờ link tối đa 30 phút. Loại/thay link dừng đúng các run của cấp đó, đổi requestId và xóa đáp án của form cũ; khóa gửi và run mới khác được giữ.
+- Trang chờ nội bộ `ready.html` được tạo trước và dùng lại khi START. Kiểm tra bằng Chrome thật phát hiện `about:blank` không lộ URL với quyền hiện có; bản cuối dùng trang của extension và không thêm quyền tabs.
+- Tái hiện lỗi điền xong nhưng không xử lý trang tiếp: timer chạy trước khi async release renderer kết thúc làm rơi requestExecute. Bản cuối giữ trang tiếp trong hàng đợi, chỉ chạy sau release; Stop vẫn hủy hàng đợi. Có regression test nhả quyền chậm và Stop.
+- Đáp án riêng theo HSK, tự nhận diện tiêu đề blocking verification, áp dụng khi đến muộn; kiểm tra run/form/nội dung, bỏ qua CAPTCHA/upload/run khác. Lỗi áp dụng hiện trong hàng HSK.
+- `test:scheduled-hsk-ui`: ba profile giả, hai HSK; chuẩn bị trước, dán link, chỉ chạy cấp có link, câu hỏi tự hiện, đáp án độc lập, profile đến sau, loại/thay link riêng cấp, desktop và mobile không tràn ngang.
+- `test:final-question-ui` và `test:manager-ui` vẫn qua; luồng chạy trực tiếp và sửa hồ sơ giữ hành vi cũ.
+- `node scripts/run-node24.mjs scripts/browser-check.mjs --test-only --profiles=2`: hai Chrome profile thật trong thư mục tạm, Native Messaging thật, ảnh giả 672.673 byte. Xác nhận PREPARE lặp không mở tab mới, START dùng đúng tab chờ, cả hai tới Xong Test, gửi 0 lần, duplicate START không tạo run/tab mới; UI sáng/tối/mobile không lỗi. Dữ liệu ở `test-results/browser-2.json`.
+- Google hostname được ánh xạ localhost. Chưa dùng Facebook hoặc Google Forms thật trong đợt này; không coi tốc độ fixture là tốc độ đăng ký thực. Không triển khai lên hosting trong đợt sửa mã này.
+
+
+## 1.8.1 — nhập trước đáp án, tự hiện câu, báo lỗi đọc ngay (21/10/2026)
+
+- `HskVerificationAnswer` cho phép chỉ có value; FinalQuestion vẫn giữ kiểm tra đầy đủ. Không đưa cấu hình thiếu tiêu đề trực tiếp vào START. Khi đúng lượt/HSK báo blocker verification mới ghép đáp án với tiêu đề, form, entry và loại trường đã đọc.
+- Câu xác thực tự hiện từ blocker và snapshot đã áp dụng của đúng run trong lịch; không lấy câu từ run cũ cùng profile. Lỗi thiếu nội dung hiện role=alert ngay.
+- Lấy câu xác thực là SCAN_FORM chỉ đọc, chạy ngoài hàng đợi START và không giành renderer/focus/pause. Giới hạn backend 2 giây, UI 2,5 giây; timeout hiển thị lỗi có thể thử lại. Không chọn câu cuối trong danh sách làm fallback.
+- Form diễn tập có một ô đáp án chung; form đăng ký theo HSK giữ các ô riêng.
+- `test:scheduled-hsk-ui`: nhập HANU/2026 trước khi biết câu, bật lịch và tự áp dụng đúng từng HSK; profile tới muộn; đọc không có câu báo lỗi, không nhận nhầm cam kết cuối trang; đọc lại phục hồi blocker thiếu tiêu đề; giao diện mobile; riêng mẫu diễn tập dùng CHUNG cho cả ba profile với một input.
+- `scripts/browser-check.mjs --test-only --profiles=2 --scheduled-verification`: hai Chrome profile thật, Native Messaging thật, form giả nhiều trang. Đáp án HANU/2026 được cấu hình trước, câu xác thực HSK 4/5 chỉ xuất hiện sau Next. Cả hai tự ghép/điền đúng câu, tới Xong Test, gửi 0 lần; tab chờ, upload, duplicate START và UI sáng/tối/mobile đều qua.
+- Kiểm thử này dùng HTTPS fixture với hostname Google ánh xạ localhost; không gửi form Google hoặc đọc Facebook thật.

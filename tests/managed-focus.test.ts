@@ -47,3 +47,11 @@ it('rechecks an existing reserved response read-only when opening it after an ex
 it.each(['idle','completed','ready_to_submit'] as const)('closing a %s form preserves its terminal state and released lease',async status=>{
  const f=await setup(status);f.removed(7);await vi.waitFor(()=>expect(chrome.storage.local.get).toHaveBeenCalledWith('run:7'));expect(f.data.managedRun.status).toBe(status);expect(chrome.storage.local.set).not.toHaveBeenCalled();
 });
+it('prepares one owned waiting tab without starting and reuses it across preparation requests',async()=>{
+ const f=await setup();const control=(adapter as any).control;
+ const command={kind:'PREPARE_FORM',payload:{}};
+ expect(await control(command)).toMatchObject({tabId:99});expect(f.tabCreate).toHaveBeenCalledExactlyOnceWith({url:'chrome-extension://test/ready.html',active:true});
+ expect(await control(command)).toMatchObject({tabId:99});expect(f.tabCreate).toHaveBeenCalledTimes(1);expect(f.data.managedRun.status).toBe('idle');expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+ f.tabs.find(t=>t.id===99).url='https://example.test/user-page';await control(command);expect(f.tabCreate).toHaveBeenCalledTimes(2);
+ expect(chrome.tabs.update).not.toHaveBeenCalled();
+});

@@ -3,12 +3,12 @@ import { isDeepStrictEqual } from 'node:util';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
 import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, canStartSeparateTest, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
-import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
+import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode,type FormQuestionSummary} from '../../src/shared';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 import {RegistrationScheduler} from './registration-scheduler';
-import {isHskLevel,type HskLevel} from '../../src/registration-schedule';
+import {bindHskAnswer,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
   readonly scheduler:RegistrationScheduler;
@@ -50,10 +50,24 @@ export class Coordinator {
       prepare:async id=>{
         const ping=await this.command(id,'PING',{},undefined,5000);if(!ping?.capabilities?.includes('scheduledHskLinks'))throw new Error('Cập nhật extension để dùng lịch HSK.');
         let s=await store.session(id);if(!s.synced)s=await this.pull(id);
-        if(!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail)||s.execution)throw new Error('Chuẩn bị hồ sơ, email và dừng lượt cũ trước giờ chạy.');
+        if(!s.profile)throw new Error('Chưa có hồ sơ thí sinh.');
+        if(s.conflict)throw new Error('Giải quyết xung đột hồ sơ trước khi chạy.');
+        if(!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error('Chưa gán email Google cho profile.');
+        if(s.execution)throw new Error('Lượt cũ còn giữ profile. Bấm Dừng trên hàng profile.');
         await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.command(id,'ATTACHMENT_INFO',{id:a.id},undefined,5000);if(info.size!==a.size)throw new Error('Ảnh chưa sẵn sàng.');}));
+        if(ping.capabilities.includes('preparedFormTab'))await this.command(id,'PREPARE_FORM',{},undefined,5000);
+        return s.revision;
       },
-      start:(id,url,s,guard)=>this.start([id],url,s.mode,s.finalQuestion,s.members.find(m=>m.id===id)!.requestId,undefined,guard),
+      reset:async member=>{
+        await this.runBuffer?.flush(member.id);const current=await store.session(member.id);
+        const group=await store.groupForRequest?.(member.requestId);
+        const expected=member.runId??group?.id;if(!expected)return;
+        if(current.run?.runId!==expected)throw new Error('Profile đã chuyển sang lượt khác. Giữ nguyên lượt hiện tại.');
+        if(current.run.submitAttempted)throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
+        await this.control(member.id,'STOP',current.run.runId);
+      },
+      start:(id,url,s,guard)=>this.start([id],url,s.mode,initialHskQuestion(s,s.members.find(m=>m.id===id)!.level),s.members.find(m=>m.id===id)!.requestId,undefined,guard),
+      started:(id,runId)=>{void (async()=>{await this.runBuffer?.flush(id);const session=await store.session(id);if(session.run?.runId===runId)this.queueScheduledAnswer(id,session.run);})().catch(this.unavailable);},
       changed:()=>this.changed(),error:e=>this.unavailable(e)
     });
   }
@@ -206,6 +220,7 @@ export class Coordinator {
     if(staged!==undefined){
       if(staged){
         this.progressChanged();
+        this.queueScheduledAnswer(id,run);
         if(!['running','submitting'].includes(run.status)){
           void this.attention.cancel(id);
           void this.runBuffer!.flush(id).then(()=>this.changed()).catch(this.progressUnavailable);
@@ -215,7 +230,7 @@ export class Coordinator {
     }
     if(await this.store.acceptProgress(id,run)){
       if(!['running','submitting'].includes(run.status))void this.attention.cancel(id);
-      this.changed();
+      this.changed();this.queueScheduledAnswer(id,run);
     }
   }
   async pull(id:string) {
@@ -246,17 +261,50 @@ export class Coordinator {
       await this.control(m.id,'STOP',s.run.runId);return {id:m.id,ok:true};
     }catch(e){return {id:m.id,ok:false,error:(e as Error).message};}}));
   }
-  async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion,resume=false){
+  private answering=new Set<string>();
+  private answerAttempts=new Map<string,string>();
+  private queueScheduledAnswer(id:string,run:RunState){
+    const s=this.scheduler.value,m=s?.members.find(m=>m.id===id&&m.runId===run.runId);
+    const configured=m&&(s?.rehearsal?s.rehearsalAnswer:s?.finalQuestions?.[m.level]);
+    const q=configured&&bindHskAnswer(configured,run);
+    if(!m||m.status!=='started'||!s||['cancelled','expired'].includes(s.status)||!q||run.status!=='waiting_manual'||run.blockingIssue?.reason!=='verification'||!canApplyFinalQuestion(run,q)||this.answering.has(id))return;
+    const key=JSON.stringify([run.runId,run.blockingIssue.questionLabel,q]);if(this.answerAttempts.get(id)===key)return;
+    this.answerAttempts.set(id,key);this.answering.add(id);
+    // Do not block the extension's STATE/command queue on its own SET response.
+    void this.setFinalQuestion([id],q,true,run.runId).then(results=>this.scheduler.answerResult(id,run.runId!,results[0]?.ok||results[0]?.skipped?undefined:results[0]?.error)).finally(()=>this.answering.delete(id)).catch(this.unavailable);
+  }
+  async scanVerification(id:string){
+    const s=await this.store.session(id);if(!this.peers.has(id))throw new Error('Profile chưa kết nối. Mở Chrome profile rồi lấy lại câu xác thực.');
+    let result:any;
+    try{result=await this.command(id,'SCAN_FORM',{verificationOnly:true},s.run?.runId,2000);}catch(e){if((e as Error).message.includes('chưa xác nhận SCAN_FORM'))throw new Error('Không lấy được câu xác thực trong 2 giây. Kiểm tra profile và bấm Lấy câu xác thực để thử lại.');throw e;}
+    await this.runBuffer?.flush(id);const current=await this.store.session(id);
+    if(current.run?.runId!==s.run?.runId||result.runId&&result.runId!==s.run?.runId)throw new Error('Lượt đã thay đổi trong lúc đọc. Bấm lấy lại câu xác thực.');
+    if(current.run?.formId&&result.formId!==current.run.formId)throw new Error('Câu hỏi đọc được thuộc form khác. Kiểm tra lại profile.');
+    const candidates=(Array.isArray(result.questions)?result.questions:[]).filter((q:FormQuestionSummary)=>q.verification&&q.kind!=='file'&&q.kind!=='unknown') as FormQuestionSummary[];
+    // Repair an incomplete blocker only from the exact current form's readable verification.
+    if(current.run?.status==='waiting_manual'&&current.run.blockingIssue?.reason==='verification'&&!current.run.blockingIssue.questionLabel&&candidates.length===1){
+      const q=candidates[0];current.run.blockingIssue={...current.run.blockingIssue,questionId:q.id,questionLabel:q.label,question:q};
+      await this.store.saveRun(id,current.run);await this.store.saveSession(current);this.runBuffer?.refresh(id,current);this.changed();this.queueScheduledAnswer(id,current.run);
+    }
+    return result;
+  }
+  async scheduledAnswer(level:unknown,question:unknown){
+    const s=await this.scheduler.answer(level,question);
+    if(question)for(const m of s.members.filter(m=>level==='test'&&s.rehearsal||m.level===level)){this.answerAttempts.delete(m.id);const session=await this.store.session(m.id);if(session.run)this.queueScheduledAnswer(m.id,session.run);}
+    return s;
+  }
+  async setFinalQuestion(ids:string[],finalQuestion:FinalQuestion,resume=false,expectedRunId?:string){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):finalQuestion;
     if(!finalQuestion||!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)throw new Error('Chọn profile và nhập câu hỏi cuối.');
     return Promise.all(ids.map(async id=>{
-      let updated=false;
+      let updated=false;const intent=this.intents.get(id)??0;
       try{
         // Flush/read/check each member independently. A running, offline or
         // failed member must not hold up another member's SET + RESUME.
         await this.runBuffer?.flush(id);
         const before=await this.store.session(id);
+        if(expectedRunId&&before.run?.runId!==expectedRunId)return {id,ok:false,skipped:true,error:'Lượt đã thay đổi.'};
         if(!this.peers.has(id)||!before.run?.runId||before.run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(before.run.status))return {id,ok:false,skipped:true,error:'Profile chưa sẵn sàng hoặc đã gửi; giữ nguyên lượt.'};
         if(finalQuestion.formId&&finalQuestion.formId!==before.run.formId)return {id,ok:false,skipped:true,error:'Câu hỏi đã chọn thuộc form khác; giữ nguyên lượt.'};
         if(resume&&!canApplyFinalQuestion(before.run,finalQuestion))return {id,ok:false,skipped:true,error:'Profile chưa tới câu hỏi này; có thể áp dụng sau.'};
@@ -270,7 +318,7 @@ export class Coordinator {
         this.runBuffer?.refresh(id,s);this.changed();updated=true;
         // Each member can resume as soon as its own answer is durable. A slow
         // peer no longer holds up the group or requires a second browser request.
-        if(resume)await this.control(id,'RESUME',runId);
+        if(resume){if((this.intents.get(id)??0)!==intent||expectedRunId&&['cancelled','expired'].includes(this.scheduler.value?.status??''))throw new Error('Đã dừng; không tự tiếp tục.');await this.control(id,'RESUME',runId);}
         return {id,ok:true};
       }catch(e){return {id,ok:false,error:updated?`Đã cập nhật đáp án nhưng chưa tiếp tục được: ${(e as Error).message}`:(e as Error).message};}
     }));

@@ -935,7 +935,13 @@ async function startManaged(command:Command,sessionId:string){
   try{
     const window=chrome.windows?.getLastFocused?await chrome.windows.getLastFocused({windowTypes:['normal']}):undefined;
     if(window?.id!==undefined&&window.state==='minimized')await chrome.windows.update(window.id,{state:'normal',focused:false});
-    const tab=await chrome.tabs.create({url:run.url,active:true,...(window?.id!==undefined?{windowId:window.id}:{})});run.tabId=tab.id!;
+    const prepared=(await chrome.storage.local.get('preparedFormTab')).preparedFormTab;
+    const candidate=typeof prepared==='number'?await chrome.tabs.get(prepared).catch(()=>undefined):undefined;
+    // The owned extension page is visible with existing host permissions.
+    // about:blank URLs are hidden by Chromium without broad tabs permission.
+    const tab=isPreparedTab(candidate)?await chrome.tabs.update(candidate.id!,{url:run.url,active:true}):await chrome.tabs.create({url:run.url,active:true,...(window?.id!==undefined?{windowId:window.id}:{})});
+    if(tab?.id===undefined)throw new Error('Không mở được tab đã chuẩn bị.');
+    await chrome.storage.local.remove('preparedFormTab');run.tabId=tab.id;
     if(interruptedRuns.has(run.runId!)){run.status='idle';run.recoveryRequired=false;await saveRun(run);return getManaged();}
     await saveRun(run);await prepareFormWindow(run.tabId);
   }catch(e){run=addLog({...run,status:'failed'},'error',`Không mở được tab form: ${(e as Error).message}`);await saveRun(run);throw e;}
@@ -1015,8 +1021,29 @@ async function stopProfile(expectedRunId?:string){
  }
  return {run:await getManaged(),execution:await executionSnapshot()};
 }
+function isPreparedTab(tab:chrome.tabs.Tab|undefined):tab is chrome.tabs.Tab{const url=chrome.runtime.getURL('ready.html');return !!tab&&(tab.pendingUrl?tab.pendingUrl===url:tab.url===url&&tab.status!=='loading');}
+async function prepareManagedTab(){
+  if(await executionSnapshot())throw new Error('Lượt cũ còn giữ profile. Dừng trước khi chuẩn bị tab.');
+  const stored=(await chrome.storage.local.get('preparedFormTab')).preparedFormTab;
+  const previous=typeof stored==='number'?await chrome.tabs.get(stored).catch(()=>undefined):undefined;
+  if(isPreparedTab(previous))return {tabId:previous.id};
+  const window=chrome.windows?.getLastFocused?await chrome.windows.getLastFocused({windowTypes:['normal']}):undefined;
+  const tab=await chrome.tabs.create({url:chrome.runtime.getURL('ready.html'),active:true,...(window?.id!==undefined?{windowId:window.id}:{})});
+  await chrome.storage.local.set({preparedFormTab:tab.id});return {tabId:tab.id};
+}
 async function managedControl(command:Command){
+  if(command.kind==='PREPARE_FORM')return prepareManagedTab();
   if(command.kind==='STOP_PROFILE')return stopProfile(command.runId);
+  if(command.kind==='SCAN_FORM'&&command.payload.verificationOnly){
+    const run=await getManaged();
+    if(command.runId&&run?.runId!==command.runId)throw new Error('Lượt đã thay đổi. Lấy lại câu xác thực.');
+    let tab=run&&run.tabId>=0?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;
+    if(!tab&&!command.runId)tab=(await chrome.tabs.query({active:true,lastFocusedWindow:true})).find(t=>canonicalFormId(t.url??''));
+    if(!tab?.id||!canonicalFormId(tab.url??''))throw new Error('Profile chưa mở được form. Kiểm tra link hoặc kết nối rồi lấy lại câu xác thực.');
+    if(run?.formId&&run.formId!==canonicalFormId(tab.url??''))throw new Error('Profile đang mở form khác với lượt đăng ký.');
+    const result=await sendToForm<{questions:unknown[]}>(tab.id,{type:'SCAN_FORM',tabId:tab.id});
+    return {...result,formId:canonicalFormId(tab.url!),url:tab.url,runId:run?.runId};
+  }
   if(command.kind==='SCAN_FORM'){
     const execution=await executionSnapshot();if(execution&&['running','submitting'].includes(execution.status))throw new Error('Tạm dừng lượt trong profile trước khi đọc câu hỏi, để không ảnh hưởng bước đang chạy.');
     const run=await getManaged();let tab=run?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;

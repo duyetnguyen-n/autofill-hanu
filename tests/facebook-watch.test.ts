@@ -74,3 +74,17 @@ it('reuses its owned post window across schedules instead of opening more login 
   await watcher.command({...config,token:'new-token',scheduleId:'next-schedule'});
   expect(api.windows.create).toHaveBeenCalledTimes(1);expect(data.facebookWatch.scheduleId).toBe('next-schedule');watcher.stop();
 });
+it('pauses network reloads immediately on the accepted-link reply while keeping its window available',async()=>{
+  const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({accepted:true,pauseReload:true})));await watcher.command(config);
+  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
+  await vi.advanceTimersByTimeAsync(12000);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await watcher.command({...config,pauseReload:true});
+  await watcher.command({focus:true,scheduleId:config.scheduleId,token:config.token});expect(api.windows.update).toHaveBeenCalled();
+  await watcher.command({...config,pauseReload:false});await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalled();watcher.stop();
+});
+it('ignores a lease renewal sent before the link was captured, but allows a newer source revision to resume polling',async()=>{
+ const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({pauseReload:true,watchRevision:2})));await watcher.command({...config,watchRevision:1});
+ await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
+ await watcher.command({...config,watchRevision:1,pauseReload:false});await vi.advanceTimersByTimeAsync(12000);expect(api.tabs.reload).not.toHaveBeenCalled();
+ await watcher.command({...config,watchRevision:3,pauseReload:false});await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalled();watcher.stop();
+});

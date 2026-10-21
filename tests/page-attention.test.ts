@@ -8,7 +8,7 @@ async function fixture(){
  const run={runId:'run',sessionId:'session',managed:true,tabId:7,formId:'attention-fixture',status:'running',mode:'test',contentEpoch:'document',logs:[],filled:[],skipped:[],submitAttempted:false,updatedAt:''};
  const data:any={'run:7':run,managedRun:run};let listener:any;
  const window={id:1,state:'minimized'};const update=vi.fn(async(_id:number,values:any)=>Object.assign(window,values));
- vi.stubGlobal('chrome',{runtime:{getURL:(s:string)=>s,onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:vi.fn(async()=>({}))},action:{onClicked:{addListener:vi.fn()}},windows:{get:vi.fn(async()=>window),update,create:vi.fn()},tabs:{get:vi.fn(async()=>({id:7,windowId:1,url})),update:vi.fn(async()=>({})),sendMessage:vi.fn(async()=>({})),onUpdated:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}},storage:{local:{get:vi.fn(async(key:string)=>({[key]:structuredClone(data[key])})),set:vi.fn(async(value:any)=>Object.assign(data,structuredClone(value)))}}});
+ vi.stubGlobal('chrome',{runtime:{getURL:(s:string)=>s,onMessage:{addListener:(fn:any)=>listener=fn},sendMessage:vi.fn(async()=>({}))},action:{onClicked:{addListener:vi.fn()}},windows:{get:vi.fn(async()=>window),update,create:vi.fn()},tabs:{get:vi.fn(async()=>({id:7,windowId:1,url})),update:vi.fn(async()=>({})),sendMessage:vi.fn(async()=>({})),onUpdated:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}},storage:{local:{get:vi.fn(async(key:string)=>({[key]:structuredClone(data[key])})),set:vi.fn(async(value:any)=>Object.assign(data,structuredClone(value))),remove:vi.fn(async(key:string)=>delete data[key])}}});
  await import('../src/background');
  const sender={tab:{id:7,url},url,frameId:0};const ask=(m:ExtensionMessage,s=sender)=>new Promise<any>(resolve=>listener(m,s,resolve));
  cleanup=()=>ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});
@@ -110,4 +110,21 @@ it('Stop while a predecessor is releasing prevents the queued acquire from touch
  const dropping=f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
  const next=f.ask(f.acquire);await new Promise(r=>setTimeout(r,0));f.data['run:7'].status='idle';release();await dropping;
  expect(await next).toMatchObject({ok:false,error:expect.stringContaining('dừng')});expect(native.request.mock.calls.filter((c:any)=>c[0]==='ATTENTION_ACQUIRE')).toHaveLength(1);
+});
+
+it('Start navigates the prepared owned tab instead of creating a new one',async()=>{
+ const f=await fixture();f.data['run:7'].status='idle';f.data.managedRun.status='idle';f.data.profile={values:{},customFields:[],attachments:{},mappings:{}};f.data.profileRevision=1;
+ let destination='ready.html';Object.assign(chrome.tabs,{create:vi.fn(async()=>({id:17,windowId:1,url:'ready.html'})),get:vi.fn(async(id:number)=>({id,windowId:1,url:id===17?destination:f.sender.url,status:'complete'})),update:vi.fn(async(id:number,options:any)=>{if(options.url)destination=options.url;return {id,windowId:1,url:destination};}),sendMessage:vi.fn(async(_id,m:any)=>m.type==='PAGE_ACCOUNT'?{email:'fixture@example.test'}:{ok:true})});
+ await adapter.control({kind:'PREPARE_FORM',payload:{}});expect(f.data.preparedFormTab).toBe(17);
+ const result=await adapter.start({runId:'prepared-run',payload:{url:f.sender.url,mode:'test',revision:1,expectedEmail:'fixture@example.test'}},'session');
+ expect(result.tabId).toBe(17);expect(chrome.tabs.create).toHaveBeenCalledTimes(1);expect(chrome.tabs.update).toHaveBeenCalledWith(17,{url:f.sender.url,active:true});expect(f.data.preparedFormTab).toBeUndefined();
+});
+
+it('reads the verification from a running form without focusing, pausing or acquiring its renderer',async()=>{
+ const f=await fixture();vi.mocked(chrome.tabs.sendMessage).mockResolvedValue({questions:[{id:'verification',label:'Câu xác thực?',verification:true}]} as any);
+ const result=await adapter.control({kind:'SCAN_FORM',runId:'run',payload:{verificationOnly:true}});
+ expect(result).toMatchObject({formId:'attention-fixture',runId:'run',questions:[{verification:true}]});
+ expect(chrome.tabs.update).not.toHaveBeenCalled();expect(f.update).not.toHaveBeenCalled();expect(native.request).not.toHaveBeenCalled();
+ expect(f.data.managedRun.status).toBe('running');
+ await expect(adapter.control({kind:'SCAN_FORM',runId:'stale',payload:{verificationOnly:true}})).rejects.toThrow('Lượt đã thay đổi');
 });

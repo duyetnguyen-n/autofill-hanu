@@ -1,16 +1,39 @@
 import {allowedFormUrl} from './protocol';
-import type {FinalQuestion,RunMode} from './shared';
+import {canApplyFinalQuestion,validateFinalQuestion,type FinalQuestion,type RunMode,type RunState} from './shared';
 
 export const HSK_LEVELS=['1','2','3','4','5','6'] as const;
 export type HskLevel=typeof HSK_LEVELS[number];
 export const isHskLevel=(v:unknown):v is HskLevel=>typeof v==='string'&&HSK_LEVELS.includes(v as HskLevel);
+/** A user can know the answer before seeing the form's question. */
+export type HskVerificationAnswer=Pick<FinalQuestion,'value'>&Partial<Omit<FinalQuestion,'value'>>;
+export function validateHskAnswer(value:unknown):asserts value is HskVerificationAnswer|undefined {
+  if(value===undefined)return;
+  const q=value as HskVerificationAnswer;
+  if(!q||typeof q.value!=='string'||!q.value.trim()||q.value.length>10000)throw new Error('Nhập đáp án xác thực. Không cần biết trước câu hỏi.');
+  if(q.label!==undefined)validateFinalQuestion(q);
+  else if(q.kind!==undefined||q.formId!==undefined||q.questionId!==undefined)throw new Error('Đáp án nhập trước chưa được gắn với câu hỏi trên form.');
+}
+export function bindHskAnswer(answer:HskVerificationAnswer,run:RunState):FinalQuestion|undefined {
+  const issue=run.blockingIssue;
+  if(run.status!=='waiting_manual'||issue?.reason!=='verification'||!issue.questionLabel?.trim()||!run.formId)return;
+  const detected=issue.question;
+  const q:FinalQuestion=answer.label?{...answer,label:answer.label}:{value:answer.value,label:issue.questionLabel,formId:run.formId,
+    ...(detected?.targetId?{questionId:detected.targetId}:{}),
+    ...(detected&&detected.kind!=='unknown'&&detected.kind!=='file'?{kind:detected.kind}:{})};
+  return canApplyFinalQuestion(run,q)?q:undefined;
+}
+export function initialHskQuestion(s:RegistrationSchedule,level:HskLevel):FinalQuestion|undefined {
+  const q=s.rehearsal?s.rehearsalAnswer:s.finalQuestions?.[level];
+  return q?.label?{...q,label:q.label}:q?undefined:s.finalQuestion;
+}
 export interface HskLink {url?:string;source:'facebook'|'manual';error?:string;observedAt:string}
-export interface ScheduledMember {id:string;level:HskLevel;status:'waiting'|'starting'|'started'|'failed'|'held';error?:string;runId?:string;url?:string;requestId:string;dispatchedAt?:string}
+export interface ScheduledMember {id:string;level:HskLevel;status:'waiting'|'starting'|'started'|'failed'|'held';error?:string;runId?:string;url?:string;requestId:string;dispatchedAt?:string;prepared?:boolean;waitingReason?:string;answerError?:string}
 export interface RegistrationSchedule {
   id:string;postUrl:string;startsAt:string;expiresAt:string;prepareAt:string;watchAt:string;
   mode:RunMode;status:'armed'|'preparing'|'watching'|'running'|'finished'|'cancelled'|'expired';
   members:ScheduledMember[];links:Partial<Record<HskLevel,HskLink>>;finalQuestion?:FinalQuestion;
-  startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
+  finalQuestions?:Partial<Record<HskLevel,HskVerificationAnswer>>;rehearsalAnswer?:HskVerificationAnswer;linksCaptured?:boolean;watchRevision?:number;
+  manualOnly?:boolean;startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
   watcher?:{id:string;token:string;ready:boolean;error?:string};
   lastReadAt?:string;lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
 }

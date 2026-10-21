@@ -1,6 +1,6 @@
 {
   "name": "hanu-hsk-autofill",
-  "version": "1.7.6",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -30,6 +30,7 @@
     "test:browser": "node scripts/run-node24.mjs scripts/browser-check.mjs",
     "test:manager-ui": "node scripts/run-node24.mjs scripts/manager-ui-check.mjs",
     "test:mobile-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/mobile-ui-check.ts",
+    "test:scheduled-hsk-ui": "node scripts/run-node24.mjs scripts/scheduled-hsk-ui-check.mjs",
     "test:final-question-ui": "node scripts/run-node24.mjs scripts/final-question-ui-check.mjs",
     "test:navigation": "node scripts/run-node24.mjs scripts/navigation-check.mjs",
     "test:background-flow": "node scripts/run-node24.mjs scripts/background-flow-check.mjs",

@@ -3,7 +3,7 @@ import type { Profile, RunMode, RunState } from './shared';
 export const PROTOCOL_VERSION = 1;
 export const NATIVE_HOST = 'vn.hanu.autofill';
 export const CHUNK_BYTES = 64 * 1024;
-export type CommandKind = 'WATCH_FACEBOOK' | 'PING' | 'FOCUS' | 'SCAN_FORM' | 'SET_FINAL_QUESTION' | 'READ_PROFILE' | 'ATTACHMENT_INFO' | 'ATTACHMENT_READ' | 'ATTACHMENT_BEGIN' | 'ATTACHMENT_CHUNK' | 'ATTACHMENT_FINISH' | 'COMMIT_PROFILE' | 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'STOP_PROFILE' | 'RECONCILE' | 'RESOLVE_SUBMISSION';
+export type CommandKind = 'PREPARE_FORM' | 'WATCH_FACEBOOK' | 'PING' | 'FOCUS' | 'SCAN_FORM' | 'SET_FINAL_QUESTION' | 'READ_PROFILE' | 'ATTACHMENT_INFO' | 'ATTACHMENT_READ' | 'ATTACHMENT_BEGIN' | 'ATTACHMENT_CHUNK' | 'ATTACHMENT_FINISH' | 'COMMIT_PROFILE' | 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'STOP_PROFILE' | 'RECONCILE' | 'RESOLVE_SUBMISSION';
 export interface Command {
   type: 'COMMAND'; protocol: 1; sessionId: string; commandId: string;
   runId?: string; kind: CommandKind; payload: Record<string, unknown>;

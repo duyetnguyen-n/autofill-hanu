@@ -1,14 +1,16 @@
 import {randomUUID} from 'node:crypto';
 import type {SessionView,GroupView} from '../../src/protocol';
 import {validateFinalQuestion} from '../../src/shared';
-import {activeSchedule,facebookPostKey,formLink,isHskLevel,parseHskLinks,parseTestForm,registrationDateError,type HskLevel,type RegistrationSchedule} from '../../src/registration-schedule';
+import {validateHskAnswer,activeSchedule,facebookPostKey,formLink,isHskLevel,parseHskLinks,parseTestForm,registrationDateError,type HskLevel,type RegistrationSchedule} from '../../src/registration-schedule';
 
 interface Hooks {
   load():Promise<RegistrationSchedule|undefined>;save(s:RegistrationSchedule):Promise<void>;
   sessions():Promise<SessionView[]>;connected(id:string):boolean;
   command(id:string,kind:'PING'|'WATCH_FACEBOOK',payload:Record<string,unknown>):Promise<any>;
-  prepare(id:string):Promise<void>;
+  prepare(id:string):Promise<number|void>;
+  reset?(member:RegistrationSchedule['members'][number]):Promise<void>;
   start(id:string,url:string,s:RegistrationSchedule,valid:()=>boolean):Promise<GroupView>;
+  started?(id:string,runId:string):void;
   changed():void;error(e:unknown):void;
 }
 /** Durable intent lives on the coordinator; no management-page timers. */
@@ -16,6 +18,8 @@ export class RegistrationScheduler {
   value?:RegistrationSchedule;
   private loaded=false;private queue=Promise.resolve();private timer?:ReturnType<typeof setInterval>;
   private preparing=new Set<string>();private prepared=new Map<string,number>();private launching=new Set<string>();
+  private replacing=false;
+  private launches=new Map<string,Promise<unknown>>();
   private prepareAttempt=new Map<string,number>();
   private watcherBusy=false;private watcherSent=0;private watcherFailures=new Set<string>();
   private cancelledId?:string;private closed=false;private cancelling=false;
@@ -26,12 +30,15 @@ export class RegistrationScheduler {
   close(){this.closed=true;clearInterval(this.timer);this.timer=undefined;this.watcherSent=0;}
   get active(){return !this.closed&&!this.cancelling&&this.value?.id!==this.cancelledId&&activeSchedule(this.value);}
   async arm(input:any){return this.exclusive(async()=>{
-    if(this.active)throw new Error('Hủy lịch đang chờ trước khi đặt lịch khác.');
-    const at=Date.parse(input.startsAt),now=this.now();
+    if(this.active||this.replacing)throw new Error('Hủy lịch đang chờ trước khi đặt lịch khác.');
+    const now=this.now(),at=input.manualOnly===true?now:Date.parse(input.startsAt);
     if(!Number.isFinite(at)||at<now-30000||at>now+31*86400000)throw new Error('Chọn giờ chạy trong 31 ngày tới (giờ Việt Nam).');
-    if(!facebookPostKey(String(input.postUrl??'')))throw new Error('Dùng link trực tiếp story.php hoặc /posts/ của đúng bài Facebook.');
+    if(input.manualOnly!==true&&!facebookPostKey(String(input.postUrl??'')))throw new Error('Dùng link trực tiếp story.php hoặc /posts/ của đúng bài Facebook.');
     if(!['test','live'].includes(input.mode)||!Array.isArray(input.ids)||!input.ids.length||input.ids.length>100||new Set(input.ids).size!==input.ids.length)throw new Error('Chọn các profile và chế độ chạy hợp lệ.');
     validateFinalQuestion(input.finalQuestion);
+    if(input.finalQuestions!==undefined&&(!input.finalQuestions||typeof input.finalQuestions!=='object'||Array.isArray(input.finalQuestions)))throw new Error('Đáp án theo HSK không hợp lệ.');
+    for(const [level,q]of Object.entries(input.finalQuestions??{})){if(!isHskLevel(level))throw new Error('HSK không hợp lệ.');validateHskAnswer(q);}
+    validateHskAnswer(input.rehearsalAnswer);
     if(input.startOnLink!==undefined&&typeof input.startOnLink!=='boolean')throw new Error('Chế độ chạy khi có link không hợp lệ.');
     if(input.rehearsal!==undefined&&typeof input.rehearsal!=='boolean'||input.rehearsal&&input.mode!=='test')throw new Error('Diễn tập chỉ dùng chế độ Test, luôn dừng trước Gửi.');
     if(input.links!==undefined&&(!input.links||typeof input.links!=='object'||Array.isArray(input.links)))throw new Error('Bảng link HSK không hợp lệ.');
@@ -45,7 +52,7 @@ export class RegistrationScheduler {
     });
     this.cancelling=false;this.cancelledId=undefined;this.prepared.clear();this.watcherFailures.clear();this.watcherSent=0;
     const previous=this.value;
-    this.value={id:randomUUID(),postUrl:input.postUrl,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+120000).toISOString(),mode:input.mode,startOnLink:input.startOnLink!==false,rehearsal:input.rehearsal===true,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
+    this.value={id:randomUUID(),postUrl:input.manualOnly?'':input.postUrl,manualOnly:input.manualOnly===true,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+(input.manualOnly?1800000:120000)).toISOString(),mode:input.mode,startOnLink:true,rehearsal:input.rehearsal===true,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,finalQuestions:structuredClone(input.finalQuestions??{}),rehearsalAnswer:structuredClone(input.rehearsalAnswer),createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
     for(const [key,url]of Object.entries(input.links??{}))if(url)this.setManual(key,url);
     try{await this.persist();}catch(e){this.value=previous;throw e;}return structuredClone(this.value);
   });}
@@ -54,7 +61,45 @@ export class RegistrationScheduler {
     const url=value.trim()?formLink(value.trim()):undefined;if(value.trim()&&!url)throw new Error(`HSK ${level}: cần link Google Forms hợp lệ.`);
     if(url)this.value.links[level]={url,source:'manual',observedAt:new Date(this.now()).toISOString()};else delete this.value.links[level];
   }
-  async manual(level:unknown,url:unknown){const result=await this.exclusive(async()=>{if(!this.active)throw new Error('Chưa có lịch đang chờ.');this.setManual(level,url);await this.persist();return structuredClone(this.value);});void this.tick().catch(this.hooks.error);return result;}
+  async manual(level:unknown,url:unknown){const result=await this.exclusive(async()=>{if(!this.active)throw new Error('Chưa có lịch đang chờ.');if(this.value!.members.some(m=>m.level===level&&m.status!=='waiting'))throw new Error('HSK này đã phát lệnh. Dùng Đổi link & chạy lại để dừng đúng lượt cũ.');this.setManual(level,url);await this.persist();return structuredClone(this.value);});void this.tick().catch(this.hooks.error);return result;}
+  async answer(level:unknown,question:unknown){return this.exclusive(async()=>{
+    if(!this.value||!isHskLevel(level)&&!(level==='test'&&this.value.rehearsal))throw new Error('Chưa có lịch hoặc HSK không hợp lệ.');
+    validateHskAnswer(question);this.value.finalQuestions??={};
+    for(const m of this.value.members.filter(m=>level==='test'&&this.value!.rehearsal||m.level===level))delete m.answerError;
+    if(level==='test')this.value.rehearsalAnswer=structuredClone(question);
+    else if(isHskLevel(level)){if(question)this.value.finalQuestions[level]=structuredClone(question);else delete this.value.finalQuestions[level];}
+    await this.persist();return structuredClone(this.value);
+  });}
+  async answerResult(id:string,runId:string,error?:string){return this.exclusive(async()=>{const m=this.value?.members.find(m=>m.id===id&&m.runId===runId);if(!m||m.answerError===error)return;m.answerError=error;await this.persist();});}
+  async replace(level:unknown,value:unknown){
+    if(this.replacing)throw new Error('Đang đổi link. Chờ thao tác hiện tại hoàn tất.');
+    this.replacing=true;try{return await this.replaceLevel(level,value);}finally{this.replacing=false;}
+  }
+  private async replaceLevel(level:unknown,value:unknown){
+    if(!isHskLevel(level)||typeof value!=='string'||value.trim()&&!formLink(value.trim()))throw new Error('Cần link Google Forms hợp lệ.');
+    const schedule=await this.exclusive(async()=>{
+      const s=this.value;if(!s||['cancelled','expired'].includes(s.status))throw new Error('Bật lịch mới để chạy tiếp.');
+      if(this.cancelling)throw new Error('Đang hủy lịch.');
+      if(!s.members.some(m=>m.level===level))throw new Error('Lịch không có profile thuộc HSK này.');
+      for(const m of s.members.filter(m=>m.level===level)){m.status='held';m.waitingReason='Đang dừng link cũ';}
+      // Fence any START already waiting for a durable write before awaiting it.
+      await this.persist();return s;
+    });
+    const members=schedule.members.filter(m=>m.level===level);
+    await Promise.allSettled(members.map(m=>this.launches.get(m.id)));
+    const results=await Promise.all(members.map(async m=>{try{if(!this.hooks.reset)throw new Error('Server chưa hỗ trợ đổi link.');await this.hooks.reset(m);return {id:m.id,ok:true};}catch(e){return {id:m.id,ok:false,error:(e as Error).message};}}));
+    await this.exclusive(async()=>{
+      if(this.value!==schedule||this.cancelling)throw new Error('Lịch đã thay đổi trong lúc dừng.');
+      if(schedule.links[level]?.url!==formLink(value.trim())&&schedule.finalQuestions)delete schedule.finalQuestions[level];
+      this.setManual(level,value);
+      if(!value.trim())schedule.links[level]={source:'manual',observedAt:new Date(this.now()).toISOString(),error:'Đã loại link. Dán link đúng để chạy tiếp.'};
+      for(const m of members){const r=results.find(r=>r.id===m.id)!;m.error=r.error;m.prepared=false;delete m.waitingReason;
+        if(r.ok){m.status='waiting';m.requestId=randomUUID();delete m.url;delete m.runId;delete m.dispatchedAt;this.prepared.delete(`${schedule.id}:${m.id}`);for(const key of this.prepareAttempt.keys())if(key.startsWith(`${schedule.id}:${m.id}:`))this.prepareAttempt.delete(key);}}
+      schedule.status='preparing';schedule.expiresAt=new Date(Math.max(Date.parse(schedule.expiresAt),this.now()+120000)).toISOString();
+      schedule.linksCaptured=false;schedule.watchRevision=(schedule.watchRevision??0)+1;this.watcherSent=0;await this.persist();
+    });
+    await this.tick();return results;
+  }
   async cancel(){this.cancelling=true;this.cancelledId=this.value?.id;return this.exclusive(async()=>{if(!this.value)return;this.value.status='cancelled';await this.persist();void this.stopWatcher();return structuredClone(this.value);});}
   async focusWatcher(){
     const s=this.value,w=s?.watcher;
@@ -73,7 +118,7 @@ export class RegistrationScheduler {
       const at=new Date(this.now()).toISOString();s.lastObservedAt=at;
       s.dateWarning=payload.error?undefined:registrationDateError(payload.text,s.startsAt);
       s.lastError=payload.error?String(payload.error).slice(0,300):s.rehearsal?undefined:s.dateWarning;
-      if(!payload.error){
+      if(!payload.error&&!s.linksCaptured){
         s.lastReadAt=at;
         const found=parseHskLinks(payload.text,s.rehearsal||s.dateWarning?undefined:s.startsAt),sample=parseTestForm(payload.text);
         s.testForm=sample?{...sample,source:'facebook',observedAt:at}:undefined;
@@ -84,17 +129,17 @@ export class RegistrationScheduler {
       }
       await this.persist();
     });
-    void this.tick().catch(this.hooks.error);return {accepted:true};
+    await this.tick();return {accepted:true,pauseReload:this.value?.linksCaptured===true,watchRevision:this.value?.watchRevision??0};
   }
   private prepare(s:RegistrationSchedule,session:SessionView){
-    const key=`${s.id}:${session.id}`,attempt=`${key}:${session.revision}`;
+    const key=`${s.id}:${session.id}`,attempt=`${key}:${session.revision}`,requestId=s.members.find(m=>m.id===session.id)?.requestId;
     if(this.preparing.has(key)||this.prepared.get(key)===session.revision&&session.synced&&!session.conflict&&!session.execution||this.now()-(this.prepareAttempt.get(attempt)??-Infinity)<5000)return;
     this.prepared.delete(key);this.prepareAttempt.set(attempt,this.now());
     this.preparing.add(key);
-    void this.hooks.prepare(session.id).then(()=>this.exclusive(async()=>{
-      if(this.value?.id!==s.id)return;this.prepared.set(key,session.revision);
-      const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting'&&m.error){delete m.error;await this.persist();}
-    })).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id){const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting')m.error=(e as Error).message;await this.persist();}})).finally(()=>this.preparing.delete(key)).catch(this.hooks.error);
+    void this.hooks.prepare(session.id).then(revision=>this.exclusive(async()=>{
+      if(this.value?.id!==s.id||s.members.find(m=>m.id===session.id)?.requestId!==requestId)return;this.prepared.set(key,revision??session.revision);
+      const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting'){m.prepared=true;delete m.error;await this.persist();}
+    })).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id){const m=s.members.find(m=>m.id===session.id);if(m?.status==='waiting')m.error=(e as Error).message;await this.persist();}})).finally(()=>{this.preparing.delete(key);void this.tick().catch(this.hooks.error);}).catch(this.hooks.error);
   }
   private watch(s:RegistrationSchedule,sessions:SessionView[]){
     if(this.watcherBusy||this.now()-this.watcherSent<10000)return;
@@ -111,23 +156,26 @@ export class RegistrationScheduler {
       w=s.watcher={id:next.id,token:randomUUID(),ready:false};
     }
     this.watcherBusy=true;this.watcherSent=this.now();const token=w.token,id=w.id;
-    void this.hooks.command(id,'WATCH_FACEBOOK',{scheduleId:s.id,token,postUrl:s.postUrl,watchAt:s.watchAt,expiresAt:s.expiresAt}).then(()=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){const oldError=s.watcher.error;s.watcher.ready=true;s.watcher.error=undefined;if(oldError&&s.lastError?.endsWith(oldError))s.lastError=undefined;await this.persist();}})).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){s.watcher.ready=false;s.watcher.error=(e as Error).message;s.lastError=`${sessions.find(p=>p.id===id)?.name??id}: ${(e as Error).message}`;this.watcherFailures.add(id);this.watcherSent=0;await this.persist();}})).finally(()=>{this.watcherBusy=false;}).catch(this.hooks.error);
+    void this.hooks.command(id,'WATCH_FACEBOOK',{scheduleId:s.id,token,postUrl:s.postUrl,watchAt:s.watchAt,expiresAt:s.expiresAt,pauseReload:s.linksCaptured===true,watchRevision:s.watchRevision??0}).then(()=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){const oldError=s.watcher.error;s.watcher.ready=true;s.watcher.error=undefined;if(oldError&&s.lastError?.endsWith(oldError))s.lastError=undefined;await this.persist();}})).catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&s.watcher?.token===token){s.watcher.ready=false;s.watcher.error=(e as Error).message;s.lastError=`${sessions.find(p=>p.id===id)?.name??id}: ${(e as Error).message}`;this.watcherFailures.add(id);this.watcherSent=0;await this.persist();}})).finally(()=>{this.watcherBusy=false;}).catch(this.hooks.error);
   }
   tick(){return this.exclusive(async()=>{
     const s=this.value;if(!s||!this.active)return;const now=this.now();
     if(now>=Date.parse(s.expiresAt)){s.status='expired';await this.persist();void this.stopWatcher();return;}
-    if(now<Date.parse(s.prepareAt)&&!s.startOnLink)return;
     const sessions=await this.hooks.sessions();if(!this.active)return;const old=s.status;
     s.status=now<Date.parse(s.watchAt)?'preparing':now<Date.parse(s.startsAt)?'watching':'running';
-    if(old!==s.status)await this.persist();
+    let dirty=old!==s.status;
     for(const member of s.members){const session=sessions.find(p=>p.id===member.id);if(member.status==='waiting'&&session&&this.hooks.connected(member.id))this.prepare(s,session);}
-    this.watch(s,sessions);
-    if(now<Date.parse(s.startsAt)&&!s.startOnLink)return;
-    const dispatch:typeof s.members=[];
+    const needsLinks=s.members.some(m=>['waiting','starting'].includes(m.status)&&s.links[m.level]?.source!=='manual'&&(!s.links[m.level]?.url||!!s.links[m.level]?.error))||!!s.rehearsal&&(!s.testForm?.url||!!s.testForm.error);
+    const captured=!needsLinks;
+    if(s.linksCaptured!==captured){s.linksCaptured=captured;s.watchRevision=(s.watchRevision??0)+1;this.watcherSent=0;dirty=true;}
+    if(!s.manualOnly&&(!captured||s.watcher))this.watch(s,sessions);
+    const dispatch:typeof s.members=[];let reasonsChanged=false;
     for(const member of s.members){
       if(!['waiting','starting'].includes(member.status)||this.launching.has(member.id))continue;
       const session=sessions.find(p=>p.id===member.id),link=s.links[member.level];
-      if(!session||!this.hooks.connected(member.id)||!session.synced||session.conflict||!session.profile||this.prepared.get(`${s.id}:${session.id}`)!==session.revision)continue;
+      const reason=!session||!this.hooks.connected(member.id)?'Mở Chrome profile để kết nối':session.conflict?'Giải quyết xung đột hồ sơ':!session.synced?'Đang đồng bộ hồ sơ':!session.profile?'Chưa có hồ sơ':this.prepared.get(`${s.id}:${session.id}`)!==session.revision?(member.error??'Đang kiểm tra ảnh và chuẩn bị tab'):!link?.url||link.error?(link?.error??'Chưa có link HSK hợp lệ'):s.rehearsal&&(!s.testForm?.url||s.testForm.error)?'Chưa có form thử hợp lệ':undefined;
+      if(member.waitingReason!==reason){member.waitingReason=reason;reasonsChanged=true;}
+      if(reason)continue;
       // A loading/error observation does not revoke previously verified links.
       // Only a readable newer post can remove or invalidate a specific HSK URL.
       if(!link?.url||link.error)continue;
@@ -138,15 +186,17 @@ export class RegistrationScheduler {
     }
     // One durable write for link routing, then independent STARTs. Do not put
     // ten serial database round trips in front of the tenth profile.
-    if(dispatch.length)await this.persist();
+    if(dispatch.length||reasonsChanged||dirty)await this.persist();
     for(const member of dispatch){
       this.launching.add(member.id);
       const valid=()=>this.value?.id===s.id&&this.active&&member.status==='starting'&&this.now()<Date.parse(s.expiresAt);
-      void (async()=>{
+      const launch=(async()=>{
         if(!valid())return;
         const group=await this.hooks.start(member.id,member.url!,s,valid);
-        await this.exclusive(async()=>{if(this.value?.id!==s.id)return;member.runId=group.id;member.status='started';member.error=undefined;await this.persist();});
-      })().catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&member.status==='starting'){member.status='failed';member.error=(e as Error).message;await this.persist();}})).finally(()=>this.launching.delete(member.id)).catch(this.hooks.error);
+        await this.exclusive(async()=>{if(this.value?.id!==s.id)return;member.runId=group.id;if(member.status==='starting')member.status='started';member.error=undefined;await this.persist();});
+        this.hooks.started?.(member.id,group.id);
+      })().catch(e=>this.exclusive(async()=>{if(this.value?.id===s.id&&member.status==='starting'){member.status='failed';member.error=(e as Error).message;await this.persist();}})).finally(()=>{this.launching.delete(member.id);this.launches.delete(member.id);void this.tick().catch(this.hooks.error);}).catch(this.hooks.error);
+      this.launches.set(member.id,launch);
     }
     if(s.members.every(m=>['started','failed','held'].includes(m.status))){s.status='finished';s.lastError=undefined;await this.persist();void this.stopWatcher();}
   });}

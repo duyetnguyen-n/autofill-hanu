@@ -1,5 +1,12 @@
 # Upload investigation — 2026-10-15
 
+> Historical notes. As of 2026-10-17, production commit `9119db2` uses the
+> five-second document-age / one-second input-stability guard. The section
+> below titled “Faster readiness guard” describes an earlier experiment, not
+> the current production helper. Its two successful samples are insufficient
+> to certify opened-announcement readiness. See `PICKER-READINESS-20261017.md`
+> for the newer comparison and its negative counterexample.
+
 ## Finding
 
 The reproduced failure is a Picker startup race. The extension treated the

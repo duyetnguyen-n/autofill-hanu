@@ -14,6 +14,15 @@ it('persists HSK in bulk and schedules per owner without altering profile sync',
   expect((await a.store.registrationSchedule())?.id).toBe(saved.id);expect(await b.store.registrationSchedule()).toBeUndefined();
   const state=await(await f.api('state')).json();expect(state.registrationSchedule.id).toBe(saved.id);
   const other=await(await f.api('state',1)).json();expect(other.registrationSchedule).toBeUndefined();
+  expect((await f.api('registration-schedule/answer',0,{level:'4',finalQuestion:{value:'Đáp án biết trước'}})).status).toBe(200);
+  expect((await a.store.registrationSchedule())?.finalQuestions?.['4']).toEqual({value:'Đáp án biết trước'});
+  expect((await f.api('registration-schedule/answer',0,{level:'4',finalQuestion:{value:''}})).status).toBe(400);
+  const q={label:'Câu HSK 4?',value:'HANU'};
+  expect((await f.api('registration-schedule/answer',0,{level:'4',finalQuestion:q})).status).toBe(200);
+  expect((await a.store.registrationSchedule())?.finalQuestions?.['4']).toEqual(q);
+  expect((await f.api('registration-schedule/answer',1,{level:'4',finalQuestion:q})).status).toBe(400);
+  expect(await b.store.registrationSchedule()).toBeUndefined();
+  expect((await f.api('registration-schedule/replace',1,{level:'4',url:'https://forms.gle/Other'})).status).toBe(400);
   await f.api('registration-schedule/cancel',0,{});expect((await a.store.registrationSchedule())?.status).toBe('cancelled');
 },20000);
 it('rejects another owner, unassigned HSK, invalid URLs and denied Live before arming',async()=>{

@@ -201,3 +201,54 @@ it('re-arms only an authorized returned-form attempt and rejects old progress an
  current.run!.status='running';store.saveSession(current);store.acquireSubmit(id,'group','form');expect(()=>store.acquireSubmit(id,'group','form')).toThrow();
  expect(store.session(id).run?.submitAttempted).toBe(true);
 });
+
+describe('verification answers isolated by scheduled HSK',()=>{
+  async function scheduled(){
+    const {store,members}=setup(2),c=new Coordinator(store),calls:any[]=[];
+    for(const [i,id]of members.entries()){const s=store.session(id);s.hskLevel=i?'5':'4';s.run!.status='running';store.saveSession(s);c.peers.set(id,{} as any);}
+    const plan=await c.scheduler.arm({ids:members,mode:'test',manualOnly:true,postUrl:'',startsAt:new Date(Date.now()+60000).toISOString()});
+    for(const m of c.scheduler.value!.members){m.runId='group';m.status='started';}c.scheduler.value!.status='finished';
+    c.command=async(id,kind,payload)=>{calls.push({id,kind,payload});if(kind==='RESUME')return {...store.session(id).run,status:'running',blockingIssue:undefined,eventSeq:(store.session(id).run?.eventSeq??0)+1};return {};};
+    return {store,members,c,calls,plan};
+  }
+  it('stores each answer separately, resumes only matching verification, and applies to a later arrival',async()=>{
+    const f=await scheduled(),q4={label:'Tên trường?',value:'HANU',formId:'form'},q5={label:'Năm thi?',value:'2026',formId:'form'};
+    await f.c.scheduledAnswer('4',q4);await f.c.scheduledAnswer('5',q5);expect(f.calls).toEqual([]);
+    for(const [i,id]of f.members.entries()){
+      const run=f.store.session(id).run!;await f.c.acceptState(id,{...run,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'verification',message:'Cần đáp án',questionLabel:i?q5.label:q4.label}});
+      await vi.waitFor(()=>expect(f.calls.some(c=>c.id===id&&c.kind==='RESUME')).toBe(true));
+    }
+    expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION').map(c=>c.payload.finalQuestion)).toEqual([q4,q5]);
+  });
+  it('bounds a manual verification read and reports a timeout instead of waiting behind form controls',async()=>{
+    const f=await scheduled();const command=vi.fn(async()=>({formId:'form',runId:'group',questions:[]}));f.c.command=command;
+    await f.c.scanVerification(f.members[0]);expect(command).toHaveBeenCalledWith(f.members[0],'SCAN_FORM',{verificationOnly:true},'group',2000);
+    command.mockRejectedValue(new Error('Profile chưa xác nhận SCAN_FORM.'));
+    await expect(f.c.scanVerification(f.members[0])).rejects.toThrow('trong 2 giây');
+  });
+  it('accepts value-only answers and binds different questions to each HSK only on arrival',async()=>{
+    const f=await scheduled();await f.c.scheduledAnswer('4',{value:'HANU'});await f.c.scheduledAnswer('5',{value:'2026'});
+    expect(f.calls).toEqual([]);
+    for(const [i,id]of f.members.entries()){
+      const session=f.store.session(id);session.run!.formId=i?'five':'four';f.store.saveSession(session);const r=session.run!;await f.c.acceptState(id,{...r,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'verification',questionLabel:i?'Năm thi HSK 5?':'Trường thi HSK 4?',message:'Cần đáp án'}});
+      await vi.waitFor(()=>expect(f.calls.some(c=>c.id===id&&c.kind==='RESUME')).toBe(true));
+    }
+    expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION').map(c=>c.payload.finalQuestion)).toEqual([{value:'HANU',label:'Trường thi HSK 4?',formId:'four'},{value:'2026',label:'Năm thi HSK 5?',formId:'five'}]);
+  });
+  it('uses one answer for all rehearsal levels on the shared Test form',async()=>{
+    const f=await scheduled();f.c.scheduler.value!.rehearsal=true;await f.c.scheduledAnswer('test',{value:'Chung'});
+    for(const id of f.members){const r=f.store.session(id).run!;await f.c.acceptState(id,{...r,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'verification',questionLabel:'Câu form thử?',message:'Cần đáp án'}});}
+    await vi.waitFor(()=>expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION')).toHaveLength(2));
+    expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION').every(c=>c.payload.finalQuestion.value==='Chung')).toBe(true);
+  });
+  it.each(['file_upload','captcha'] as const)('does not auto-resume %s or a newer run',async reason=>{
+    const f=await scheduled(),q={label:'Câu xác thực?',value:'A',formId:'form'};await f.c.scheduledAnswer('4',q);
+    const run=f.store.session(f.members[0]).run!;
+    await f.c.acceptState(f.members[0],{...run,status:'waiting_manual',eventSeq:1,blockingIssue:{reason,message:'Cần xử lý',questionLabel:q.label}});
+    await new Promise(r=>setImmediate(r));expect(f.calls).toEqual([]);
+    // A stale schedule must never send its answer into another run.
+    const s=f.store.session(f.members[0]);s.run!.runId='newer';f.store.saveGroup({...f.store.group('group'),id:'newer',members:[s.id]});f.store.saveSession(s);
+    await f.c.acceptState(s.id,{...s.run!,status:'waiting_manual',eventSeq:2,blockingIssue:{reason:'verification',message:'Cần đáp án',questionLabel:q.label}});
+    await new Promise(r=>setImmediate(r));expect(f.calls).toEqual([]);
+  });
+});

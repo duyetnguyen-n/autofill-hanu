@@ -11,6 +11,7 @@ let activeMode: RunMode = "test";
 let submitAttempted = false;
 let manualSkipQuestionId: string | undefined;
 let executionInFlight = false;
+let pendingPageDepth:number|undefined;
 let pendingStart:(()=>void)|undefined;
 let runRequestGeneration=0;
 let cancelManualResume: (() => void) | undefined;
@@ -210,8 +211,7 @@ function dateFormatFor(question: Question): string | undefined {
   return "YYYY-MM-DD";
 }
 
-function scanCurrentForm(): FormQuestionSummary[] {
-  return questions().map((question) => {
+function summarizeQuestion(question:Question):FormQuestionSummary {
     const nativeSelect = question.element.querySelector<HTMLSelectElement>("select");
     let options: string[] = [];
     if (nativeSelect) {
@@ -228,9 +228,9 @@ function scanCurrentForm(): FormQuestionSummary[] {
           .filter((value, index, values) => value && !/^(choose|chọn)$/i.test(value) && values.indexOf(value) === index)
         : [];
     }
-    return { id: question.id, targetId:stableQuestionId(question.element), label: question.label, required: question.required, kind: question.kind, filled: isFilled(question), options, dateFormat: dateFormatFor(question) };
-  });
+    return { id: question.id, targetId:stableQuestionId(question.element), label: question.label, required: question.required, kind: question.kind, filled: isFilled(question), options, dateFormat: dateFormatFor(question),verification:isVerificationQuestion(question) };
 }
+function scanCurrentForm(): FormQuestionSummary[] {return questions().map(summarizeQuestion);}
 
 function checked(element: Element): boolean {
   return element.getAttribute("aria-checked") === "true" || (element instanceof HTMLInputElement && element.checked);
@@ -851,7 +851,7 @@ function manualIssue(question: Question, reason: BlockingIssue["reason"], messag
   question.element.style.outlineOffset = "3px";
   question.element.scrollIntoView({ behavior: "smooth", block: "center" });
   if(reason==='file_upload'||reason==='unknown_required'||reason==='unsupported'&&['radio','checkbox','dropdown'].includes(question.kind))armAutoResume(question);
-  return { reason, message, questionId: question.id, questionLabel: question.label, candidates: suggestedRules(question.label) };
+  return { reason, message, questionId: question.id, questionLabel: question.label, candidates: suggestedRules(question.label),...(reason==='verification'?{question:summarizeQuestion(question)}:{}) };
 }
 
 function answerFingerprint(question:Question):string{
@@ -1393,9 +1393,9 @@ async function execute(depth = 0): Promise<void> {
   }
   await emit({ type: "page_advanced", fingerprint: pageFingerprint() });
   manualCorrections.clear();
-  // Release the per-document lock before running the next page. Google Forms
-  // sometimes keeps the document and sometimes replaces it entirely.
-  window.setTimeout(() => requestExecute(depth + 1), 0);
+  // Queue the next page until the renderer lease has actually been released.
+  // A zero-delay timer can fire during async release and lose the next page.
+  pendingPageDepth=depth+1;
 }
 
 function requestExecute(depth = 0): void {
@@ -1410,7 +1410,8 @@ function requestExecute(depth = 0): void {
     await emit({ type: "failed", message: error instanceof Error ? error.message : String(error) });
   }).finally(() => {
     executionInFlight = false;
-    const start=pendingStart;pendingStart=undefined;start?.();if(!start&&!active)checkReturnedPage?.();
+    const start=pendingStart;pendingStart=undefined;const next=pendingPageDepth;pendingPageDepth=undefined;
+    if(start)start();else if(active&&generation===runRequestGeneration&&next!==undefined)requestExecute(next);else if(!active)checkReturnedPage?.();
   });
 }
 
@@ -1427,7 +1428,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     return;
   }
   if (message.type === "HALT_RUN") {
-    runRequestGeneration++;pendingStart=undefined;returnWatchRun=undefined;progressError=undefined;
+    runRequestGeneration++;pendingStart=undefined;pendingPageDepth=undefined;returnWatchRun=undefined;progressError=undefined;
     active = false;
     void releaseAttention();
     cancelManualResume?.();
