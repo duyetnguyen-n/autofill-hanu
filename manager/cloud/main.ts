@@ -19,11 +19,13 @@ import {MAX_ARCHIVE_BYTES} from '../server/archive';
 import {importArchive} from './import-archive';
 import { Accounts } from './accounts';
 import { assertAccess, assertLive } from './access-policy';
+import { StateStreamEncoder } from '../state-stream';
 import type { Account } from '../../src/account';
 
 interface Runtime {
   store: PostgresStore; coordinator: Coordinator; browsers: Set<WebSocket>;
   dirty: boolean; broadcasting: boolean; touched: number;
+  stream: StateStreamEncoder;
   snapshot?: Promise<{ sessions: Awaited<ReturnType<PostgresStore['sessions']>>; groups: Awaited<ReturnType<PostgresStore['groups']>> }>;
   broadcastTimer?: ReturnType<typeof setTimeout>;
 }
@@ -80,6 +82,8 @@ export async function serveCloud(options: {
   const runtimes = new Map<string, Runtime>();
   const tickets = new Map<string, Ticket>();
   const browserUsers = new Map<WebSocket, WebUser>();
+  const browserStreams = new WeakSet<WebSocket>();
+  const browserRevisions = new WeakMap<WebSocket, number>();
   const lastSeen = new Map<WebSocket, number>();
   const rate = new RateLimit();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
@@ -153,10 +157,15 @@ export async function serveCloud(options: {
       while (runtime.dirty && !closing) {
         runtime.dirty = false;
         if (!runtime.browsers.size) continue;
-        const message = JSON.stringify({ type: 'STATE', ...await state(runtime) });
+        const frame = runtime.stream.encode(await state(runtime));
         for (const ws of runtime.browsers) if (ws.readyState === WebSocket.OPEN) {
+          const previous = browserRevisions.get(ws);
+          if (previous === frame.revision) continue;
           if (ws.bufferedAmount > 2 * 1024 * 1024) ws.close(1013, 'Slow client');
-          else ws.send(message);
+          else {
+            ws.send(browserStreams.has(ws) && previous === frame.baseRevision && frame.update ? frame.update : frame.full);
+            browserRevisions.set(ws, frame.revision);
+          }
         }
       }
     } catch (error) { failClosed(error); } finally { runtime.broadcasting = false; }
@@ -165,7 +174,7 @@ export async function serveCloud(options: {
     let result = runtimes.get(owner);
     if (!result) {
       const store = repository.store(owner), coordinator = new Coordinator(store, new AttentionQueue(), true, new RunBuffer(store));
-      result = { store, coordinator, browsers: new Set(), dirty: false, broadcasting: false, touched: Date.now() };
+      result = { store, coordinator, browsers: new Set(), stream: new StateStreamEncoder(), dirty: false, broadcasting: false, touched: Date.now() };
       coordinator.launchUrl = config.origin;
       coordinator.unavailable=error=>{if(!(error instanceof CloudError)||error.status===503)failClosed(error);};
       coordinator.progressUnavailable=failClosed;
@@ -325,7 +334,8 @@ export async function serveCloud(options: {
         if(path==='/api/registration-schedule'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,b.mode);return json(res,await coordinator.scheduler.arm(b));}
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.focusWatcher());}
-        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.stopScheduledRuns());}
+        if((path==='/api/registration-schedule/pause'||path==='/api/registration-schedule/resume')&&req.method==='POST'){const b=await body(req,1024);if(path.endsWith('/resume'))assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduledControl(b.scheduleId,path.endsWith('/pause')?'PAUSE':'RESUME'));}
+        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){const b=await body(req,1024);return json(res,await coordinator.stopScheduledRuns(b.scheduleId));}
         if(path==='/api/registration-schedule/replace'&&req.method==='POST'){const b=await body(req,8192);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduler.replace(b.level,b.url));}
         if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req,8192);return json(res,await coordinator.scheduler.manual(b.level,b.url));}
@@ -422,6 +432,7 @@ export async function serveCloud(options: {
               const key = digest(m.ticket), ticket = tickets.get(key); tickets.delete(key);
               if (!ticket || ticket.expires < Date.now() || ticket.user.expiresAt <= Date.now()) throw new CloudError('Session expired', 401);
               owner = ticket.user.id; await allowed(owner, true); current = runtime(owner); current.browsers.add(ws); browserUsers.set(ws, ticket.user);
+              if (m.stateStream === 1) browserStreams.add(ws);
               authenticated = true; clearTimeout(handshake);
               expiry = setTimeout(() => ws.close(1008, 'Refresh session'), Math.min(ticket.user.expiresAt - Date.now(), 30 * 60000));
               await broadcast(current); return;

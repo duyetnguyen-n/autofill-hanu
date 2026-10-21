@@ -283,3 +283,15 @@ it('schedules a safe GET recovery when Back returns an unreadable pre-submit doc
  expect(f.data['run:7']).toMatchObject({status:'waiting_manual',blockingIssue:{reason:'network'},recovery:{automatic:true,attempt:1}});
  await f.ask({type:'STOP_RUN',tabId:7});
 });
+
+
+it('a late document claim preserves the verification answer stored after its initial read',async()=>{
+  const f=await setup();f.run.runId='verification-race';f.run.contentEpoch='doc';
+  const question={label:'Câu hỏi xác thực HSK 3?',value:'1620000',formId:'test-form'};let replaced=false;
+  vi.mocked(chrome.storage.local.get).mockImplementation(async(key:any)=>{
+    if(key==='run:7'&&!replaced){replaced=true;const stale=structuredClone(f.data[key]);f.data[key]={...structuredClone(stale as RunState),finalQuestion:question};return {[key]:stale};}
+    return {[key]:structuredClone(f.data[key])};
+  });
+  const result:any=await f.ask({type:'CLAIM_DOCUMENT',epoch:'doc'},{tab:{id:7,url:formUrl},frameId:0,url:formUrl});
+  expect(result.run.finalQuestion).toEqual(question);expect((f.data['run:7'] as RunState).finalQuestion).toEqual(question);
+});

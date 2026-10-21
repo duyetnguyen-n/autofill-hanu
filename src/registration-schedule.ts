@@ -23,7 +23,7 @@ export function bindHskAnswer(answer:HskVerificationAnswer,run:RunState):FinalQu
   return canApplyFinalQuestion(run,q)?q:undefined;
 }
 export function initialHskQuestion(s:RegistrationSchedule,level:HskLevel):FinalQuestion|undefined {
-  const q=s.rehearsal?s.rehearsalAnswer:s.finalQuestions?.[level];
+  const q=s.finalQuestions?.[level]??(s.rehearsal?s.rehearsalAnswer:undefined);
   return q?.label?{...q,label:q.label}:q?undefined:s.finalQuestion;
 }
 export interface HskLink {url?:string;source:'facebook'|'manual';error?:string;observedAt:string}
@@ -33,7 +33,7 @@ export interface RegistrationSchedule {
   mode:RunMode;status:'armed'|'preparing'|'watching'|'running'|'finished'|'cancelled'|'expired';
   members:ScheduledMember[];links:Partial<Record<HskLevel,HskLink>>;finalQuestion?:FinalQuestion;
   finalQuestions?:Partial<Record<HskLevel,HskVerificationAnswer>>;rehearsalAnswer?:HskVerificationAnswer;linksCaptured?:boolean;watchRevision?:number;
-  manualOnly?:boolean;startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
+  pausedAt?:string;manualOnly?:boolean;startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
   watcher?:{id:string;token:string;ready:boolean;error?:string};
   lastReadAt?:string;lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
 }

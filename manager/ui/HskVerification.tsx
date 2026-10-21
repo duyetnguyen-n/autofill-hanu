@@ -24,7 +24,7 @@ export function HskVerification({level,sessions,saved,scope,busy,onDraft,save,sc
   const missing=unreadable.length?`Profile đã tới câu xác thực nhưng không đọc được nội dung (${unreadable.map(s=>s.name).join(', ')}). Bấm Lấy câu xác thực ngay.`:'';
   const options=summary?.options??choices?.questions.find(q=>q.label===actual?.label)?.options??[];
   const changed=useRef(onDraft);changed.current=onDraft;
-  useEffect(()=>{changed.current(valid?{value:draft.value}:undefined,true);},[answer.label,answer.value,answer.kind,answer.formId,answer.questionId,valid]);
+  useEffect(()=>{changed.current(valid?{value:draft.value}:undefined,true);},[scope,answer.label,answer.value,answer.kind,answer.formId,answer.questionId,valid]);
   const title=shared?'Câu xác thực form thử':`Câu xác thực HSK ${level}`,answerLabel=shared?'Đáp án form thử':`Đáp án HSK ${level}`;
   function edit(value:string){edited.current=true;setMessage('');setDraft(d=>({...d,value}));}
   async function select(q:FormQuestionSummary,formId:string){

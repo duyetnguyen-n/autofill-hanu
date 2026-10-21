@@ -336,3 +336,16 @@ Kết quả form Google thật của bản 1.2.1 được lưu riêng ở `tests
 - `test:scheduled-hsk-ui`: nhập HANU/2026 trước khi biết câu, bật lịch và tự áp dụng đúng từng HSK; profile tới muộn; đọc không có câu báo lỗi, không nhận nhầm cam kết cuối trang; đọc lại phục hồi blocker thiếu tiêu đề; giao diện mobile; riêng mẫu diễn tập dùng CHUNG cho cả ba profile với một input.
 - `scripts/browser-check.mjs --test-only --profiles=2 --scheduled-verification`: hai Chrome profile thật, Native Messaging thật, form giả nhiều trang. Đáp án HANU/2026 được cấu hình trước, câu xác thực HSK 4/5 chỉ xuất hiện sau Next. Cả hai tự ghép/điền đúng câu, tới Xong Test, gửi 0 lần; tab chờ, upload, duplicate START và UI sáng/tối/mobile đều qua.
 - Kiểm thử này dùng HTTPS fixture với hostname Google ánh xạ localhost; không gửi form Google hoặc đọc Facebook thật.
+
+
+## 1.9.0 — diễn tập với link riêng, cột HSK và thanh Live (21/10/2026)
+
+- Thay hành vi đáp án chung của diễn tập trong 1.8.1: link test dùng chung nhưng đáp án vẫn riêng mỗi HSK. Link test trực tiếp không cần Facebook hoặc link đăng ký thật.
+- Kiểm tra scheduler chỉ lưu cấp được chọn; pause giữ thành viên chưa dispatch qua restart, resume bù thời gian chờ; sửa URL test dừng lượt cũ và giữ giá trị đáp án.
+- Kiểm tra HTTP cloud phân quyền pause/resume/stop theo tài khoản, từ chối mã lịch cũ.
+- UI kiểm tra độ cao/tọa độ hàng URL–chế độ–Start và Facebook–thời gian; cột gán HSK; các box đúng cấp được chọn; đáp án test 1620000/2026.
+- UI kiểm tra thanh cố định trên desktop/mobile, pause trước khi có link, resume và stop sau khi đổi tick chọn; kiểm tra cả lịch HSK và Live trực tiếp.
+
+- `scripts/browser-check.mjs --test-only --profiles=2 --scheduled-verification --rehearsal`: hai Chrome profile tách biệt và Native Messaging thật, cùng URL form test cục bộ, HSK 3 dùng `1620000`, HSK 5 dùng `2026`; kiểm tra giá trị thực trong DOM, tái dùng tab chờ, upload ảnh, lặp START không chạy lại và không gửi.
+
+- Ca Chrome thật đã phát hiện và xác nhận sửa race giữa `CLAIM_DOCUMENT` và `SET_FINAL_QUESTION`: đọc cũ không được ghi đè đáp án mới. Có kiểm tra hồi quy trong `tests/background.test.ts`; cả hai thao tác đọc–sửa–ghi hiện nằm trong hàng đợi ghi trạng thái.

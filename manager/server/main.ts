@@ -52,7 +52,8 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/registration-schedule'&&req.method==='POST')return json(await coordinator.scheduler.arm(await body(req)));
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.cancel());}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.focusWatcher());}
-        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){await body(req);return json(await coordinator.stopScheduledRuns());}
+        if((path==='/api/registration-schedule/pause'||path==='/api/registration-schedule/resume')&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduledControl(b.scheduleId,path.endsWith('/pause')?'PAUSE':'RESUME'));}
+        if(path==='/api/registration-schedule/stop'&&req.method==='POST'){const b=await body(req);return json(await coordinator.stopScheduledRuns(b.scheduleId));}
         if(path==='/api/registration-schedule/replace'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.replace(b.level,b.url));}
         if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.manual(b.level,b.url));}

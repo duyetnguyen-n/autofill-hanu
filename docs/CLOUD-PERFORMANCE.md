@@ -1,5 +1,9 @@
 # Tối ưu tốc độ đăng ký trên cloud
 
+Dashboard đã được bổ sung truyền phần thay đổi để giảm băng thông realtime;
+xem [số đo và cách triển khai ngày 21/10/2026](REALTIME-BANDWIDTH.md). Tần suất
+cập nhật và luồng điền/điều khiển extension giữ nguyên.
+
 Trong lượt chạy, coordinator giữ tiến độ, trạng thái thực thi và heartbeat của
 từng profile trong bộ nhớ. Website nhận trạng thái trực tiếp từ bộ nhớ, cập nhật
 tối đa khoảng 10 lần/giây; không đọc lại PostgreSQL cho từng câu hỏi. Extension

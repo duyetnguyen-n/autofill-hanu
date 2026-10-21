@@ -23,6 +23,13 @@ it('persists HSK in bulk and schedules per owner without altering profile sync',
   expect((await f.api('registration-schedule/answer',1,{level:'4',finalQuestion:q})).status).toBe(400);
   expect(await b.store.registrationSchedule()).toBeUndefined();
   expect((await f.api('registration-schedule/replace',1,{level:'4',url:'https://forms.gle/Other'})).status).toBe(400);
+  expect((await f.api('registration-schedule/pause',0,{scheduleId:saved.id})).status).toBe(200);
+  expect((await a.store.registrationSchedule())?.pausedAt).toBeTruthy();
+  expect((await f.api('registration-schedule/pause',1,{scheduleId:saved.id})).status).toBe(400);
+  expect((await f.api('registration-schedule/stop',0,{scheduleId:'stale'})).status).toBe(400);
+  expect((await a.store.registrationSchedule())?.status).not.toBe('cancelled');
+  expect((await f.api('registration-schedule/resume',0,{scheduleId:saved.id})).status).toBe(200);
+  expect((await a.store.registrationSchedule())?.pausedAt).toBeUndefined();
   await f.api('registration-schedule/cancel',0,{});expect((await a.store.registrationSchedule())?.status).toBe('cancelled');
 },20000);
 it('rejects another owner, unassigned HSK, invalid URLs and denied Live before arming',async()=>{

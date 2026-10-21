@@ -235,6 +235,21 @@ describe('verification answers isolated by scheduled HSK',()=>{
     }
     expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION').map(c=>c.payload.finalQuestion)).toEqual([{value:'HANU',label:'Trường thi HSK 4?',formId:'four'},{value:'2026',label:'Năm thi HSK 5?',formId:'five'}]);
   });
+  it('keeps per-HSK answers on the same rehearsal form, taking precedence over legacy shared answers',async()=>{
+    const f=await scheduled();f.c.scheduler.value!.rehearsal=true;f.c.scheduler.value!.rehearsalAnswer={value:'legacy'};
+    await f.c.scheduledAnswer('4',{value:'1620000'});await f.c.scheduledAnswer('5',{value:'2026'});
+    for(const id of ['session-0','session-1']){const run=f.store.session(id).run!;await f.c.acceptState(id,{...run,status:'waiting_manual',eventSeq:(run.eventSeq??0)+1,blockingIssue:{reason:'verification',questionLabel:'Câu xác thực?',message:'Cần đáp án'}});}
+    await vi.waitFor(()=>expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION')).toHaveLength(2));
+    expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION').map(c=>[c.id,c.payload.finalQuestion.value])).toEqual([['session-0','1620000'],['session-1','2026']]);
+  });
+  it('pauses/resumes the captured schedule groups and rejects stale schedule controls',async()=>{
+    const f=await scheduled();await f.c.scheduledControl(f.plan.id,'PAUSE');expect(f.c.scheduler.value?.pausedAt).toBeTruthy();
+    expect(f.calls.filter(c=>c.kind==='PAUSE').map(c=>c.id)).toEqual(f.members);
+    await f.c.scheduledControl(f.plan.id,'RESUME');expect(f.c.scheduler.value?.pausedAt).toBeUndefined();
+    expect(f.calls.filter(c=>c.kind==='RESUME').map(c=>c.id)).toEqual(f.members);
+    await expect(f.c.stopScheduledRuns('old-schedule')).rejects.toThrow('Lịch đã thay đổi');expect(f.c.scheduler.value?.status).toBe('finished');
+    await expect(f.c.scheduledControl('old-schedule','PAUSE')).rejects.toThrow('Lịch đã thay đổi');
+  });
   it('uses one answer for all rehearsal levels on the shared Test form',async()=>{
     const f=await scheduled();f.c.scheduler.value!.rehearsal=true;await f.c.scheduledAnswer('test',{value:'Chung'});
     for(const id of f.members){const r=f.store.session(id).run!;await f.c.acceptState(id,{...r,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'verification',questionLabel:'Câu form thử?',message:'Cần đáp án'}});}

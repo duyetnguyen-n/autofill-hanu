@@ -1,0 +1,16 @@
+/* Fluent Input supplies a wrapper: size the wrapper, not its inner input. */
+.application .run-controls{align-items:end}
+.application .run-controls .fui-Input,.application .run-controls .fui-Select,.application .run-controls .start-button{height:40px;min-height:40px;box-sizing:border-box}
+.application .run-controls .fui-Input input{height:100%;min-height:0;padding-block:0;line-height:normal}
+.application .run-controls .fui-Select select{height:100%;padding-block:0}
+.application .run-controls .fui-Field>label{line-height:20px;margin-bottom:8px}
+.application .schedule-fields{align-items:start}
+.application .schedule-fields .fui-Field>label{min-height:20px;line-height:20px;margin:0 0 8px;font-size:13px}
+.application .schedule-fields .fui-Input{height:40px;min-height:40px;box-sizing:border-box;min-width:0}
+.application .schedule-fields input{height:100%;padding-block:0;line-height:normal;width:100%;min-width:0}
+.schedule-fields .fui-Field__hint{margin-top:6px;line-height:1.6}
+.hsk-toggle{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;margin:22px 0 0;padding:14px 0;border-top:1px solid var(--line)}.hsk-toggle>span{font-size:12px;color:var(--muted)}.hsk-toggle+div>.schedule-panel{margin-top:0}.schedule-test-option{margin-top:16px}.schedule-rehearsal .fui-Input{background:var(--surface);margin-top:4px}.schedule-assignment a{font-size:12px;color:var(--accent);text-underline-offset:3px}.session-hsk .fui-Select{width:100%;min-width:0}.session-hsk select{font-size:11px;padding-left:8px;padding-right:24px}#profile-list{scroll-margin-top:90px}
+@media(min-width:901px){.sessions-table{min-width:1060px}.sessions-table th:nth-child(1){width:38px}.sessions-table th:nth-child(2){width:20%}.sessions-table th:nth-child(3){width:15%}.sessions-table th:nth-child(4){width:96px}.sessions-table th:nth-child(5){width:64px}.sessions-table th:nth-child(6){width:26%}.sessions-table th:nth-child(7){width:78px}.sessions-table th:nth-child(8){width:172px}}
+@media(max-width:900px){.application .run-controls .fui-Input,.application .run-controls .fui-Select,.application .schedule-fields .fui-Input{height:46px;min-height:46px}.application .run-controls .start-button{height:auto;min-height:48px}.sessions-table tbody tr{grid-template-areas:'identity select' 'status duration' 'candidate files' 'hsk hsk' 'actions actions'}.session-hsk{grid-area:hsk}.session-hsk .fui-Select{max-width:180px}.hsk-toggle{align-items:flex-start;gap:4px}.hsk-toggle>span{padding-left:12px}.hsk-toggle .fui-Switch{min-height:44px}.schedule-rehearsal{padding:12px}.schedule-rehearsal .fui-Field__hint{font-size:12px}.schedule-rehearsal input{font-size:16px}}
+
+@media(min-width:1200px){.schedule-level:only-child{grid-column:1/-1}.schedule-level:only-child .hsk-answer-line{flex-wrap:nowrap}.schedule-level:only-child .hsk-answer-line>.fui-Field{flex:1}.schedule-level:only-child .hsk-answer-line button{flex:0 0 auto}.schedule-level:only-child .schedule-level-title{flex-direction:row;align-items:center}}

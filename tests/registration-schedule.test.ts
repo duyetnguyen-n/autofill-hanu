@@ -83,18 +83,46 @@ describe('durable scheduled dispatch',()=>{
     await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);expect(f.engine.value?.lastError).toBeUndefined();
   });
 
-  it('rehearses all 10 profiles on the labelled Test form, retaining accurate per-HSK links',async()=>{
+  it('rehearses all 10 profiles on the labelled Test form without collecting registration links',async()=>{
     const f=fixture();await f.arm({rehearsal:true,watcherProfileId:'profile-4'});f.setTime(start-30000);await f.tick();
     expect(f.engine.value?.watcher?.id).toBe('profile-4');
     f.setTime(start);await f.observe('MẪU FORM ĐIỀN THỬ:\nhttps://forms.gle/Sample\nĐăng ký từ 08:00 ngày 20.10.2026\nHSK 4: '+four+'\nHSK 5: '+five);await f.tick();
     expect(f.hooks.start).toHaveBeenCalledTimes(10);expect(f.hooks.start.mock.calls.every(c=>c[1]==='https://forms.gle/Sample'&&c[2].mode==='test')).toBe(true);
-    expect(f.engine.value?.links['4']?.url).toBe(four);expect(f.engine.value?.links['5']?.url).toBe(five);expect(f.engine.value?.dateWarning).toMatch(/khác lịch/);
+    expect(f.engine.value?.links).toEqual({});expect(f.engine.value?.dateWarning).toMatch(/khác lịch/);
   });
-  it.each(['missing','conflicting','removed'] as const)('never falls back to a real registration form when the Test link is %s',async problem=>{
+  it.each(['missing','conflicting'] as const)('never falls back to a real registration form when the Test link is %s',async problem=>{
     const f=fixture();await f.arm({rehearsal:true,links:{'4':four}});f.setTime(start-30000);await f.tick();
-    if(problem==='removed'){for(const p of f.sessions.filter(p=>p.hskLevel==='4'))f.online.delete(p.id);await f.observe('Form thử: https://forms.gle/Sample\nHSK 4: '+four);for(const p of f.sessions)f.online.add(p.id);}
     f.setTime(start);await f.observe((problem==='conflicting'?'Form thử: https://forms.gle/A\nForm thử: https://forms.gle/B\n':'')+'HSK 4: '+four);await f.tick();
     expect(f.hooks.start).not.toHaveBeenCalled();expect(f.engine.value?.lastError).toMatch(/form thử/);
+  });
+  it('runs an explicit test URL immediately without Facebook, clock or real HSK links',async()=>{
+    const f=fixture();await f.arm({postUrl:'',startsAt:'',rehearsal:true,testFormUrl:'https://forms.gle/ManualSample',finalQuestions:{'4':{value:'1620000'},'5':{value:'2026'}}});await f.tick();
+    expect(f.hooks.start).toHaveBeenCalledTimes(10);expect(f.hooks.start.mock.calls.every(c=>c[1]==='https://forms.gle/ManualSample')).toBe(true);
+    expect(f.hooks.command).not.toHaveBeenCalled();expect(f.engine.value?.links).toEqual({});expect(f.engine.value?.finalQuestions?.['4']).toEqual({value:'1620000'});
+  });
+  it('replaces a mistaken test URL for all levels, preserving their answer values',async()=>{
+    const f=fixture();await f.arm({rehearsal:true,testFormUrl:'https://forms.gle/WrongSample',finalQuestions:{'4':{value:'1620000'},'5':{label:'Câu cũ?',value:'2026',formId:'old-form'}}});await f.tick();
+    await f.engine.replace('test','https://forms.gle/CorrectSample');await f.tick();
+    expect(f.hooks.reset).toHaveBeenCalledTimes(10);expect(f.hooks.start).toHaveBeenCalledTimes(20);
+    expect(f.hooks.start.mock.calls.slice(10).every(c=>c[1]==='https://forms.gle/CorrectSample')).toBe(true);
+    expect(f.engine.value?.finalQuestions).toEqual({'4':{value:'1620000'},'5':{value:'2026'}});
+  });
+  it('ignores unused HSK links and captures only the selected levels',async()=>{
+    const f=fixture();await f.arm({ids:['profile-0']});await f.tick();await f.observe(`HSK 4: ${four}\nHSK 5: ${five}\nHSK 6: https://forms.gle/A\nHSK 6: https://forms.gle/B`);await f.tick();
+    expect(Object.keys(f.engine.value!.links)).toEqual(['4']);expect(f.hooks.start).toHaveBeenCalledTimes(1);expect(f.engine.value?.linksCaptured).toBe(true);
+  });
+  it('durably pauses undispatched members and resumes them without consuming the wait window',async()=>{
+    const f=fixture();await f.arm({manualOnly:true,postUrl:''});await f.tick();const id=f.engine.value!.id;
+    await f.engine.setPaused(true,id);await f.engine.manual('4',four);await f.tick();expect(f.hooks.start).not.toHaveBeenCalled();
+    const restored=fixture(f.saved());restored.setTime(start+3600000);await restored.tick();expect(restored.engine.value?.pausedAt).toBeTruthy();expect(restored.hooks.start).not.toHaveBeenCalled();
+    await restored.engine.setPaused(false,id);await restored.tick();expect(restored.hooks.start).toHaveBeenCalledTimes(5);expect(restored.engine.value?.status).not.toBe('expired');
+    await expect(restored.engine.setPaused(true,'stale-id')).rejects.toThrow('Lịch đã thay đổi');
+  });
+  it('stops the Facebook watcher while paused and resumes with a fresh token instead of renewing an expired lease',async()=>{
+    const f=fixture();await f.arm();await f.tick();const id=f.engine.value!.id,token=f.engine.value!.watcher!.token;
+    await f.engine.setPaused(true,id);expect(f.engine.value?.watcher).toBeUndefined();expect(f.hooks.command).toHaveBeenLastCalledWith(expect.any(String),'WATCH_FACEBOOK',{stop:true,token});
+    const calls=f.hooks.command.mock.calls.length;f.setTime(start+3600000);await f.tick();expect(f.hooks.command).toHaveBeenCalledTimes(calls);
+    await f.engine.setPaused(false,id);await f.tick();expect(f.engine.value?.watcher?.token).not.toBe(token);expect(f.engine.value?.watcher?.ready).toBe(true);
   });
   it('shows discovered links with a blocking date error during a normal run',async()=>{
     const f=fixture();await f.arm();f.setTime(start-30000);await f.tick();f.setTime(start);

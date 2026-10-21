@@ -776,12 +776,16 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const run=await getRun(sender.tab.id);
         if(run?.contentEpoch!==message.epoch){cancelNavigationWatch(sender.tab.id);storedPickerUploads.cancel(sender.tab.id);}
         if(pageAttention.get(sender.tab.id)?.epoch!==message.epoch)await releasePageAttention(sender.tab.id);
-        if(run&&run.formId===canonicalFormId(sender.url??sender.tab.url??'')){
-          if(cloudOrigin()&&!run.managed&&!endedExecution(run)){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
-          run.contentEpoch=message.epoch;await saveRun(run);
-          return sendResponse({ok:true,run:run.managed&&!native.isConnected()?{...run,recoveryRequired:true}:run});
-        }
-        return sendResponse({ok:true});
+        // Native SET_FINAL_QUESTION runs independently of the page message
+        // queue. Re-read inside the write queue so an earlier claim snapshot
+        // cannot overwrite the answer just stored by that command.
+        const claimed=await writeState(async()=>{
+          const current=await getRun(sender.tab!.id!);
+          if(!current||current.formId!==canonicalFormId(sender.url??sender.tab!.url??''))return;
+          if(cloudOrigin()&&!current.managed&&!endedExecution(current)){current.status=current.submitAttempted?'submit_uncertain':'paused';current.recoveryRequired=true;}
+          current.contentEpoch=message.epoch;await writeRunNow(current);return current;
+        });
+        return sendResponse({ok:true,...(claimed?{run:claimed.managed&&!native.isConnected()?{...claimed,recoveryRequired:true}:claimed}:{})});
       }
       if(message.type==='REQUEST_SUBMIT')return sendResponse(await grantSubmit(message,sender));
       if (message.type === "GET_PANEL_STATE") return sendResponse(await panelState(message.tabId));
@@ -1058,10 +1062,13 @@ async function managedControl(command:Command){
   }
   let run=await getManaged();if(!run||run.runId!==command.runId)throw new Error('Lượt điều khiển không khớp.');
   if(command.kind==='SET_FINAL_QUESTION'){
-    validateFinalQuestion(command.payload.finalQuestion);
-    if(!command.payload.finalQuestion||run.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(run.status))throw new Error('Chỉ cập nhật câu hỏi cuối khi lượt đang chờ và chưa gửi.');
-    if(command.payload.finalQuestion.formId&&command.payload.finalQuestion.formId!==run.formId)throw new Error('Câu hỏi đã chọn thuộc form khác.');
-    run.finalQuestion=structuredClone(command.payload.finalQuestion);await saveRun(run);return run;
+    const question=command.payload.finalQuestion;validateFinalQuestion(question);
+    return writeState(async()=>{
+      const current=await getManaged();if(!current||current.runId!==command.runId)throw new Error('Lượt điều khiển không khớp.');
+      if(!question||current.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(current.status))throw new Error('Chỉ cập nhật câu hỏi cuối khi lượt đang chờ và chưa gửi.');
+      if(question.formId&&question.formId!==current.formId)throw new Error('Câu hỏi đã chọn thuộc form khác.');
+      current.finalQuestion=structuredClone(question);await writeRunNow(current);return current;
+    });
   }
   if(command.kind==='RESOLVE_SUBMISSION'){
     if(!['received','not_received'].includes(String(command.payload.result)))throw new Error('Kết quả xác minh không hợp lệ.');const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};if(locks[run.runId!])locks[run.runId!].resolution=command.payload.result;await chrome.storage.local.set({submissionLocks:locks});run.status=command.payload.result==='received'?'completed':'idle';run.blockingIssue=undefined;run.recoveryRequired=false;await saveRun(run);return run;

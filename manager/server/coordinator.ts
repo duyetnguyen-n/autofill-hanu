@@ -253,21 +253,35 @@ export class Coordinator {
   }
   async edit(id:string,values:Partial<Omit<SessionView,'hskLevel'>>&{hskLevel?:HskLevel|null}){await this.runBuffer?.flush(id);const s=await this.store.session(id);if(values.hskLevel!==undefined){if(values.hskLevel===null)delete s.hskLevel;else{if(!isHskLevel(values.hskLevel))throw new Error('HSK phải từ 1 đến 6.');s.hskLevel=values.hskLevel;}}if(values.name!==undefined)s.name=String(values.name).slice(0,100);if(values.expectedEmail!==undefined)s.expectedEmail=String(values.expectedEmail).trim().toLowerCase();if(values.profile!==undefined){validateProfile(values.profile);s.profile=values.profile;s.synced=false;s.managerDraft=true;}await this.store.saveSession(s);this.changed();return s;}
   async assignHsk(ids:string[],level:unknown){if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length||level!==null&&!isHskLevel(level))throw new Error('Chọn profile và cấp độ HSK hợp lệ.');return Promise.all(ids.map(async id=>{try{await this.edit(id,{hskLevel:level});return {id,ok:true};}catch(e){return {id,ok:false,error:(e as Error).message};}}));}
-  async stopScheduledRuns(){
-    const schedule=await this.scheduler.cancel();if(!schedule)return [];
+  async stopScheduledRuns(expectedId?:string){
+    const schedule=await this.scheduler.cancel(expectedId);if(!schedule)return [];
+    await this.scheduler.settleLaunches();
     return Promise.all(schedule.members.map(async m=>{try{
       const s=await this.store.session(m.id),g=this.store.groupForRequest?await this.store.groupForRequest(m.requestId):undefined;
       if(!s.run?.runId||s.run.runId!==(m.runId??g?.id))return {id:m.id,ok:true,skipped:true};
       await this.control(m.id,'STOP',s.run.runId);return {id:m.id,ok:true};
     }catch(e){return {id:m.id,ok:false,error:(e as Error).message};}}));
   }
+  async scheduledControl(expectedId:string,kind:'PAUSE'|'RESUME'){
+    if(typeof expectedId!=='string'||!expectedId)throw new Error('Thiếu mã lịch cần điều khiển.');this.scheduler.assertSchedule(expectedId);if(!this.scheduler.value)throw new Error('Chưa có lịch.');
+    if(kind==='PAUSE')await this.scheduler.setPaused(true,expectedId);
+    await this.scheduler.settleLaunches();
+    const schedule=this.scheduler.value;
+    if(!schedule||schedule.id!==expectedId||['cancelled','expired'].includes(schedule.status)||!schedule.pausedAt)return [];
+    const groups=await Promise.all(schedule.members.map(async m=>m.runId??(await this.store.groupForRequest?.(m.requestId))?.id));
+    const results=await Promise.all([...new Set(groups.filter((id):id is string=>!!id))].map(id=>this.groupControl(id,kind)));
+    if(kind==='RESUME'&&this.scheduler.value===schedule&&!['cancelled','expired'].includes(schedule.status)){
+      await this.scheduler.setPaused(false,expectedId);for(const m of schedule.members){const session=await this.store.session(m.id);if(session.run&&session.run.runId===m.runId)this.queueScheduledAnswer(m.id,session.run);}void this.scheduler.tick().catch(this.unavailable);
+    }
+    return results.flat();
+  }
   private answering=new Set<string>();
   private answerAttempts=new Map<string,string>();
   private queueScheduledAnswer(id:string,run:RunState){
     const s=this.scheduler.value,m=s?.members.find(m=>m.id===id&&m.runId===run.runId);
-    const configured=m&&(s?.rehearsal?s.rehearsalAnswer:s?.finalQuestions?.[m.level]);
+    const configured=m&&(s?.finalQuestions?.[m.level]??(s?.rehearsal?s.rehearsalAnswer:undefined));
     const q=configured&&bindHskAnswer(configured,run);
-    if(!m||m.status!=='started'||!s||['cancelled','expired'].includes(s.status)||!q||run.status!=='waiting_manual'||run.blockingIssue?.reason!=='verification'||!canApplyFinalQuestion(run,q)||this.answering.has(id))return;
+    if(!m||m.status!=='started'||!s||!!s.pausedAt||['cancelled','expired'].includes(s.status)||!q||run.status!=='waiting_manual'||run.blockingIssue?.reason!=='verification'||!canApplyFinalQuestion(run,q)||this.answering.has(id))return;
     const key=JSON.stringify([run.runId,run.blockingIssue.questionLabel,q]);if(this.answerAttempts.get(id)===key)return;
     this.answerAttempts.set(id,key);this.answering.add(id);
     // Do not block the extension's STATE/command queue on its own SET response.

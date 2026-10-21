@@ -1,15 +1,16 @@
-# HANU Coordinator 1.8.1
+# HANU Coordinator 1.9.0
 
 App cục bộ quản lý nhiều Chrome profile, mỗi profile giữ một hồ sơ thí sinh và ảnh riêng. Người dùng tự mở profile, đăng nhập Google, liên kết extension rồi chọn các phiên để chạy Test hoặc Live. Bản này chưa dùng AI.
 
 ## Săn link tức thì, câu xác thực theo HSK
 
-Bản 1.8.1 chuẩn bị sẵn tab/hồ sơ khi bật, có link hợp lệ đúng HSK là chạy ngay,
+Bản 1.9.0 chuẩn bị sẵn tab/hồ sơ khi bật, có link hợp lệ đúng HSK là chạy ngay,
 ngừng reload Facebook khi đã chốt đủ nguồn link, hỗ trợ dán link không cần Facebook,
 loại/thay link và chạy lại riêng từng HSK. Mỗi HSK có đáp án xác thực riêng; profile
 đến sau tự dùng đáp án đã lưu. Có thể nhập chỉ đáp án trước khi biết câu hỏi; tới
 câu xác thực, tool tự hiện nội dung và ghép đáp án. Không đọc được sẽ báo lỗi ngay
 và có nút **Lấy câu xác thực** để đọc lại. Lý do chưa chạy hiện ngay theo cấp và profile.
+Bật toggle đăng ký theo HSK, chọn cấp ngay trong bảng profile. Chỉ các cấp có profile được chọn mới hiện ô điều khiển. Diễn tập nhận link test trực tiếp, giữ đáp án riêng từng HSK và không chờ link đăng ký thật. Thanh Live cố định có thời gian, tiến độ, Tạm dừng/Tiếp tục và Dừng đúng toàn bộ lượt đã bật, độc lập với tick chọn sau đó.
 Xem [hướng dẫn HSK](docs/SCHEDULED-HSK.md) về thao tác, nâng cấp và kiểm thử.
 
 ## Bản online với Supabase
