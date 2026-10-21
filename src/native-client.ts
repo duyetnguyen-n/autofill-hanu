@@ -8,7 +8,7 @@ interface Adapter {
   start(command:Command,sessionId:string):Promise<unknown>;
   control(command:Command):Promise<unknown>;
   focus():Promise<unknown>;
-  disconnected():Promise<void>;
+  disconnected(reason?:'transport'):Promise<void>;
   interrupt?(command:Command):Promise<void>;
   reconcile():Promise<unknown>;
   execution?():Promise<ExecutionView|null>;
@@ -43,7 +43,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     connecting=true;const version=generation;
     try{await ensureIdentity();const current=await connector();if(stopped||version!==generation){current.disconnect();return;}port=current;
       current.onMessage.addListener(m=>{if(port===current)onMessage(m,current);});
-      current.onDisconnect.addListener(()=>{if(port!==current)return;port=undefined;connected=false;generation++;pairingError(cloud?(current.error??'Mất kết nối website quản lý.'):chromeError(chrome.runtime.lastError?.message??'Mất kết nối app.'));for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error(error));}requests.clear();void adapter.disconnected().catch(()=>undefined).finally(retry);});
+      current.onDisconnect.addListener(()=>{if(port!==current)return;port=undefined;connected=false;generation++;pairingError(cloud?(current.error??'Mất kết nối website quản lý.'):chromeError(chrome.runtime.lastError?.message??'Mất kết nối app.'));for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error(error));}requests.clear();void adapter.disconnected('transport').catch(()=>undefined).finally(retry);});
       send({...pairCode?{type:'PAIR',code:pairCode}:{type:'HELLO',token:identity.token},...(cloud?{transport:'cloud',extensionId:chrome.runtime.id,accessPolicy:1}:{})});
     }catch(e){pairingError((e as Error).message);port=undefined;retry();}finally{connecting=false;}
   }
@@ -97,7 +97,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const readOnly=['WATCH_FACEBOOK','PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
     if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-20-session-handoff-1.7.3',capabilities:['sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-20-upload-reconnect-1.7.4',capabilities:['sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='WATCH_FACEBOOK'){if(!adapter.watchFacebook)throw new Error('Extension chưa hỗ trợ theo dõi Facebook.');result=await adapter.watchFacebook(p);}
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};

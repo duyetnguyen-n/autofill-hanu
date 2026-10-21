@@ -639,33 +639,42 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
     return (input.files?.length ?? 0) === 1;
   }
 
-  // Never take over a Picker the user already opened for another question.
-  if (uploadPicker()) {
+  // A reconnect/Resume must keep observing our own in-flight upload. Taking
+  // over an unrelated manual picker is still forbidden. The owner is scoped
+  // to the document, run and frozen attachment, not merely the filename.
+  const owner = JSON.stringify([boundRunId, documentEpoch, reference.id]);
+  const existingPicker = uploadPicker();
+  if (existingPicker && (existingPicker.dataset.hanuUploadOwner !== owner || !existingPicker.dataset.hanuUploadRequest)) {
     question.element.dataset.hanuUploadError = "Một hộp chọn tệp đang mở. Hãy đóng hoặc hoàn tất nó trước khi chạy lại.";
     return false;
   }
   const findOpener = () => Array.from(question.element.querySelectorAll<HTMLElement>('button, [role="button"]'))
     .find(node => visible(node) && /add file|thêm tệp|tải tệp/i.test(`${node.getAttribute("aria-label") ?? ""} ${node.textContent ?? ""}`));
-  await waitFor(() => Boolean(findOpener()), 200);
+  if (!existingPicker) await waitFor(() => Boolean(findOpener()), 200);
   const opener = findOpener();
-  if (!opener) return false;
+  if (!existingPicker && !opener) return false;
   const uploadStartedAt=performance.now();
-  opener.scrollIntoView?.({ block: "center", behavior: "auto" });
-  await emit({ type: "progress", message: `Đang mở hộp upload cho ảnh đã lưu: ${reference.name}` });
-  if (!active) return false;
-  opener.click();
-  if (!(await waitFor(() => Boolean(uploadPicker()), 10))) {
+  if (!existingPicker) {
+    opener!.scrollIntoView?.({ block: "center", behavior: "auto" });
+    await emit({ type: "progress", message: `Đang mở hộp upload cho ảnh đã lưu: ${reference.name}` });
     if (!active) return false;
-    await trustedClick(opener);
+    opener!.click();
+    if (!(await waitFor(() => Boolean(uploadPicker()), 10))) {
+      if (!active) return false;
+      await trustedClick(opener!);
+    }
   }
   if (!(await waitFor(() => Boolean(uploadPicker()), 200)) || !active) {
     question.element.dataset.hanuUploadError = "Không mở được Google Picker. Hãy chọn ảnh thủ công rồi bấm Tiếp tục.";
     return false;
   }
   const picker = uploadPicker()!;
-  const requestId = crypto.randomUUID();
+  const requestId = existingPicker?.dataset.hanuUploadRequest ?? crypto.randomUUID();
+  picker.dataset.hanuUploadOwner = owner;
+  picker.dataset.hanuUploadRequest = requestId;
   let assigned = false;
   let uploadTiming: PickerUploadTimings | undefined;
+  let waitingFor = 'chưa nhận được phản hồi từ iframe';
   const pickerReadyDeadline = Date.now() + 20000;
   for (let attempt = 0; attempt < 80 && active && Date.now() < pickerReadyDeadline; attempt += 1) {
     if (!picker.isConnected || !visible(picker)) break;
@@ -677,11 +686,12 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
       return false;
     }
     if (result && "state" in result && result.state === "assigned") { assigned = true; uploadTiming = result.timing; break; }
+    if (result && "state" in result && result.state === "waiting" && result.waitingFor) waitingFor = result.waitingFor;
     await new Promise(resolve => window.setTimeout(resolve, 250));
   }
   if (!active) return false;
   if (!assigned) {
-    question.element.dataset.hanuUploadError = "Google Picker chưa khởi tạo ổn định để nhận ảnh. Hãy kiểm tra hộp tải tệp rồi bấm Tiếp tục.";
+    question.element.dataset.hanuUploadError = `Google Picker chưa sẵn sàng: ${waitingFor}. Chưa chuyển ảnh.`;
     return false;
   }
   const assignedAt=performance.now();

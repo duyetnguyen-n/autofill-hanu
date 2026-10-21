@@ -62,12 +62,12 @@ export class StoredPickerUploads {
     const probeStart = performance.now();
     let results: chrome.scripting.InjectionResult<PickerUploadResult>[];
     const discover = () => chrome.scripting.executeScript({
-      target: { tabId: scope.tabId, allFrames: true }, func: assignPickerFile, args: [metadata]
+      target: { tabId: scope.tabId, allFrames: true }, injectImmediately: true, func: assignPickerFile, args: [metadata]
     });
     try {
       results = await chrome.scripting.executeScript({
         target: job ? { tabId: scope.tabId, documentIds: [job.documentId] } : { tabId: scope.tabId, allFrames: true },
-        func: assignPickerFile, args: [metadata]
+        injectImmediately: true, func: assignPickerFile, args: [metadata]
       });
       if (job && !job.attempted && !scope.checkOnly && !results.some(r => r.result && r.result.state !== 'ignored')) results = await discover();
     } catch {
@@ -133,11 +133,12 @@ export class StoredPickerUploads {
         const value = await scope.prepare();
         await scope.assertActive();
         if (entry.cancelled) throw new Error('Đã hủy chuẩn bị ảnh.');
+        clearTimeout(entry.prepareTimer);
         return { value };
       })().catch(error => ({ error: error instanceof Error ? error.message : String(error) }));
     }
     job.timing.probeMs += performance.now() - probeStart;
-    if (state.state !== 'ready') return { state: 'waiting' };
+    if (state.state !== 'ready') return state.state === 'waiting' ? state : { state: 'waiting' };
     const prepared = await job.preparation!;
     await scope.assertActive();
     if (job.cancelled) throw new Error('Đã hủy chuẩn bị ảnh của trang cũ.');
@@ -150,6 +151,7 @@ export class StoredPickerUploads {
     try {
       const handed = await chrome.scripting.executeScript({
         target: { tabId: scope.tabId, documentIds: [job.documentId] },
+        injectImmediately: true,
         func: assignPickerFile,
         args: [{ dataUrl: prepared.value.dataUrl, name: scope.name, type: scope.type,
           pickerUrl: scope.pickerUrl, requestId: scope.requestId }]

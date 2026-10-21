@@ -27,7 +27,8 @@ export interface PickerUploadTimings {
 }
 
 export type PickerUploadResult =
-  | { state: "ignored" | "waiting" | "ready" }
+  | { state: "ignored" | "ready" }
+  | { state: "waiting"; waitingFor?: string }
   | { state: "assigned"; timing?: PickerUploadTimings }
   | { state: "error"; error: string };
 
@@ -51,7 +52,7 @@ export function assignPickerFile(payload: PickerFile | PickerUploadCheck | Picke
 
   const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]'))
     .filter(input => !input.disabled);
-  if (!inputs.length) return { state: "waiting" };
+  if (!inputs.length) return { state: "waiting", waitingFor: "ô tải tệp chưa xuất hiện" };
   if (inputs.length !== 1) return { state: "error", error: "Picker có nhiều ô chọn tệp; hãy chọn ảnh thủ công để tránh gắn nhầm." };
   const input = inputs[0];
   if (input.files?.length) return { state: "error", error: "Picker đã có tệp đang chọn. Hãy hoàn tất thao tác đó trước." };
@@ -65,7 +66,8 @@ export function assignPickerFile(payload: PickerFile | PickerUploadCheck | Picke
   const observedAt = trackedInput.__hanuPickerObservedAt;
   if (observedAt === undefined) trackedInput.__hanuPickerObservedAt = now;
   if (document.readyState !== "complete" || now < 5000
-    || observedAt === undefined || now - observedAt < 1000) return { state: "waiting" };
+    || observedAt === undefined || now - observedAt < 1000) return { state: "waiting", waitingFor:
+      `document=${document.readyState}, tuổi=${Math.round(now)}ms, ô ổn định=${observedAt === undefined ? 0 : Math.round(now-observedAt)}ms` };
   if ("prepareOnly" in payload) return { state: "ready" };
 
   try {

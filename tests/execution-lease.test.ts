@@ -3,7 +3,7 @@ import {emptyProfile} from '../src/rules';
 import type {Command} from '../src/protocol';
 import type {ExtensionMessage,RunState} from '../src/shared';
 let nativeRequest: ReturnType<typeof vi.fn>;
-let adapter:{start:(c:Command,s:string)=>Promise<any>;control:(c:Command)=>Promise<any>;execution:()=>Promise<any>;disconnected:()=>Promise<any>};
+let adapter:{start:(c:Command,s:string)=>Promise<any>;control:(c:Command)=>Promise<any>;execution:()=>Promise<any>;disconnected:(reason?:'transport')=>Promise<any>;reconcile:()=>Promise<any>};
 vi.mock('../src/native-client',()=>({createNativeClient:(a:typeof adapter)=>{adapter=a;nativeRequest=vi.fn(async()=>({}));return {boot:vi.fn(),state:vi.fn(),request:nativeRequest,isConnected:()=>true};}}));
 afterEach(()=>{vi.unstubAllGlobals();vi.resetModules();});
 const url='https://docs.google.com/forms/d/e/lease-fixture/viewform';
@@ -119,4 +119,23 @@ it('serializes concurrent standalone and managed starts before either run record
  const f=await fixture();const results=await Promise.allSettled([f.ask({type:'START_RUN',tabId:1,mode:'test'}),adapter.start(command('START'),'session')]);
  expect(results.filter(r=>r.status==='fulfilled'&&r.value?.status==='running')).toHaveLength(1);
  expect(results.some(r=>r.status==='rejected'||r.status==='fulfilled'&&r.value?.ok===false)).toBe(true);
+});
+
+it('reconnect requests server authorization for only its interrupted unsent run',async()=>{
+ const f=await fixture();await adapter.start(command('START'),'session');
+ await adapter.disconnected('transport');expect(f.data.managedRun).toMatchObject({status:'paused',transportRecovery:true});
+ await adapter.reconcile();expect(nativeRequest).toHaveBeenCalledWith('AUTO_RESUME',expect.objectContaining({runId:'new-managed'}),{source:'reconnect'});
+ await adapter.control({...command('RESUME'),payload:{reconnect:true}});
+ expect(f.data.managedRun).toMatchObject({status:'running',transportRecovery:false});
+});
+it('explicit Pause cancels reconnect intent and cannot auto resume',async()=>{
+ const f=await fixture();await adapter.start(command('START'),'session');await adapter.disconnected('transport');
+ await adapter.control(command('PAUSE'));nativeRequest.mockClear();await adapter.reconcile();
+ expect(f.data.managedRun).toMatchObject({status:'paused',autoContinue:false,transportRecovery:false});
+ expect(nativeRequest).not.toHaveBeenCalledWith('AUTO_RESUME',expect.anything(),expect.anything());
+ await expect(adapter.control({...command('RESUME'),payload:{reconnect:true}})).rejects.toThrow('nối lại');
+});
+it('hard disconnect never creates transport auto-resume intent',async()=>{
+ const f=await fixture();await adapter.start(command('START'),'session');await adapter.disconnected();nativeRequest.mockClear();await adapter.reconcile();
+ expect(f.data.managedRun.transportRecovery).toBe(false);expect(nativeRequest).not.toHaveBeenCalledWith('AUTO_RESUME',expect.anything(),expect.anything());
 });

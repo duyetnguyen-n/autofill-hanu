@@ -150,8 +150,8 @@ it('retains a preparation error without unhandled rejection or rereading on each
   expect(f.scope.prepare).toHaveBeenCalledTimes(1);
 });
 
-it('bounds prepared image lifetime while waiting for Google', async () => {
-  vi.useFakeTimers(); const f = setup(); await f.store.upload(f.scope);
+it('bounds a stalled file preparation while waiting for Google', async () => {
+  vi.useFakeTimers(); const f = setup(); f.scope.prepare.mockImplementationOnce(() => new Promise(() => {})); await f.store.upload(f.scope);
   await vi.advanceTimersByTimeAsync(20001); f.ready();
   expect(await f.store.upload(f.scope)).toMatchObject({ state: 'error' });
   expect(f.executeScript.mock.calls.some(([r]) => r.args[0].dataUrl)).toBe(false);
@@ -164,4 +164,15 @@ it('keeps different tabs and their exact bytes isolated', async () => {
   await Promise.all([f.store.upload(f.scope), f.store.upload(other)]);
   const sent = f.executeScript.mock.calls.filter(([r]) => r.args[0].dataUrl).map(([r]) => [r.target.tabId, r.target.documentIds[0], r.args[0].dataUrl]);
   expect(sent).toEqual(expect.arrayContaining([[1,'doc-1','data:image/png;base64,AQID'],[2,'doc-2','data:image/png;base64,BAUG']]));
+});
+
+it('probes loading frames immediately instead of waiting for unrelated document_idle', async () => {
+  const f=setup();await f.store.upload(f.scope);
+  expect(f.executeScript.mock.calls[0][0].injectImmediately).toBe(true);
+});
+it('a prepared photo survives slow Picker initialization and remains single-use', async () => {
+  vi.useFakeTimers();const f=setup();await f.store.upload(f.scope);
+  await vi.advanceTimersByTimeAsync(21000);f.ready();
+  expect(await f.store.upload(f.scope)).toMatchObject({state:'assigned'});
+  expect(f.scope.prepare).toHaveBeenCalledTimes(1);
 });

@@ -43,7 +43,7 @@ it("retains Google's transient upload error after it resets the input and remove
 });
 
 it("a status query never assigns a file, and ignores unrelated existing notices", async () => {
-  expect(assignPickerFile({ pickerUrl, requestId: payload.requestId, checkOnly: true })).toEqual({ state: "waiting" });
+  expect(assignPickerFile({ pickerUrl, requestId: payload.requestId, checkOnly: true })).toMatchObject({ state: "waiting" });
   const toast = document.createElement("div");
   toast.setAttribute("aria-live", "assertive");
   toast.textContent = "An error occurred before this upload";
@@ -70,7 +70,7 @@ it("does not start an upload during Picker startup even when its input already e
   const input = document.querySelector('input')!;
   const changed = vi.fn();input.addEventListener('change',changed);
   vi.mocked(performance.now).mockReturnValue(1200);
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   expect(input.files).toHaveLength(0);
   expect(document.documentElement.dataset.hanuPickerUpload).toBeUndefined();
   vi.mocked(performance.now).mockReturnValue(6000);
@@ -85,8 +85,8 @@ it("does not treat the opened-picker announcement as upload-controller readiness
   const announcement=document.createElement('div');announcement.setAttribute('aria-live','polite');
   announcement.textContent='Đã mở bộ chọn Chèn tệp.';document.body.append(announcement);
   const changed=vi.fn();input.addEventListener('change',changed);
-  expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toEqual({state:'waiting'});
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toMatchObject({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   expect(changed).not.toHaveBeenCalled();
   vi.mocked(performance.now).mockReturnValue(5000);
   expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toEqual({state:'ready'});
@@ -102,9 +102,9 @@ it("still waits for a newly replaced input even after the opened-picker announce
   delete (input as HTMLInputElement & { __hanuPickerObservedAt?: number }).__hanuPickerObservedAt;
   document.body.insertAdjacentHTML('beforeend','<div role="status">Đã mở bộ chọn Chèn tệp.</div>');
   vi.mocked(performance.now).mockReturnValue(6000);
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   vi.mocked(performance.now).mockReturnValue(6500);
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   vi.mocked(performance.now).mockReturnValue(7000);
   expect(assignPickerFile(payload)).toEqual({state:'assigned'});
 });
@@ -113,19 +113,19 @@ it("an unrelated live-region notice does not bypass startup", () => {
   document.body.insertAdjacentHTML('beforeend','<div aria-live="polite">Tải ảnh lên Google Drive.</div>');
   vi.mocked(performance.now).mockReturnValue(2000);
   (document.querySelector('input') as HTMLInputElement & {__hanuPickerObservedAt?:number}).__hanuPickerObservedAt=1000;
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
 });
 
 it("waits again when initialization replaces the input before a file is assigned", () => {
   vi.mocked(performance.now).mockReturnValue(10000);
   const input=document.querySelector('input')!;
   delete (input as HTMLInputElement & { __hanuPickerObservedAt?: number }).__hanuPickerObservedAt;
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   input.replaceWith(input.cloneNode());
   vi.mocked(performance.now).mockReturnValue(11500);
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   vi.mocked(performance.now).mockReturnValue(12000);
-  expect(assignPickerFile(payload)).toEqual({state:'waiting'});
+  expect(assignPickerFile(payload)).toMatchObject({state:'waiting'});
   expect(document.documentElement.dataset.hanuPickerUpload).toBeUndefined();
 });
 
@@ -140,7 +140,7 @@ it("does not leak a stored file to a different Picker session or ordinary docume
 
 it("waits for Picker's input to mount, and refuses ambiguous upload controls", () => {
   document.body.replaceChildren();
-  expect(assignPickerFile(payload)).toEqual({ state: "waiting" });
+  expect(assignPickerFile(payload)).toMatchObject({ state: "waiting" });
   document.body.innerHTML = '<input type="file"><input type="file">';
   expect(assignPickerFile(payload).state).toBe("error");
 });

@@ -16,7 +16,7 @@ let runWriteQueue=Promise.resolve();
 const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
 function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.then(fn);runWriteQueue=work.then(()=>undefined,()=>undefined);return work;}
 async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
-const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:async()=>{facebookWatcher.stop();await parkManaged();},watchFacebook:p=>facebookWatcher.command(p),reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
+const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:async reason=>{facebookWatcher.stop();await parkManaged(reason==='transport');},watchFacebook:p=>facebookWatcher.command(p),reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
 const facebookWatcher=new FacebookWatcher(()=>native.isConnected(),payload=>native.request('FACEBOOK_OBSERVATION',undefined,payload));
 const recoveryTimers=new Map<string,ReturnType<typeof setTimeout>>();
 const recoveriesInFlight=new Map<string,Promise<void>>();
@@ -339,7 +339,7 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
   // A user/server-authorized Resume establishes a new intent. Every later
   // asynchronous step checks this generation before touching the form.
   interruptedRuns.delete(run.runId!);cancelRecovery(run.runId);
-  const preparing={...run,status:'running' as const,recoveryRequired:true,activity:{phase:'checking_account' as const,message:'Đang đối chiếu trang và tài khoản trước khi tiếp tục.',at:now()}};
+  const preparing={...run,status:'running' as const,transportRecovery:false,recoveryRequired:true,activity:{phase:'checking_account' as const,message:'Đang đối chiếu trang và tài khoản trước khi tiếp tục.',at:now()}};
   await saveRun(preparing);
   try{
     let tab=await chrome.tabs.get(run.tabId);await valid();
@@ -537,7 +537,7 @@ async function haltRun(tabId:number,status:'idle'|'paused'):Promise<RunState|und
     const current=await getRun(tabId);if(!current||current.status==='completed')return current;
     if(current.runId)interruptedRuns.add(current.runId);
     cancelRecovery(current.runId);
-    const next=addLog({...current,autoContinue:false,activity:undefined,recovery:current.recovery?{...current.recovery,automatic:false}:undefined,status:current.submitAttempted?'submit_uncertain':status,recoveryRequired:false,blockingIssue:current.submitAttempted?current.blockingIssue:undefined},'info',status==='idle'?'Đã dừng. Giữ dữ liệu và khóa gửi của lượt.':'Đã tạm dừng theo yêu cầu.');
+    const next=addLog({...current,autoContinue:false,transportRecovery:false,activity:undefined,recovery:current.recovery?{...current.recovery,automatic:false}:undefined,status:current.submitAttempted?'submit_uncertain':status,recoveryRequired:false,blockingIssue:current.submitAttempted?current.blockingIssue:undefined},'info',status==='idle'?'Đã dừng. Giữ dữ liệu và khóa gửi của lượt.':'Đã tạm dừng theo yêu cầu.');
     await writeRunNow(next);return next;
   });
   await haltDocument(tabId);
@@ -953,18 +953,33 @@ async function startManaged(command:Command,sessionId:string){
     run=(await getManaged())!;run.recoveryRequired=false;await saveRun(run);await runOnTab(run.tabId,run.mode);return run;
   }catch(e){return blockPageProblem(run.runId!,e instanceof PageProblem?e.health:{issue:{reason:'account',message:(e as Error).message}});}
 }
-async function parkManaged(){
+async function parkManaged(reconnect=false){
   const run=await writeState(async()=>{
     const run=await getManaged();if(!run||endedExecution(run))return;
+    run.transportRecovery=reconnect&&!run.submitAttempted&&run.autoContinue!==false&&(run.status==='running'||run.transportRecovery===true);
     interruptedRuns.add(run.runId!);
     cancelRecovery(run.runId);
     run.status=run.submitAttempted?'submit_uncertain':run.status==='waiting_manual'?'waiting_manual':'paused';
-    run.activity=run.status==='waiting_manual'?{phase:'waiting_user',message:run.blockingIssue?.message??'Cần kiểm tra form trước khi tiếp tục.',at:now()}:{phase:'reconnecting',message:native.isConnected()?'Đã kết nối. Bấm Tiếp tục để đối chiếu trang trước khi chạy.':'Mất kết nối bộ điều phối. Đang nối lại; lượt được giữ để đối chiếu.',at:now()};
+    run.activity=run.status==='waiting_manual'?{phase:'waiting_user',message:run.blockingIssue?.message??'Cần kiểm tra form trước khi tiếp tục.',at:now()}:{phase:'reconnecting',message:run.transportRecovery?'Đang nối lại; sẽ tự đối chiếu và tiếp tục lượt chưa gửi.':native.isConnected()?'Đã kết nối. Bấm Tiếp tục để đối chiếu trang trước khi chạy.':'Mất kết nối bộ điều phối. Đang nối lại; lượt được giữ để đối chiếu.',at:now()};
     run.recoveryRequired=true;await writeRunNow(run);return run;
   });
   if(run?.tabId!==undefined&&run.tabId>=0){await haltDocument(run.tabId);await releasePageAttention(run.tabId);}
 }
-async function reconcileManaged(){await parkManaged();const run=await getManaged();if(run){native.state(run);return {run,tab:await chrome.tabs.get(run.tabId).catch(()=>undefined)};}return {run:null};}
+const reconnectingRuns=new Set<string>();
+async function reconcileManaged(){
+  const previous=await getManaged();
+  if(previous?.status==='running')await parkManaged(true);
+  const run=await getManaged();
+  if(!run)return {run:null};
+  native.state(run);
+  if(run.runId&&run.transportRecovery&&run.status==='paused'&&run.autoContinue!==false&&!run.submitAttempted&&native.isConnected()&&!reconnectingRuns.has(run.runId)){
+    const id=run.runId;reconnectingRuns.add(id);
+    // Do not await the command round-trip inside RECONCILE's command queue:
+    // the authorized RESUME arrives on that same queue.
+    void native.request('AUTO_RESUME',run,{source:'reconnect'}).catch(()=>undefined).finally(()=>reconnectingRuns.delete(id));
+  }
+  return {run,tab:await chrome.tabs.get(run.tabId).catch(()=>undefined)};
+}
 async function focusManaged(){
   const execution=await executionSnapshot();const run=execution?await getRun(execution.tabId):await getManaged();let tab=run?await chrome.tabs.get(run.tabId).catch(()=>undefined):undefined;
   if(tab&&run?.formId&&canonicalFormId(tab.url??'')!==run.formId)tab=undefined;
@@ -1017,6 +1032,7 @@ async function managedControl(command:Command){
   if(command.kind==='STOP'){interruptedRuns.add(run.runId!);return stopRun(run.tabId);}
   if(command.kind==='PAUSE'){interruptedRuns.add(run.runId!);return pauseRun(run.tabId);}
   if(command.kind==='RESUME'){
+    if(command.payload.reconnect&&(!run.transportRecovery||run.status!=='paused'||run.autoContinue===false))throw new Error('Lượt không còn chờ nối lại.');
     if(command.payload.retryReturned){const retry=command.payload.retryReturned as {epoch:string;retries:number};if(run.contentEpoch!==retry.epoch)throw new Error('Trang thử lại đã thay đổi.');run=await authorizeLocalReturnedRetry(run,retry.retries,command.payload.automatic!==true);}
     if(command.payload.automatic&&(run.status!=='waiting_manual'||run.recoveryRequired||interruptedRuns.has(run.runId!)))throw new Error('Lượt đã dừng; không tự tiếp tục.');
     if(run.submitAttempted)throw new Error('Lượt đã khóa gửi.');

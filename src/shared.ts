@@ -111,6 +111,7 @@ export interface RunLogEntry {
 export interface RunState {
   // Durable user intent, independent of a temporary page/network blocker.
   autoContinue?: boolean;
+  transportRecovery?: boolean;
   retryOnReturn?: boolean;
   submissionEpoch?: string;
   submissionRetries?: number;

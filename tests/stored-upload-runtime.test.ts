@@ -210,3 +210,16 @@ it("does not skip a required upload card whose button mounts after page navigati
   expect(fixture.submit).not.toHaveBeenCalled();
 });
 
+
+it('Resume adopts only its own Picker and request after a pause during upload',async()=>{
+  const f=await setup();
+  const first=f.sent.find(m=>m.type==='UPLOAD_STORED_FILE') as any;
+  listener({type:'HALT_RUN'});await vi.advanceTimersByTimeAsync(300);
+  listener({type:'RUN_CURRENT_PAGE',mode:'test'});await vi.advanceTimersByTimeAsync(400);
+  const requests=f.sent.filter(m=>m.type==='UPLOAD_STORED_FILE') as any[];
+  expect(requests.length).toBeGreaterThan(1);
+  expect(requests.every(m=>m.requestId===first.requestId)).toBe(true);
+  expect(document.querySelectorAll('iframe')).toHaveLength(1);
+  f.commit();await vi.advanceTimersByTimeAsync(1200);
+  expect(f.next).toHaveBeenCalledOnce();expect(f.submit).not.toHaveBeenCalled();
+});

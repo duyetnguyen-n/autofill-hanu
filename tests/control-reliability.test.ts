@@ -72,3 +72,15 @@ it('does not dispatch a Resume whose authorization finishes after a later Stop',
  expect(f.commands.some(c=>c.kind==='RESUME')).toBe(false);
  expect(f.store.session(f.id).run?.status).toBe('idle');
 });
+
+it('authorizes reconnect only with durable intent and an active group',async()=>{
+ const f=fixture('paused'),s=f.store.session(f.id);s.run!.transportRecovery=true;s.run!.autoContinue=true;f.store.saveSession(s);f.store.saveRun(f.id,s.run!);
+ await f.c.control(f.id,'RESUME','original','reconnect');
+ expect(f.commands.find(c=>c.kind==='RESUME')?.payload).toEqual({reconnect:true});
+});
+it.each(['manual','stopped_group','submitted','old_run'] as const)('rejects reconnect for %s',async reason=>{
+ const f=fixture('paused'),s=f.store.session(f.id);s.run!.transportRecovery=reason!=='manual';s.run!.autoContinue=reason!=='manual';s.run!.submitAttempted=reason==='submitted';f.store.saveSession(s);f.store.saveRun(f.id,s.run!);
+ if(reason==='stopped_group'){const g=f.store.group('original');g.paused=true;g.stopped=true;f.store.saveGroup(g);}
+ await expect(f.c.control(f.id,'RESUME',reason==='old_run'?'old':'original','reconnect')).rejects.toThrow();
+ expect(f.commands.some(c=>c.kind==='RESUME')).toBe(false);
+});
