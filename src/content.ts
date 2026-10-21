@@ -19,6 +19,7 @@ let documentEpoch=crypto.randomUUID();
 let refreshPageState:(()=>void)|undefined;
 let checkReturnedPage:(()=>void)|undefined;
 let boundRunId:string|undefined;
+let readingUploadBackground=false;
 let boundSubmissionRetries=0;
 let attentionToken:string|undefined;
 let attentionHeld=false;
@@ -72,7 +73,7 @@ function visible(element: Element): boolean {
   return style.display !== "none"
     && style.visibility !== "hidden"
     && style.opacity !== "0"
-    && !element.closest('[aria-hidden="true"]')
+    && (readingUploadBackground || !element.closest('[aria-hidden="true"]'))
     && box.width > 0
     && box.height > 0;
 }
@@ -641,10 +642,17 @@ async function fillFile(question: Question, rule: FieldRule, profile: Profile): 
 
   // A reconnect/Resume must keep observing our own in-flight upload. Taking
   // over an unrelated manual picker is still forbidden. The owner is scoped
-  // to the document, run and frozen attachment, not merely the filename.
-  const owner = JSON.stringify([boundRunId, documentEpoch, reference.id]);
+  // to this physical iframe, run, question and frozen attachment. A new content
+  // context after an extension reload is not a new DOM/Picker document.
+  const owner = JSON.stringify([boundRunId, reference.id, stableQuestionId(question.element)??question.id]);
   const existingPicker = uploadPicker();
-  if (existingPicker && (existingPicker.dataset.hanuUploadOwner !== owner || !existingPicker.dataset.hanuUploadRequest)) {
+  let ownsExisting=existingPicker?.dataset.hanuUploadOwner===owner;
+  if(existingPicker&&!ownsExisting){
+    // 1.7.4/1.7.5 marked [run, content-context epoch, attachment]. Keep the
+    // original request when updating an already open, marked iframe.
+    try{const old=JSON.parse(existingPicker.dataset.hanuUploadOwner??'null');ownsExisting=Array.isArray(old)&&old.length===3&&old[0]===(boundRunId??null)&&old[2]===reference.id&&typeof old[1]==='string'&&/^[0-9a-f-]{36}$/i.test(old[1]);}catch{}
+  }
+  if (existingPicker && (!ownsExisting || !existingPicker.dataset.hanuUploadRequest)) {
     question.element.dataset.hanuUploadError = "Một hộp chọn tệp đang mở. Hãy đóng hoặc hoàn tất nó trước khi chạy lại.";
     return false;
   }
@@ -1004,9 +1012,20 @@ export function pageAccount():{email?:string;error?:string;health?:PageHealth}{
   if(/you need permission|bạn cần có quyền|access denied|quyền truy cập bị từ chối/i.test(text))return {error:'Google chặn truy cập form.'};
   if(/no longer accepting responses|không còn nhận câu trả lời|form.*closed/i.test(text))return {error:'Form đã đóng.'};
   if(document.querySelector('a[href*="accounts.google.com/ServiceLogin"]')&&!document.querySelector('.ms0VFe'))return {error:'Cần đăng nhập Google.'};
+  const pickerOpen=!!uploadPicker();
+  const accountVisible=(element:HTMLElement)=>{
+    if(visible(element))return true;
+    // Picker temporarily removes the parent form from the accessibility tree.
+    // Its painted account header still identifies the active Forms account.
+    // Only relax aria-hidden, never CSS-hidden/zero-size headers or question
+    // answers, and still require a single unambiguous account below.
+    if(!pickerOpen||!element.closest('[aria-hidden="true"]'))return false;
+    const style=getComputedStyle(element),box=element.getBoundingClientRect();
+    return style.display!=='none'&&style.visibility!=='hidden'&&style.opacity!=='0'&&box.width>0&&box.height>0;
+  };
   const candidates=Array.from(document.querySelectorAll<HTMLElement>('[data-google-account], .ms0VFe, .XgQ6eb [data-email]'))
-    .filter(visible).map(e=>e.dataset.googleAccount??e.getAttribute('data-email')??e.innerText??e.textContent??'');
-  for(const link of document.querySelectorAll<HTMLAnchorElement>('a[href*="accounts.google.com/AccountChooser"]')){let parent=link.parentElement;for(let depth=0;parent&&depth<4;depth++,parent=parent.parentElement){if(parent.matches('[role="listitem"]'))break;const text=parent.innerText??parent.textContent??'';if(visible(parent)&&/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text)){candidates.push(text);break;}}}
+    .filter(accountVisible).map(e=>e.dataset.googleAccount??e.getAttribute('data-email')??e.innerText??e.textContent??'');
+  for(const link of document.querySelectorAll<HTMLAnchorElement>('a[href*="accounts.google.com/AccountChooser"]')){if(!accountVisible(link))continue;let parent=link.parentElement;for(let depth=0;parent&&depth<4;depth++,parent=parent.parentElement){if(parent.matches('[role="listitem"], body, html'))break;const text=parent.innerText??parent.textContent??'';if(accountVisible(parent)&&/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text)){candidates.push(text);break;}}}
   const emails=[...new Set(candidates.flatMap(t=>t.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig)??[]).map(e=>e.toLowerCase()))];
   return emails.length===1?{email:emails[0]}:{};
 }
@@ -1070,6 +1089,34 @@ async function execute(depth = 0): Promise<void> {
   if (hasUnsatisfiedCaptcha()) {
     active = false;
     await emit({ type: "block", issue: { reason: "captcha", message: "Phát hiện CAPTCHA chưa hoàn tất. Extension giữ lượt và tự tiếp tục khi form sẵn sàng trở lại." } });
+    return;
+  }
+
+  // A resumed upload owns a modal that aria-hides the parent form, including
+  // its Next button. Recover that upload before ordinary page readiness and
+  // field processing. The temporary flag only surrounds synchronous reads;
+  // no background control is clicked while the modal is open.
+  const pendingPicker=uploadPicker();
+  if(pendingPicker){
+    const profile=await chrome.runtime.sendMessage({type:'GET_PROFILE'} satisfies ExtensionMessage) as Profile;
+    if(!active)return;
+    let owner:unknown;try{owner=JSON.parse(pendingPicker.dataset.hanuUploadOwner??'null');}catch{}
+    let target:Question|undefined,rule:FieldRule|undefined;
+    if(Array.isArray(owner)&&owner[0]===(boundRunId??null)&&pendingPicker.dataset.hanuUploadRequest&&profile?.attachments){
+      try{
+        readingUploadBackground=true;
+        const candidates=questions().filter(q=>q.kind==='file').filter(q=>{
+          const r=findRule(q,profile),ref=r?.attachmentKey?profile.attachments[r.attachmentKey]:undefined;
+          return ref&&(owner[1]===ref.id&&(owner[2]===(stableQuestionId(q.element)??q.id))||owner[2]===ref.id&&typeof owner[1]==='string'&&/^[0-9a-f-]{36}$/i.test(owner[1]));
+        });
+        if(candidates.length===1){target=candidates[0];rule=findRule(target,profile);}
+      }finally{readingUploadBackground=false;}
+    }
+    if(!target||!rule){active=false;await emit({type:'block',issue:{reason:'file_upload',message:'Hộp chọn tệp không thuộc đúng câu hỏi/ảnh của lượt hiện tại. Hoàn tất hoặc đóng hộp này trước khi tiếp tục.'}});return;}
+    if(!await fillFile(target,rule,profile)){
+      if(!active)return;active=false;await emit({type:'block',issue:manualIssue(target,'file_upload',target.element.dataset.hanuUploadError??'Chưa xác nhận ảnh trên form.')});return;
+    }
+    if(active)await execute(depth+1);
     return;
   }
 

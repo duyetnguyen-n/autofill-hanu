@@ -223,3 +223,24 @@ it('Resume adopts only its own Picker and request after a pause during upload',a
   f.commit();await vi.advanceTimersByTimeAsync(1200);
   expect(f.next).toHaveBeenCalledOnce();expect(f.submit).not.toHaveBeenCalled();
 });
+
+it('content reinjection preserves the same physical Picker request without inheriting the old context epoch',async()=>{
+ const f=await setup();const first=f.sent.find(m=>m.type==='UPLOAD_STORED_FILE') as any;
+ listener({type:'HALT_RUN'});await vi.advanceTimersByTimeAsync(300);
+ const picker=document.querySelector('iframe')!;const owner=picker.dataset.hanuUploadOwner;
+ vi.resetModules();(chrome as any).runtime={...chrome.runtime,onMessage:{addListener:(fn:typeof listener)=>{listener=fn;}}};
+ await import('../src/content');listener({type:'RUN_CURRENT_PAGE',mode:'test'});await vi.advanceTimersByTimeAsync(400);
+ expect(picker.dataset.hanuUploadOwner).toBe(owner);
+ expect((f.sent.filter(m=>m.type==='UPLOAD_STORED_FILE') as any[]).every(m=>m.requestId===first.requestId)).toBe(true);
+ f.commit();await vi.advanceTimersByTimeAsync(1200);expect(f.next).toHaveBeenCalledOnce();expect(f.submit).not.toHaveBeenCalled();
+});
+it('resumes its owned modal before checking aria-hidden parent navigation, and never advances underneath it',async()=>{
+ const f=await setup();listener({type:'HALT_RUN'});await vi.advanceTimersByTimeAsync(300);
+ const wrapper=document.createElement('div');wrapper.setAttribute('aria-hidden','true');
+ for(const child of [...document.body.children])if(child.tagName!=='IFRAME')wrapper.append(child);document.body.prepend(wrapper);
+ listener({type:'RUN_CURRENT_PAGE',mode:'test'});await vi.advanceTimersByTimeAsync(1000);
+ expect(f.next).not.toHaveBeenCalled();expect(document.querySelector('iframe')).not.toBeNull();
+ expect(f.sent.some(m=>m.type==='FORM_EVENT'&&m.event.type==='transient_error')).toBe(false);
+ wrapper.removeAttribute('aria-hidden');f.commit();await vi.advanceTimersByTimeAsync(1200);
+ expect(f.next).toHaveBeenCalledOnce();expect(f.submit).not.toHaveBeenCalled();
+});

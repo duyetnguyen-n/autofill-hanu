@@ -390,7 +390,7 @@ async function sendToForm<T>(tabId: number, command: ExtensionMessage): Promise<
       catch{
         // A tab opened before an extension reload has no static script. Inject
         // once; document claims still fence any predecessor racing navigation.
-        if(attempt===0){const work=chrome.scripting.executeScript({target:{tabId},files:['content.js']});await(readOnly?observePage(work):work);}
+        if(attempt===0){const work=chrome.scripting.executeScript({target:{tabId},files:['content.js'],injectImmediately:true});await(readOnly?observePage(work):work);}
         const work=chrome.tabs.sendMessage(tabId,command);reply=await(readOnly?observePage(work):work) as T;
       }
       if(readOnly&&reply===undefined)throw new Error('Không đọc được phản hồi từ trang đang chuyển.');

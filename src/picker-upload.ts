@@ -59,13 +59,14 @@ export function assignPickerFile(payload: PickerFile | PickerUploadCheck | Picke
 
   // Picker can announce that it is open before its upload controller is
   // listening. Assigning then clears the input without starting an upload.
-  // Keep a minimum startup window even when the announcement is present,
-  // and require the current input to remain stable after replacement.
+  // Keep the startup and input-replacement guards. Do not wait for the whole
+  // document's load event: unrelated resources can keep a usable Picker in
+  // readyState=loading indefinitely (observed on real Google Forms).
   const now = performance.now();
   const trackedInput = input as HTMLInputElement & { __hanuPickerObservedAt?: number };
   const observedAt = trackedInput.__hanuPickerObservedAt;
   if (observedAt === undefined) trackedInput.__hanuPickerObservedAt = now;
-  if (document.readyState !== "complete" || now < 5000
+  if (now < 5000
     || observedAt === undefined || now - observedAt < 1000) return { state: "waiting", waitingFor:
       `document=${document.readyState}, tuổi=${Math.round(now)}ms, ô ổn định=${observedAt === undefined ? 0 : Math.round(now-observedAt)}ms` };
   if ("prepareOnly" in payload) return { state: "ready" };

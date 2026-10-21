@@ -78,6 +78,16 @@ it("does not start an upload during Picker startup even when its input already e
   expect(changed).toHaveBeenCalledTimes(1);
 });
 
+it('does not strand an initialized file input behind an unrelated pending document load', () => {
+  vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+  const changed=vi.fn();document.querySelector('input')!.addEventListener('change',changed);
+  expect(assignPickerFile({pickerUrl,requestId:payload.requestId,prepareOnly:true})).toEqual({state:'ready'});
+  expect(assignPickerFile(payload)).toEqual({state:'assigned'});
+  expect(changed).toHaveBeenCalledOnce();
+  expect(assignPickerFile(payload)).toEqual({state:'assigned'});
+  expect(changed).toHaveBeenCalledOnce();
+});
+
 it("does not treat the opened-picker announcement as upload-controller readiness", () => {
   const input = document.querySelector('input')!;
   (input as HTMLInputElement & { __hanuPickerObservedAt?: number }).__hanuPickerObservedAt = 1200;
