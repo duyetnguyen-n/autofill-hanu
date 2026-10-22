@@ -49,6 +49,11 @@ export interface HcmueAccount {
   identity: Identity;
   loggedIn: boolean;
 }
+export interface Inspection {
+  checkedAt: string;
+  exam: Exam;
+  checks: { label: string; ok: boolean; message: string }[];
+}
 export interface Attempt {
   sentAt?: string;
   receivedAt?: string;
@@ -77,6 +82,7 @@ export interface Schedule {
   test: boolean;
 }
 export interface RunnerState {
+  protocolVersion?: number;
   deviceId: string;
   name: string;
   platform: string;
@@ -92,6 +98,7 @@ export type Command =
   | "logout"
   | "remove"
   | "exams"
+  | "inspect"
   | "prepare"
   | "arm"
   | "stop"
@@ -103,6 +110,7 @@ export const COMMANDS: Command[] = [
   "logout",
   "remove",
   "exams",
+  "inspect",
   "prepare",
   "arm",
   "stop",
@@ -148,6 +156,41 @@ export function examKey(e: Pick<Exam, "ma_cap_thi" | "ngay_mo_dang_ky">) {
 export function schoolTime(value: string) {
   const iso = value.replace(" ", "T");
   return Date.parse(/(?:Z|[+-]\d\d:?\d\d)$/i.test(iso) ? iso : `${iso}+07:00`);
+}
+export function schoolDate(value: string) {
+  const ms = schoolTime(value);
+  return Number.isFinite(ms)
+    ? new Date(ms).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })
+    : value;
+}
+/** Local interpretation only; never replace or filter the school's fields. */
+export function examObservation(exam: Exam, now: number) {
+  const opens = schoolTime(exam.ngay_mo_dang_ky), closes = schoolTime(exam.ngay_ket_thuc_dang_ky);
+  const notes: string[] = [];
+  if (!Number.isFinite(opens) || !Number.isFinite(closes) || closes <= opens)
+    notes.push("Chưa đọc được khoảng thời gian đăng ký");
+  else if (now >= closes) notes.push("Đã quá hạn theo thời gian");
+  else if (now < opens) notes.push("Chưa đến giờ mở");
+  else notes.push("Đang trong khoảng thời gian đăng ký");
+  if (Number(exam.so_luong) >= Number(exam.so_luong_toi_da)) notes.push("Số chỗ đã đủ theo API");
+  return notes.join(" · ");
+}
+export function scheduleProblem(exam: Exam, target: number, now: number, test: boolean) {
+  if (!test) {
+    const opens = schoolTime(exam.ngay_mo_dang_ky), closes = schoolTime(exam.ngay_ket_thuc_dang_ky);
+    if (!Number.isFinite(opens) || !Number.isFinite(closes) || closes <= opens)
+      return "Trường trả thời gian mở/đóng không hợp lệ. Vẫn có thể xem và kiểm tra API.";
+    if (now >= closes) return `Đợt này đã đóng lúc ${schoolDate(exam.ngay_ket_thuc_dang_ky)}. Chọn đợt khác để đăng ký thật.`;
+    if (target < opens) return `Giờ gửi phải từ ${schoolDate(exam.ngay_mo_dang_ky)} khi trường mở đăng ký.`;
+    if (target >= closes) return `Giờ gửi phải trước ${schoolDate(exam.ngay_ket_thuc_dang_ky)} khi trường đóng đăng ký.`;
+    if (Number(exam.so_luong) >= Number(exam.so_luong_toi_da)) return "Trường đang trả số chỗ đã đủ. Tải lại kỳ thi để kiểm tra trước khi chuẩn bị đăng ký thật.";
+    if (exam.hasRegisterCode !== 0 || !["open", "upcoming"].includes(exam.trang_thai))
+      return `Trạng thái trường trả về: ${exam.trang_thai}. Đợt này chưa đủ điều kiện đăng ký thật theo luồng thí sinh tự do.`;
+  }
+  if (!Number.isFinite(target)) return "Chọn ngày và giờ gửi hợp lệ theo giờ Việt Nam.";
+  if (target < now + 6000) return "Giờ gửi đã qua hoặc còn dưới 6 giây. Chọn giờ mới để đủ thời gian chuẩn bị và bật lịch.";
+  if (target > now + 7 * 86400000) return "Chỉ bật lịch trong 7 ngày tới. Bạn vẫn có thể xem kỳ thi và kiểm tra API ngay.";
+  return undefined;
 }
 export function fingerprintInput(jwk: JsonWebKey) {
   return JSON.stringify({ kty: jwk.kty, n: jwk.n, e: jwk.e });

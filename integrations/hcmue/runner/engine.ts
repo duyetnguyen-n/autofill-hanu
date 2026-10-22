@@ -10,6 +10,8 @@ import {
   schoolTime,
   payload,
   questionSignature,
+  scheduleProblem,
+  type Inspection,
   type RunnerState,
   type Schedule,
   type Exam,
@@ -86,6 +88,7 @@ export class Engine {
   }
   snapshot(): RunnerState {
     return structuredClone({
+      protocolVersion: 2,
       deviceId: this.data.deviceId,
       name: this.data.name,
       platform: process.platform,
@@ -266,7 +269,7 @@ export class Engine {
         String(args.location ?? "HCMUE"),
       );
     }
-    if (command === "prepare") {
+    if (command === "prepare" || command === "inspect") {
       const accountId = String(args.accountId),
         client = this.client(accountId),
         exams = await client.exams(
@@ -275,22 +278,28 @@ export class Engine {
         );
       const exam = exams.find((e) => examKey(e) === args.examKey);
       if (!exam) throw new Error("Không còn kỳ thi đã chọn.");
-      const starts = schoolTime(exam.ngay_mo_dang_ky),
-        ends = schoolTime(exam.ngay_ket_thuc_dang_ky);
+      if (command === "inspect") {
+        const checks = await Promise.all([
+          (async () => {
+            const identity = await client.profile();
+            if (identity.key !== this.account(accountId).view.identity.key) throw new Error("Tài khoản đã thay đổi. Đăng nhập lại.");
+            const missing = [!identity.hasPhoto && "thiếu ảnh thẻ", !identity.verified && "chưa xác thực email"].filter(Boolean);
+            return { label: "Hồ sơ", ok: true, message: missing.length ? `API đọc được; ${missing.join(", ")}.` : "API đọc được; có ảnh thẻ và email đã xác thực." };
+          })().catch(e => ({ label: "Hồ sơ", ok: false, message: (e as Error).message })),
+          client.questions(exam).then(q => {
+            questionSignature(q);
+            return { label: "Câu hỏi", ok: true, message: `Đọc được ${q.questions.length} câu hỏi bổ sung.` };
+          }).catch(e => ({ label: "Câu hỏi", ok: false, message: (e as Error).message })),
+          client.registration(exam).then(r => ({ label: "Đăng ký cũ", ok: true, message: r.isRegistered ? "Trường trả đã có đăng ký cho đợt này." : "Trường trả chưa có đăng ký cho đợt này." })).catch(e => ({ label: "Đăng ký cũ", ok: false, message: (e as Error).message })),
+          client.conflict(exam).then(c => ({ label: "Trùng lịch", ok: true, message: c.hasConflict ? "Trường trả có xung đột lịch/địa điểm." : "Trường trả không có xung đột lịch/địa điểm." })).catch(e => ({ label: "Trùng lịch", ok: false, message: (e as Error).message })),
+        ]);
+        return { checkedAt: new Date().toISOString(), exam, checks } satisfies Inspection;
+      }
+      const starts = schoolTime(exam.ngay_mo_dang_ky);
       let target = Number(args.targetAt);
-      if (args.runNow === true) target = Math.max(Date.now() + 7000, starts);
-      if (
-        !Number.isFinite(starts) ||
-        !Number.isFinite(ends) ||
-        !Number.isFinite(target) ||
-        target < starts ||
-        target >= ends ||
-        target < Date.now() + 6000 ||
-        target > Date.now() + 7 * 86400000
-      )
-        throw new Error(
-          "Giờ gửi cần nằm trong thời gian mở, cách hiện tại ít nhất 6 giây và trong 7 ngày.",
-        );
+      if (args.runNow === true) target = args.test === true ? Date.now() + 7000 : Math.max(Date.now() + 7000, starts);
+      const problem = scheduleProblem(exam, target, Date.now(), args.test === true);
+      if (problem) throw new Error(problem);
       if (
         this.data.schedules.some(
           (s) =>
@@ -324,9 +333,9 @@ export class Engine {
         client.conflict(exam),
       ]);
       questionSignature(q);
-      if (registration.isRegistered)
+      if (registration.isRegistered && args.test !== true)
         throw new Error("Tài khoản đã đăng ký kỳ thi này.");
-      if (conflict.hasConflict)
+      if (conflict.hasConflict && args.test !== true)
         throw new Error("Tài khoản có xung đột lịch hoặc địa điểm.");
       if (args.answers === undefined) return { exam, questions: q, identity };
       if (target < Date.now() + 6000)
@@ -353,7 +362,6 @@ export class Engine {
       for (const previous of this.data.schedules)
         if (
           previous.accountId === accountId &&
-          examKey(previous.exam) === examKey(exam) &&
           previous.status === "prepared"
         ) {
           previous.status = "stopped";
@@ -508,21 +516,21 @@ export class Engine {
     if (
       !exam ||
       exam.hasRegisterCode !== 0 ||
-      !["open", "upcoming"].includes(exam.trang_thai) ||
-      Number(exam.so_luong) >= Number(exam.so_luong_toi_da)
+      (!s.test && (!["open", "upcoming"].includes(exam.trang_thai) ||
+      Number(exam.so_luong) >= Number(exam.so_luong_toi_da)))
     )
       throw new Error("Kỳ thi đã thay đổi hoặc hết chỗ.");
     if (questionSignature(q) !== s.questionSignature)
       throw new Error("Câu hỏi đã thay đổi. Chuẩn bị lại.");
-    if (r.isRegistered) throw new Error("Đã có đăng ký trên trường.");
-    if (c.hasConflict)
+    if (r.isRegistered && !s.test) throw new Error("Đã có đăng ký trên trường.");
+    if (c.hasConflict && !s.test)
       throw new Error("Phát hiện xung đột lịch hoặc địa điểm.");
   }
   private async dispatch(s: Schedule, generation: number): Promise<void> {
     if (this.closing || this.generation.get(s.id) !== generation) return;
     if (
       Date.now() < Date.parse(s.targetAt) ||
-      Date.now() < schoolTime(s.exam.ngay_mo_dang_ky) ||
+      (!s.test && Date.now() < schoolTime(s.exam.ngay_mo_dang_ky)) ||
       Date.now() > s.expiresAt
     ) {
       await this.update(s, "failed", "Đã ngoài thời gian cho phép gửi.");

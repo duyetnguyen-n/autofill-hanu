@@ -16,8 +16,9 @@ import type {
 import type { httpFixture } from "../cloud/fixture";
 export async function connectRunner(
   app: Awaited<ReturnType<typeof httpFixture>>,
+  create = fixtureEngine,
 ) {
-  const f = await fixtureEngine(),
+  const f = await create(),
     identity = await f.engine.identity();
   const ws = new WebSocket(
     app.config.origin.replace("http:", "ws:") + "/hcmue-runner",

@@ -521,6 +521,7 @@
 .hc-error > span {
   flex: 1;
 }
+.hc-message > span { flex: 1; }
 .hc-runs {
   border-top: 1px solid var(--hc-line);
 }
@@ -884,4 +885,41 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.hc-device p.hc-runner-help { margin: 8px 0 4px; max-width: 85ch; }
+.hc-account-row td { vertical-align: top; white-space: normal; }
+.hc-account-row td:nth-child(2) { min-width: 160px; max-width: 200px; overflow-wrap: anywhere; }
+.hc-account-row td:nth-child(3) { min-width: 230px; width: 30%; }
+.hc-account-row td:nth-child(4) { min-width: 205px; }
+.hc-account-row td:nth-child(5) { min-width: 245px; max-width: 330px; }
+.hc-account-row td > span:has(select), .hc-account-row td > span:has(input) { width: 100%; min-width: 0; }
+.hc-account-row select { text-overflow: ellipsis; width: 100%; }
+.hc-account-row .hc-status { margin-top: 9px; }
+.hc-account-row td small { line-height: 1.65; }
+.hc-account-row .hc-profile-ready { color: var(--hc-accent); }
+.hc-row-error { color: var(--hc-error) !important; font-size: 12px; line-height: 1.65; margin: 9px 0; }
+.hc-account-footer { align-items: center; }
+.hc-inspection { margin: 12px 0 5px; font-size: 12px; line-height: 1.65; }
+.hc-inspection summary { cursor: pointer; color: var(--hc-accent); }
+.hc-inspection p { margin: 8px 0; color: var(--hc-muted); }
+.hc-inspection p strong { display: inline; color: var(--hc-text); }
+.hc-exam-details { padding: 0 25px 20px; }
+.hc-exam-details dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin: 0; }
+.hc-exam-details dt { font-size: 11px; color: var(--hc-muted); margin-bottom: 6px; }
+.hc-exam-details dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.hc-exam-details p { font-size: 12px; color: var(--hc-muted); line-height: 1.7; margin: 20px 0 8px; }
+.hc-api-data { overflow: auto; max-height: 55dvh; background: color-mix(in srgb, currentColor 4%, transparent); padding: 16px; border-radius: 8px; font-size: 12px; line-height: 1.6; }
+@media (max-width: 760px) {
+  .hc-table { min-width: 0; }
+  .hc-table thead { display: block; background: transparent; }
+  .hc-table thead tr, .hc-table tbody, .hc-account-row { display: block; }
+  .hc-table thead th:not(:first-child) { display: none; }
+  .hc-account-row { padding: 17px; border-top: 1px solid var(--hc-line); }
+  .hc-account-row td:nth-child(n) { display: block; padding: 0; width: auto; min-width: 0; max-width: none; border: 0; }
+  .hc-account-row td:first-child { float: right; }
+  .hc-account-row td:nth-child(2) { padding-right: 35px; }
+  .hc-account-row td[data-label] { margin-top: 18px; }
+  .hc-account-row td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--hc-muted); margin-bottom: 7px; }
+  .hc-exam-details { padding: 0 17px 20px; }
+  .hc-exam-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
 }

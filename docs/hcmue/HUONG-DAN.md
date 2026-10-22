@@ -8,9 +8,12 @@ HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng lu�
 2. macOS: mở `Start HCMUE.command`. Windows: mở `Start HCMUE.cmd`. Nhập địa chỉ HTTPS của website điều khiển. Giữ cửa sổ này mở. Các gói chưa ký số; cần kiểm tra nguồn trước khi cho phép chạy trong cài đặt bảo mật của hệ điều hành.
 3. Trên website, mở HSK HCMUE, chọn Liên kết máy, nhập mã từ cửa sổ Runner. Mã có hạn 5 phút. So sánh toàn bộ dấu vân tay trên hai cửa sổ rồi xác nhận.
 4. Thêm tài khoản HCMUE bằng CCCD và mật khẩu. Mật khẩu chỉ dùng cho lần đăng nhập; phiên và cookie được mã hóa trên máy bằng khóa trong Keychain (Mac) hoặc DPAPI (Windows).
-5. Hoàn tất ảnh thẻ và xác thực email tại trường. Chọn tài khoản, tải kỳ thi và chọn đúng cấp/đợt. Danh sách lấy từ HCMUE, không giới hạn cứng theo cấp.
-6. Giờ gửi mặc định là giờ mở chính thức, hoặc thời điểm tương lai nếu đợt đã mở. Có thể chọn muộn hơn. “Chuẩn bị chạy ngay” chọn một thời điểm gần nhất có thời gian để kiểm tra, chưa tự bật lịch.
-7. Dùng chế độ “Kiểm tra, không gửi đơn” trước. Chuẩn bị, trả lời các câu hỏi riêng nếu có, rồi bấm Bật lịch và xác nhận. Live dùng cùng luồng nhưng gửi đăng ký thật, cần quyền Live trên website.
+5. Hoàn tất ảnh thẻ và xác thực email tại trường. Bấm **Tải kỳ thi**. Danh sách giữ mọi đợt API trả về, kể cả hết hạn hoặc hết chỗ. Xem ngày thi, ngày mở/đóng, số chỗ, trạng thái gốc và toàn bộ dữ liệu kỳ thi trong phần **Kỳ thi từ trường**. Nhận xét theo thời gian của tool được tách riêng, không sửa trạng thái trường trả về.
+6. Trên từng dòng tài khoản, chọn **Kỳ thi của tài khoản**, **Giờ gửi · Việt Nam** và **Chế độ**. Ví dụ A chọn HSK 2, B chọn HSK 4, C chọn HSK 6; có thể đặt cùng giờ hoặc khác giờ. Mẫu bên dưới chỉ dùng khi muốn áp dụng cùng thiết lập cho các tài khoản đang chọn và chưa bật lịch. Sửa thiết lập sau khi chuẩn bị thì cần chuẩn bị lại; không thể bật lịch cũ đã khác thiết lập.
+7. Có ba thao tác riêng:
+   - **Kiểm tra hồ sơ/API**: chỉ đọc hồ sơ, câu hỏi, đăng ký cũ và trùng lịch. Dùng được với đợt đã đóng nếu trường vẫn cho đọc API. Không tạo lịch hoặc gửi đơn. Báo cáo phân biệt đọc API thành công với điều kiện đăng ký, ví dụ “API đọc được; thiếu ảnh thẻ”.
+   - **Diễn tập hẹn giờ, không gửi đơn**: chọn thời điểm ít nhất 6 giây phía trước, bấm **Chuẩn bị**, trả lời câu hỏi nếu có, rồi **Bật lịch** và xác nhận. Cho phép diễn tập với đợt đã đóng/đủ chỗ hoặc đã có đăng ký; vẫn cần hồ sơ, phiên và cấu trúc câu hỏi hợp lệ. Không gọi POST đăng ký. Diễn tập thành công không chứng minh còn slot hoặc API gửi thật đã thành công.
+   - **Đăng ký thật**: cùng các bước nhưng kiểm tra thời gian mở/đóng, chỗ, ảnh thẻ, email, câu hỏi, đăng ký cũ và trùng lịch. Cần quyền Live trên website. Giờ gửi phải nằm trong khoảng đăng ký và trong 7 ngày tới. Chuẩn bị không tự bật lịch. Tài khoản lỗi được báo trên từng dòng, không chặn các tài khoản còn lại. Mỗi tài khoản chỉ bật một lịch tại một thời điểm.
 8. Máy phải bật, Runner còn chạy và có mạng. Runner cố giữ máy thức, nhưng đóng nắp laptop hoặc chính sách hệ điều hành vẫn có thể làm máy ngủ. Bật tự đồng bộ giờ trong hệ điều hành. Không chỉnh giờ khi đã bật lịch.
 9. Nếu website đóng hoặc mất kết nối, lịch đã được máy xác nhận vẫn chạy. Dùng “Dừng tất cả trên máy” trong cửa sổ local để dừng. Website chỉ báo dừng sau khi máy xác nhận. Không thể thu hồi yêu cầu đã gửi tới trường.
 10. Khi có mã đăng ký, mở lịch sử đăng ký trên HCMUE để kiểm tra và thanh toán trong hạn. Runner không tự thanh toán hoặc hủy đơn.
@@ -35,3 +38,13 @@ Runner khởi động lại không phát lại lịch đã bật. Lịch chưa g
 - Mỗi kho chỉ có một tiến trình Runner. Đóng bằng Ctrl+C ở cửa sổ khởi chạy để dừng ứng dụng.
 - Hủy liên kết thiết bị sẽ dừng lịch và xóa tài khoản/lịch khỏi kho Runner khi máy nhận được thông báo. Máy đang offline phải được dừng tại chỗ trước.
 - Gửi đúng giờ trên máy không bảo đảm slot: mạng, hàng đợi và xử lý của máy chủ trường quyết định kết quả cuối. Số mili giây hiển thị là độ lệch lúc bắt đầu gửi trên máy, không phải thời điểm máy chủ nhận.
+
+## Gửi cho người khác sử dụng
+
+Gửi địa chỉ website và trang `/hcmue-downloads/index.html` của website. Người nhận đăng nhập bằng Google của họ, chờ quản trị viên duyệt quyền sử dụng (và Live nếu cần), tải Runner đúng máy, giải nén rồi mở `Start HCMUE.command` hoặc `Start HCMUE.cmd`. Nhập địa chỉ HTTPS của website khi được hỏi, sau đó tự liên kết bằng mã/dấu vân tay và tự thêm tài khoản trường. Không cần cài Node/npm, không cần sao chép extension Google Forms để dùng HCMUE.
+
+Chỉ gửi gói tải sạch; không gửi thư mục kho phiên `HcmueRunner`, `state.enc`, mã liên kết hay tài khoản đang dùng của bạn. Dữ liệu trường và phiên đăng nhập được giữ riêng trên máy người nhận. Bản Windows và Mac Intel còn cần kiểm chứng trên máy thật trước đợt đăng ký chính thức.
+
+## Cập nhật Runner
+
+Website sẽ báo nếu Runner cũ chưa hỗ trợ kiểm tra API/diễn tập mới. Dừng các lịch đang bật, đóng Runner cũ, tải và giải nén bản mới vào thư mục riêng, rồi mở bản mới trên cùng máy. Kho mã hóa nằm trong thư mục dữ liệu hệ điều hành, nên liên kết và tài khoản được giữ lại. Lịch cũ không tự phát lại sau khi khởi động; hãy kiểm tra, chuẩn bị và bật lại. Không mở hai bản đồng thời.

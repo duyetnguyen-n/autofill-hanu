@@ -170,10 +170,60 @@ describe("isolated HCMUE execution", () => {
   it("checks existing registration, photo, and conflicts before preparation", async () => {
     const f = await setup();
     f.client.registered = true;
-    await expect(f.prepare()).rejects.toThrow("đã đăng ký");
+    await expect(f.prepare(false)).rejects.toThrow("đã đăng ký");
     f.client.registered = false;
     f.client.conflicting = true;
-    await expect(f.prepare()).rejects.toThrow("xung đột");
+    await expect(f.prepare(false)).rejects.toThrow("xung đột");
+  });
+  it("inspects an expired full exam and preserves each API's failure independently", async () => {
+    const f = await setup();
+    const ended = { ...exam, ngay_ket_thuc_dang_ky: "2026-01-02 12:00:00", so_luong: 400 };
+    f.client.exams = async () => [ended];
+    f.client.questions = async () => { throw new Error("Phiên hết hạn ở API câu hỏi"); };
+    f.client.registered = true;
+    const report = await f.engine.execute("inspect", { accountId: "account-1", examKey: examKey(ended) }, limits) as any;
+    expect(report.exam).toEqual(ended);
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Hồ sơ", ok: true }),
+      expect.objectContaining({ label: "Câu hỏi", ok: false, message: "Phiên hết hạn ở API câu hỏi" }),
+      expect.objectContaining({ label: "Đăng ký cũ", ok: true, message: expect.stringContaining("đã có đăng ký") }),
+      expect.objectContaining({ label: "Trùng lịch", ok: true }),
+    ]));
+    expect(f.data.schedules).toHaveLength(0);
+    expect(f.client.submits).toHaveLength(0);
+  });
+  it("rehearses an ended full exam with an existing registration without ever submitting", async () => {
+    const f = await setup();
+    f.client.exams = async () => [{ ...exam, ngay_ket_thuc_dang_ky: "2026-01-02 12:00:00", so_luong: 400 }];
+    f.client.registered = true;
+    f.client.conflicting = true;
+    await expect(f.prepare(false)).rejects.toThrow("Đợt này đã đóng");
+    const s = await f.prepare(true);
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(7010);
+    expect(s.status).toBe("stopped");
+    expect(s.attempt.message).toContain("Không gọi API");
+    expect(f.client.submits).toHaveLength(0);
+  });
+  it("rehearses before an exam opens without waiting until its real opening", async () => {
+    const f = await setup();
+    f.client.exams = async () => [{ ...exam, ngay_mo_dang_ky: "2098-01-01 09:00:00" }];
+    await f.engine.execute("prepare", { accountId: "account-1", examKey: examKey((await f.client.exams())[0]), targetAt: Date.now() + 7000, answers: {}, test: true }, { ...limits, expiresAt: Date.now() + 86400000 });
+    const s = f.data.schedules.at(-1)!;
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(7010);
+    expect(s.status).toBe("stopped");
+    expect(f.client.submits).toHaveLength(0);
+  });
+  it("replaces an account's old prepared level when preparing a different HSK", async () => {
+    const f = await setup(), first = await f.prepare();
+    const secondExam = { ...exam, ma_cap_thi: "HSK6_D1", ten_cap_thi: "HSK 6" };
+    f.client.exams = async () => [exam, secondExam];
+    await f.engine.execute("prepare", { accountId: "account-1", examKey: examKey(secondExam), targetAt: Date.now() + 7000, answers: {}, test: true }, limits);
+    expect(first.status).toBe("stopped");
+    const ready = f.data.schedules.filter(s => s.status === "prepared");
+    expect(ready).toHaveLength(1);
+    expect(ready[0].exam.ma_cap_thi).toBe("HSK6_D1");
   });
 });
 

@@ -36,16 +36,19 @@ import { darkTheme, lightTheme, useTheme } from "../../../manager/ui/theme";
 import { box, open, newReplyKey } from "../crypto";
 import {
   examKey,
-  schoolTime,
   statusLabel,
   activeStatus,
+  examObservation,
+  schoolDate,
   type Device,
   type RunnerState,
   type Exam,
   type Questions,
   type Command,
   type CommandReply,
+  type Inspection,
 } from "../protocol";
+import { vnInput, targetTime, suggestedTarget, planForSchedule, matchesPlan, eachAccount, type AccountPlan } from "./planning";
 import "./page.css";
 async function api<T>(path: string, value?: unknown) {
   const controller = new AbortController(),
@@ -72,8 +75,6 @@ async function api<T>(path: string, value?: unknown) {
     clearTimeout(timer);
   }
 }
-const vnInput = (ms: number) =>
-  new Date(ms + 7 * 3600000).toISOString().slice(0, 19);
 const time = (value: string) =>
   new Date(value).toLocaleString("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
@@ -114,6 +115,10 @@ export function HcmuePage({
     [armOpen, setArmOpen] = useState(false),
     [armSelection, setArmSelection] = useState<string[]>([]),
     [now, setNow] = useState(Date.now());
+  const [plans, setPlans] = useState<Record<string, AccountPlan>>({}),
+    [rowErrors, setRowErrors] = useState<Record<string, string>>({}),
+    [inspections, setInspections] = useState<Record<string, Inspection>>({}),
+    [details, setDetails] = useState<Exam>();
   const [questionDraft, setQuestionDraft] = useState<
     | {
         accountId: string;
@@ -215,6 +220,11 @@ export function HcmuePage({
     setSelected(new Set());
     setExams([]);
     setExamId("");
+    setPlans({});
+    setRowErrors({});
+    setInspections({});
+    setQuestionDraft(undefined);
+    setArmOpen(false);
     setTrusted(
       !!device &&
         localStorage.getItem(trustKey(device.id)) === device.fingerprint,
@@ -245,7 +255,7 @@ export function HcmuePage({
   const accounts = state?.accounts ?? [],
     schedules = state?.schedules ?? [],
     chosen = accounts.filter((a) => selected.has(a.id)),
-    prepared = schedules.filter((s) => s.status === "prepared"),
+    prepared = schedules.filter((s) => s.status === "prepared" && Date.parse(s.targetAt) >= now + 2500 && !rowErrors[s.accountId] && matchesPlan(s, plans[s.accountId])),
     arming = prepared.filter((s) => armSelection.includes(s.id)),
     active = schedules.filter((s) => activeStatus(s.status)),
     success = schedules.filter((s) => s.status === "pending_payment"),
@@ -266,36 +276,46 @@ export function HcmuePage({
         .join(":")
     : "--:--:--";
   const exam = exams.find((e) => examKey(e) === examId);
-  async function prepare(runNow = false) {
-    if (!chosen.length || !exam)
-      throw new Error("Chọn tài khoản và kỳ thi trước.");
-    const scheduled = runNow
-      ? Math.max(
-          schoolTime(exam.ngay_mo_dang_ky),
-          Date.now() + Math.max(20000, chosen.length * 5000),
-        )
-      : Date.parse(target + "+07:00");
-    if (runNow) setTarget(vnInput(scheduled));
-    const drafts = [];
-    for (const a of chosen) {
-      const args = {
-        accountId: a.id,
-        examKey: examId,
-        targetAt: scheduled,
-        test,
-        location: exam.dia_diem_code ?? "HCMUE",
-      };
+  function planFor(id: string): AccountPlan {
+    const latest = [...schedules].reverse().find(s => s.accountId === id);
+    return plans[id] ?? (latest ? planForSchedule(latest) : { examKey: "", target: "", test: true });
+  }
+  function editPlan(id: string, change: Partial<AccountPlan>) {
+    const current = planFor(id);
+    setPlans(old => ({ ...old, [id]: { ...current, ...change } }));
+    setRowErrors(old => ({ ...old, [id]: "" }));
+    setInspections(old => { const n = { ...old }; delete n[id]; return n; });
+  }
+  async function loadExams() {
+    const data = await request("exams", { accountId: chosen[0]?.id ?? accounts[0]?.id });
+    setExams(data);
+    if (!data.length) setNotice("API trường chưa trả kỳ thi nào. Không có bộ lọc ẩn đợt cũ.");
+  }
+  const failRow = (a: { id: string }, message: string) => setRowErrors(old => ({ ...old, [a.id]: message }));
+  async function inspectChosen() {
+    setRowErrors(old => ({ ...old, ...Object.fromEntries(chosen.map(a => [a.id, ""])) }));
+    const completed = await eachAccount(chosen, async a => {
+      const p = planFor(a.id), e = exams.find(x => examKey(x) === p.examKey);
+      if (!e) throw new Error("Chọn kỳ thi riêng cho tài khoản này trước khi kiểm tra.");
+      setInspections(old => { const n = { ...old }; delete n[a.id]; return n; });
+      const result = await request("inspect", { accountId: a.id, examKey: p.examKey, location: e.dia_diem_code ?? "HCMUE" });
+      setInspections(old => ({ ...old, [a.id]: result }));
+    }, failRow);
+    setNotice(`Đã nhận báo cáo cho ${completed}/${chosen.length} tài khoản. Xem từng mục bên dưới. Không tạo lịch và không gửi đơn.`);
+  }
+  async function prepare() {
+    const drafts: NonNullable<typeof questionDraft> = [];
+    setRowErrors(old => ({ ...old, ...Object.fromEntries(chosen.map(a => [a.id, ""])) }));
+    const completed = await eachAccount(chosen, async a => {
+      const p = planFor(a.id), e = exams.find(x => examKey(x) === p.examKey);
+      if (!e) throw new Error("Chọn kỳ thi riêng cho tài khoản này.");
+      const args = { accountId: a.id, examKey: p.examKey, targetAt: targetTime(p.target), test: p.test, location: e.dia_diem_code ?? "HCMUE" };
       const result = await request("prepare", args);
-      drafts.push({ accountId: a.id, q: result.questions, args, answers: {} });
-    }
-    if (drafts.some((d) => d.q.questions.length)) setQuestionDraft(drafts);
-    else {
-      for (const draft of drafts)
-        setState(await request("prepare", { ...draft.args, answers: {} }));
-      setNotice(
-        `Đã chuẩn bị ${drafts.length} tài khoản. Bật lịch để máy thực hiện.`,
-      );
-    }
+      if (result.questions.questions.length) drafts.push({ accountId: a.id, q: result.questions, args, answers: {} });
+      else setState(await request("prepare", { ...args, answers: {} }));
+    }, failRow);
+    if (drafts.length) setQuestionDraft(drafts);
+    setNotice(`Đã xử lý ${completed}/${chosen.length} tài khoản${drafts.length ? `; ${drafts.length} tài khoản cần trả lời câu hỏi` : ""}. Lịch sẵn sàng vẫn cần bật và xác nhận; tài khoản lỗi được ghi riêng.`);
   }
   const accountIds = accounts.map((a) => a.id).join(",");
   useEffect(() => {
@@ -305,6 +325,7 @@ export function HcmuePage({
     );
   }, [accountIds]);
   const ready = !!device?.connected && trusted && !!state;
+  const updatedRunner = (state?.protocolVersion ?? 1) >= 2;
   return (
     <FluentProvider
       theme={dark ? darkTheme : lightTheme}
@@ -396,7 +417,7 @@ export function HcmuePage({
           {notice && (
             <div className="hc-message" role="status">
               <CheckmarkCircleRegular />
-              {notice}
+              <span>{notice}</span>
             </div>
           )}
           <section className="hc-runway" aria-label="Lịch sắp gửi">
@@ -438,12 +459,15 @@ export function HcmuePage({
               <DesktopRegular />
             </div>
             <div className="hc-device-info">
-              <h2>{device?.name ?? "Kết nối máy thực thi"}</h2>
+              <h2>Máy thực hiện đăng ký{device ? ` · ${device.name}` : ""}</h2>
               <p>
                 {device
                   ? `${device.platform === "darwin" ? "macOS" : "Windows"} · ${device.connected ? "Đã kết nối website" : "Chưa kết nối"}${trusted ? " · Đã đối chiếu thiết bị" : ""}`
                   : "Mở HCMUE Runner trên máy, rồi nhập mã liên kết một lần."}
               </p>
+              <p className="hc-runner-help">Runner là chương trình gửi đăng ký trên máy này. Giữ máy bật, có mạng và không ngủ. Website chỉ dùng để điều khiển và xem kết quả.</p>
+              {state && <p>{state.awake ? "Runner đang chạy" : "Runner đang dừng"} · {active.length} lịch đang hoạt động · Lịch đã nhận vẫn chạy khi đóng website.</p>}
+              {state && !updatedRunner && <p className="hc-row-error">Runner đang là bản cũ. Dừng các lịch trước, tải bản mới ở “Cài Runner”, đóng bản cũ rồi mở bản mới để dùng kiểm tra API và diễn tập. Tài khoản và liên kết được giữ trên cùng máy.</p>}
               {devices.length > 1 && (
                 <Select
                   aria-label="Chọn máy chạy"
@@ -512,9 +536,7 @@ export function HcmuePage({
                   <div>
                     <h2>Tài khoản đăng ký</h2>
                     <p>
-                      {selected.size
-                        ? `${selected.size} tài khoản đã chọn`
-                        : "Mỗi tài khoản có phiên và lịch riêng."}
+                      Chọn kỳ thi, giờ và chế độ riêng trên từng dòng. {selected.size} tài khoản đã chọn.
                     </p>
                   </div>
                   <Button
@@ -559,10 +581,9 @@ export function HcmuePage({
                             />
                           </th>
                           <th>Thí sinh</th>
-                          <th>Hồ sơ</th>
-                          <th>Lịch gần nhất</th>
-                          <th>Trạng thái</th>
-                          <th></th>
+                          <th>Kỳ thi của tài khoản</th>
+                          <th>Giờ gửi · Việt Nam</th>
+                          <th>Chế độ và kết quả</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -570,8 +591,11 @@ export function HcmuePage({
                           const run = [...schedules]
                             .reverse()
                             .find((s) => s.accountId === a.id);
+                          const p = planFor(a.id), e = exams.find(x => examKey(x) === p.examKey);
+                          const locked = schedules.some(s => s.accountId === a.id && activeStatus(s.status));
+                          const report = inspections[a.id];
                           return (
-                            <tr key={a.id}>
+                            <tr key={a.id} className="hc-account-row">
                               <td>
                                 <Checkbox
                                   aria-label={`Chọn ${a.identity.name}`}
@@ -591,61 +615,41 @@ export function HcmuePage({
                                   {a.identity.maskedId} · {a.identity.email}
                                 </small>
                               </td>
-                              <td>
-                                <span className="hc-profile-ready">
-                                  <CheckmarkCircleRegular />
-                                  {a.identity.hasPhoto && a.identity.verified
-                                    ? "Đã kiểm tra"
-                                    : "Cần hoàn thiện"}
-                                </span>
+                              <td data-label="Kỳ thi">
+                                <Select aria-label={`Kỳ thi cho ${a.identity.name}`} value={p.examKey} disabled={busy || locked || !exams.length} onChange={event => {
+                                  const next = exams.find(x => examKey(x) === event.target.value);
+                                  editPlan(a.id, { examKey: event.target.value, target: next ? suggestedTarget(next, p.test) : "" });
+                                }}>
+                                  <option value="">{exams.length ? "Chọn cấp và đợt thi" : "Tải kỳ thi trước"}</option>
+                                  {exams.map(x => <option key={examKey(x)} value={examKey(x)}>{x.ten_cap_thi} · Thi {x.ngay_thi} · Mở {x.ngay_mo_dang_ky}</option>)}
+                                </Select>
+                                {e && <><small>{examObservation(e, now)}</small><Button appearance="transparent" size="small" onClick={() => setDetails(e)}>Xem dữ liệu trường</Button></>}
                               </td>
-                              <td>
-                                {run ? (
-                                  <>
-                                    <strong>{run.exam.ten_cap_thi}</strong>
-                                    <small>{time(run.targetAt)}</small>
-                                  </>
-                                ) : (
-                                  <span className="hc-muted">
-                                    Chưa đặt lịch
-                                  </span>
-                                )}
+                              <td data-label="Giờ gửi · Việt Nam">
+                                <Input aria-label={`Giờ gửi cho ${a.identity.name}`} type="datetime-local" step={1} value={p.target} disabled={busy || locked} onChange={(_, d) => editPlan(a.id, { target: d.value })} />
+                                <small>{locked ? "Đã bật lịch trên máy; dừng lịch trước khi sửa." : "Chuẩn bị xong vẫn cần bật lịch."}</small>
                               </td>
-                              <td>
-                                {run ? (
-                                  <span
-                                    className={`hc-status hc-status-${run.status}`}
-                                  >
-                                    {statusLabel[run.status]}
-                                  </span>
-                                ) : (
-                                  <span className="hc-status">
-                                    Đã đăng nhập
-                                  </span>
-                                )}
-                              </td>
-                              <td>
-                                <Button
-                                  size="small"
-                                  appearance="subtle"
-                                  disabled={
-                                    busy ||
-                                    schedules.some(
-                                      (s) =>
-                                        s.accountId === a.id &&
-                                        activeStatus(s.status),
-                                    )
-                                  }
-                                  onClick={() =>
-                                    void act(async () =>
-                                      setState(
-                                        await request("logout", { id: a.id }),
-                                      ),
-                                    )
-                                  }
-                                >
-                                  Đăng xuất
-                                </Button>
+                              <td data-label="Chế độ và kết quả">
+                                <Select aria-label={`Chế độ cho ${a.identity.name}`} value={p.test ? "test" : "live"} disabled={busy || locked} onChange={event => {
+                                  const isTest = event.target.value === "test";
+                                  editPlan(a.id, { test: isTest, ...(e ? { target: suggestedTarget(e, isTest) } : {}) });
+                                }}>
+                                  <option value="test">Diễn tập hẹn giờ, không gửi đơn</option>
+                                  <option value="live" disabled={!account.liveEnabled}>Đăng ký thật</option>
+                                </Select>
+                                <small className="hc-profile-ready">{a.identity.hasPhoto && a.identity.verified ? "Hồ sơ có ảnh và email xác thực" : "Hồ sơ cần hoàn thiện"}</small>
+                                <span className={`hc-status hc-status-${run?.status ?? "draft"}`}>{run ? statusLabel[run.status] : "Đã đăng nhập"}</span>
+                                {run && <small>Lịch gần nhất: {run.exam.ten_cap_thi} · {time(run.targetAt)} · {run.test ? "Diễn tập" : "Đăng ký thật"}</small>}
+                                {run?.status === "prepared" && !matchesPlan(run, p) && <small className="hc-row-error">Thiết lập đã đổi. Chuẩn bị lại để thay lịch cũ.</small>}
+                                {run?.status === "prepared" && Date.parse(run.targetAt) < now + 2500 && <small className="hc-row-error">Giờ bật lịch đã quá sát hoặc đã qua. Chọn giờ mới và chuẩn bị lại.</small>}
+                                {rowErrors[a.id] && <p role="alert" className="hc-row-error">{rowErrors[a.id]}</p>}
+                                {report && <details className="hc-inspection" open={report.checks.some(c => !c.ok)}>
+                                  <summary>Báo cáo API · {shortTime(report.checkedAt)}</summary>
+                                  <small>{report.exam.ten_cap_thi} · Đợt mở {report.exam.ngay_mo_dang_ky}</small>
+                                  {report.checks.map(c => <p key={c.label} className={c.ok ? "" : "hc-row-error"}><strong>{c.label}: {c.ok ? "Đọc được" : "Lỗi"}</strong> {c.message}</p>)}
+                                  <small>Chỉ đọc thông tin. Không tạo lịch hoặc gửi đăng ký.</small>
+                                </details>}
+                                <Button size="small" appearance="subtle" disabled={busy || locked} onClick={() => void act(async () => setState(await request("logout", { id: a.id })))}>Đăng xuất</Button>
                               </td>
                             </tr>
                           );
@@ -654,19 +658,21 @@ export function HcmuePage({
                     </table>
                   </div>
                 )}
+                {!!accounts.length && <div className="hc-compose-footer hc-account-footer">
+                  <p>Kiểm tra API dùng được cả với đợt cũ. Chuẩn bị tạo lịch riêng cho từng người; chỉ gửi sau khi bật lịch và xác nhận.</p>
+                  <Button disabled={busy || !chosen.length || !updatedRunner} onClick={() => void act(inspectChosen)}>Kiểm tra hồ sơ/API</Button>
+                  <Button appearance="primary" disabled={busy || !chosen.length || !updatedRunner} onClick={() => void act(prepare)}>{busy && <Spinner size="tiny" />}Chuẩn bị {chosen.length || ""} tài khoản</Button>
+                </div>}
               </section>
               <section className="hc-compose">
                 <div className="hc-section-heading">
                   <div>
-                    <h2>Chuẩn bị lần gửi</h2>
+                    <h2>Kỳ thi từ trường</h2>
                     <p>
-                      Chọn kỳ thi và thời điểm, sau đó kiểm tra trước khi bật
-                      lịch.
+                      Giữ mọi đợt API trả về, kể cả quá hạn hoặc hết chỗ. Chọn để xem; áp dụng hàng loạt khi cần.
                     </p>
                   </div>
-                  <span className="hc-test-label">
-                    {test ? "Kiểm tra không gửi" : "Đăng ký thật"}
-                  </span>
+                  <Button icon={<ArrowSyncRegular />} disabled={busy || !accounts.length} onClick={() => void act(loadExams)}>Tải kỳ thi</Button>
                 </div>
                 <div className="hc-compose-fields">
                   <Field label="Kỳ thi">
@@ -681,41 +687,19 @@ export function HcmuePage({
                             (x) => examKey(x) === e.target.value,
                           );
                           if (x)
-                            setTarget(
-                              vnInput(
-                                Math.max(
-                                  schoolTime(x.ngay_mo_dang_ky),
-                                  Date.now() + 15000,
-                                ),
-                              ),
-                            );
+                            setTarget(suggestedTarget(x, test));
                         }}
                       >
                         <option value="">Chọn kỳ thi</option>
                         {exams.map((e) => (
                           <option key={examKey(e)} value={examKey(e)}>
-                            {e.ten_cap_thi} · {e.ngay_thi}
+                            {e.ten_cap_thi} · Thi {e.ngay_thi} · Mở {e.ngay_mo_dang_ky}
                           </option>
                         ))}
                       </Select>
-                      <Button
-                        disabled={busy || !accounts.length}
-                        icon={<ArrowSyncRegular />}
-                        aria-label="Tải kỳ thi"
-                        onClick={() =>
-                          void act(async () => {
-                            const data = await request("exams", {
-                              accountId: chosen[0]?.id ?? accounts[0].id,
-                            });
-                            setExams(data);
-                            if (!data.length)
-                              setNotice("Trường chưa công bố kỳ thi phù hợp.");
-                          })
-                        }
-                      />
                     </div>
                   </Field>
-                  <Field label="Giờ gửi tại Việt Nam">
+                  <Field label="Giờ mẫu · Việt Nam">
                     <Input
                       aria-label="Giờ gửi tại Việt Nam"
                       type="datetime-local"
@@ -724,46 +708,42 @@ export function HcmuePage({
                       onChange={(_, d) => setTarget(d.value)}
                     />
                   </Field>
-                  <Field label="Chế độ">
+                  <Field label="Chế độ mẫu">
                     <Select
                       value={test ? "test" : "live"}
                       disabled={busy}
-                      onChange={(e) => setTest(e.target.value === "test")}
+                      onChange={(e) => { const isTest = e.target.value === "test"; setTest(isTest); if (exam) setTarget(suggestedTarget(exam, isTest)); }}
                     >
-                      <option value="test">Kiểm tra, không gửi đơn</option>
+                      <option value="test">Diễn tập hẹn giờ, không gửi đơn</option>
                       <option value="live" disabled={!account.liveEnabled}>
                         Live, đăng ký thật
                       </option>
                     </Select>
                   </Field>
                 </div>
-                {exam && (
-                  <p className="hc-exam-note">
-                    Mở {exam.ngay_mo_dang_ky} · {exam.so_luong}/
-                    {exam.so_luong_toi_da} chỗ ·{" "}
-                    {Number(exam.phi).toLocaleString("vi-VN")}đ
-                  </p>
-                )}
+                {exam && <div className="hc-exam-details">
+                  <dl>
+                    <div><dt>Ngày thi</dt><dd>{schoolDate(exam.ngay_thi)}</dd></div>
+                    <div><dt>Mở đăng ký</dt><dd>{schoolDate(exam.ngay_mo_dang_ky)}</dd></div>
+                    <div><dt>Đóng đăng ký</dt><dd>{schoolDate(exam.ngay_ket_thuc_dang_ky)}</dd></div>
+                    <div><dt>Số chỗ theo API</dt><dd>{exam.so_luong}/{exam.so_luong_toi_da}</dd></div>
+                    <div><dt>Trạng thái gốc</dt><dd>{exam.trang_thai}</dd></div>
+                    <div><dt>Lệ phí theo API</dt><dd>{Number(exam.phi).toLocaleString("vi-VN")}đ</dd></div>
+                  </dl>
+                  <p><strong>Nhận xét của tool:</strong> {examObservation(exam, now)}.</p>
+                  <Button appearance="transparent" onClick={() => setDetails(exam)}>Xem toàn bộ dữ liệu kỳ thi</Button>
+                </div>}
                 <div className="hc-compose-footer">
-                  <p>
-                    <ShieldCheckmarkRegular />
-                    Máy kiểm tra hồ sơ, câu hỏi và đăng ký cũ trước khi sẵn
-                    sàng.
-                  </p>
-                  <Button
-                    disabled={busy || !chosen.length || !exam}
-                    onClick={() => void act(() => prepare(true))}
-                  >
-                    Chuẩn bị chạy ngay
-                  </Button>
-                  <Button
-                    appearance="primary"
-                    disabled={busy || !chosen.length || !exam || !target}
-                    onClick={() => void act(() => prepare())}
-                  >
-                    {busy ? <Spinner size="tiny" /> : null}Chuẩn bị{" "}
-                    {chosen.length || ""} tài khoản
-                  </Button>
+                  <p>Mẫu chỉ thay các tài khoản đang chọn và chưa bật lịch. Bạn vẫn có thể sửa riêng từng dòng; chưa tạo lịch hoặc gửi đơn.</p>
+                  <Button disabled={busy || !chosen.length || !exam} onClick={() => {
+                    if (!exam) return;
+                    let applied = 0;
+                    for (const a of chosen) {
+                      if (schedules.some(s => s.accountId === a.id && activeStatus(s.status))) continue;
+                      editPlan(a.id, { examKey: examId, target, test }); applied++;
+                    }
+                    setNotice(`Đã áp dụng mẫu cho ${applied} tài khoản. Kiểm tra từng dòng trước khi chuẩn bị.`);
+                  }}>Áp dụng mẫu cho tài khoản đã chọn</Button>
                 </div>
               </section>
               <section id="hc-results" className="hc-section">
@@ -820,7 +800,7 @@ export function HcmuePage({
                         <div className="hc-run-info">
                           <h3>
                             {s.exam.ten_cap_thi}
-                            <span>{s.test ? "Kiểm tra" : "Live"}</span>
+                            <span>{s.test ? "Diễn tập" : "Đăng ký thật"}</span>
                           </h3>
                           <p>
                             {accounts.find((a) => a.id === s.accountId)
@@ -878,7 +858,7 @@ export function HcmuePage({
                               <Button
                                 size="small"
                                 appearance="primary"
-                                disabled={busy}
+                                disabled={busy || !prepared.some(p => p.id === s.id)}
                                 onClick={() => {
                                   setArmSelection([s.id]);
                                   setArmOpen(true);
@@ -1097,14 +1077,14 @@ export function HcmuePage({
             <DialogTitle>Bật {arming.length} lịch trên máy?</DialogTitle>
             <DialogContent>
               <p>
-                Máy {device?.name} sẽ thực hiện đúng giờ đã đặt. Lịch vẫn chạy
+                Thiết bị {device?.name} sẽ thực hiện đúng giờ đã đặt. Lịch vẫn chạy
                 khi đóng website.
               </p>
               <div className="hc-confirm-list">
                 {arming.map((s) => (
                   <p key={s.id}>
                     <strong>{s.exam.ten_cap_thi}</strong> · {time(s.targetAt)} ·{" "}
-                    {s.test ? "Không gửi đơn" : "Đăng ký thật"}
+                    {s.test ? "Diễn tập, không gửi đơn" : "Đăng ký thật"}
                   </p>
                 ))}
               </div>
@@ -1141,6 +1121,13 @@ export function HcmuePage({
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      <Dialog open={!!details} onOpenChange={(_, d) => { if (!d.open) setDetails(undefined); }}>
+        <DialogSurface><DialogBody>
+          <DialogTitle>Dữ liệu kỳ thi từ HCMUE</DialogTitle>
+          <DialogContent><p>Giữ nguyên các trường API trả về. Nhận xét của tool được hiển thị riêng trên website.</p><pre className="hc-api-data">{JSON.stringify(details, null, 2)}</pre></DialogContent>
+          <DialogActions><Button onClick={() => setDetails(undefined)}>Đóng</Button></DialogActions>
+        </DialogBody></DialogSurface>
+      </Dialog>
       <Dialog
         open={!!questionDraft}
         onOpenChange={(_, d) => {
@@ -1156,6 +1143,8 @@ export function HcmuePage({
                   <h3>
                     {accounts.find((a) => a.id === d.accountId)?.identity.name}
                   </h3>
+                  <p>{exams.find(e => examKey(e) === d.args.examKey)?.ten_cap_thi} · {d.args.test ? "Diễn tập" : "Đăng ký thật"}</p>
+                  {rowErrors[d.accountId] && <p role="alert" className="hc-row-error">{rowErrors[d.accountId]}</p>}
                   {d.q.questions.map((q) => (
                     <Field key={q.ma_cau_hoi} label={q.noi_dung}>
                       <Select
@@ -1199,15 +1188,13 @@ export function HcmuePage({
                 disabled={busy}
                 onClick={() =>
                   void act(async () => {
-                    for (const d of questionDraft ?? [])
-                      setState(
-                        await request("prepare", {
-                          ...d.args,
-                          answers: d.answers,
-                        }),
-                      );
-                    setQuestionDraft(undefined);
-                    setNotice("Đã chuẩn bị các lịch.");
+                    const failed: NonNullable<typeof questionDraft> = [];
+                    const completed = await eachAccount(questionDraft ?? [], async d => {
+                      setState(await request("prepare", { ...d.args, answers: d.answers }));
+                      setRowErrors(old => ({ ...old, [d.accountId]: "" }));
+                    }, (d, message) => { failed.push(d); failRow({ id: d.accountId }, message); });
+                    setQuestionDraft(failed.length ? failed : undefined);
+                    setNotice(`Đã chuẩn bị ${completed} lịch. ${failed.length ? "Tài khoản lỗi giữ lại câu trả lời; xem lỗi trên từng dòng." : "Bật lịch để máy thực hiện."}`);
                   })
                 }
               >

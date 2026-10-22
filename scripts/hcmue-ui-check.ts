@@ -51,11 +51,11 @@ try {
     .check();
   await page.getByRole("button", { name: "Tải kỳ thi", exact: true }).click();
   await page
-    .getByLabel("Kỳ thi HCMUE", { exact: true })
+    .getByLabel("Kỳ thi cho Nguyễn Minh An", { exact: true })
     .selectOption({ index: 1 });
   const target = Date.now() + 15000;
   await page
-    .getByLabel("Giờ gửi tại Việt Nam", { exact: true })
+    .getByLabel("Giờ gửi cho Nguyễn Minh An", { exact: true })
     .fill(new Date(target + 7 * 3600000).toISOString().slice(0, 19));
   await page
     .getByRole("button", { name: "Chuẩn bị 1 tài khoản", exact: true })
