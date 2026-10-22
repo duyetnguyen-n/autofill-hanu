@@ -14,21 +14,7 @@ import {
   DialogContent,
   DialogActions,
 } from "@fluentui/react-components";
-import {
-  AddRegular,
-  ArrowSyncRegular,
-  CheckmarkCircleRegular,
-  ClockRegular,
-  DesktopRegular,
-  LinkRegular,
-  PlayRegular,
-  ShieldCheckmarkRegular,
-  StopRegular,
-  WeatherMoonRegular,
-  WeatherSunnyRegular,
-  OpenRegular,
-  DismissRegular,
-} from "@fluentui/react-icons";
+import { AddRegular, ArrowSyncRegular, CheckmarkCircleRegular, ClockRegular, DesktopRegular, LinkRegular, PlayRegular, ShieldCheckmarkRegular, StopRegular, OpenRegular, DismissRegular } from "@fluentui/react-icons";
 import type { Account } from "../../../src/account";
 import { darkTheme, lightTheme, useTheme } from "../../../manager/ui/theme";
 import { box, open, newReplyKey } from "../crypto";
@@ -50,6 +36,7 @@ import { vnInput, targetTime, suggestedTarget, planForSchedule, matchesPlan, eac
 import "./page.css";
 import { RunnerLaunch, preferredRunner } from "../../runner/ui/RunnerLaunch";
 import { WorkspaceSidebar } from "../../../manager/ui/WorkspaceSidebar";
+import { WorkspaceHeader } from "../../../manager/ui/WorkspaceHeader";
 import { Users, CalendarCheck, Desktop } from "@phosphor-icons/react";
 async function api<T>(path: string, value?: unknown) {
   const controller = new AbortController(),
@@ -340,21 +327,7 @@ export function HcmuePage({
         {label:'Máy thực thi',href:'#hc-device',icon:<Desktop size={19}/>},
       ]}/>
       <div className="hc-main">
-        <header className="hc-topbar">
-          <span>
-            Đăng ký HSK <span className="hc-separator">/</span>{" "}
-            <strong>HCMUE</strong>
-          </span>
-          <div>
-            <span className="hc-zone">Giờ Việt Nam · UTC+7</span>
-            <Button
-              appearance="subtle"
-              icon={dark ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
-              aria-label="Đổi giao diện"
-              onClick={toggleTheme}
-            />
-          </div>
-        </header>
+        <WorkspaceHeader title="HSK HCMUE" icon={<Desktop size={20}/>} dark={dark} toggleTheme={toggleTheme} themeLabel="Đổi giao diện" guideHref="/hcmue-downloads/index.html" guideLabel="Hướng dẫn kết nối" account={account} logout={logout} products={[{label:'Google Forms',href:'/'},...(chinesetestEnabled?[{label:'ChineseTest',href:'/chinesetest'}]:[])]} primaryAction={<Button appearance="primary" icon={<LinkRegular/>} disabled={busy} onClick={()=>setPairOpen(true)}>Liên kết máy</Button>}/>
         <main className="hc-workspace">
           <div className="hc-heading">
             <div>
@@ -458,11 +431,11 @@ export function HcmuePage({
                 </Button>
               )}
               <Button
-                icon={<LinkRegular />}
+                icon={<ArrowSyncRegular />}
                 disabled={busy}
-                onClick={() => setPairOpen(true)}
+                onClick={() => void act(refreshDevices)}
               >
-                Liên kết máy
+                Đọc lại trạng thái
               </Button>
               <a
                 href="/hcmue-downloads/index.html"

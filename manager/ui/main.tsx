@@ -1,7 +1,7 @@
 import React,{useEffect,useState,useRef,useCallback,lazy,Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import {FluentProvider,Button,Input,Select,Switch,Checkbox,Field,Spinner,Dialog,DialogTrigger,DialogSurface,DialogBody,DialogTitle,DialogContent,DialogActions,Popover,PopoverTrigger,PopoverSurface} from '@fluentui/react-components';
-import {AddRegular,ArrowSyncRegular,OpenRegular,DismissRegular,PlayRegular,PauseRegular,StopRegular,CheckmarkCircleRegular,WarningRegular,PlugConnectedRegular,SearchRegular,WeatherMoonRegular,WeatherSunnyRegular,DocumentCheckmarkRegular,ShieldCheckmarkRegular,LinkRegular,ClockRegular,ArrowRightRegular,DocumentImageRegular,MoreHorizontalRegular} from '@fluentui/react-icons';
+import { AddRegular, ArrowSyncRegular, OpenRegular, DismissRegular, PlayRegular, PauseRegular, StopRegular, CheckmarkCircleRegular, WarningRegular, PlugConnectedRegular, SearchRegular, DocumentCheckmarkRegular, ShieldCheckmarkRegular, LinkRegular, ArrowRightRegular, DocumentImageRegular, MoreHorizontalRegular } from '@fluentui/react-icons';
 import type {SessionView,GroupView} from '../../src/protocol';
 import {canStartSeparateTest} from '../../src/protocol';
 import type {Profile,RunState,FinalQuestion} from '../../src/shared';
@@ -14,12 +14,14 @@ import {DataTransfer} from './DataTransfer';
 import {AdminPage} from './AdminPage';
 import {darkTheme,lightTheme,useTheme} from './theme';
 import {WorkspaceSidebar} from './WorkspaceSidebar';
-import {SquaresFour, WarningCircle, CheckCircle, BookOpen} from '@phosphor-icons/react';
+import { WorkspaceHeader } from './WorkspaceHeader';
+import {SquaresFour, WarningCircle, CheckCircle, BookOpen, Browsers} from '@phosphor-icons/react';
 import {runStatusLabel,commandStatus,runElapsed,displayedRun,submissionReviewMessage} from '../../src/run-presentation';
 import {HSK_RULES,emptyProfile} from '../../src/rules';
 import {StateStreamReceiver} from '../state-stream';
 import './style.css';
 import './access.css';
+import './admin.css';
 import './mobile.css';
 import './run-layout.css';
 import './workspace-chrome.css';
@@ -111,7 +113,7 @@ function App({cloud=false,account,logout,hcmueEnabled=false,chinesetestEnabled=f
       {label:'Đã hoàn tất',icon:<CheckCircle size={19}/>,active:filter==='completed',onClick:()=>setFilter('completed')},
       ...(cloud?[{label:'Hướng dẫn cài extension',icon:<BookOpen size={19}/>,href:'/extension-downloads/index.html'}]:[]),
     ]}/>
-    <div className="app-main"><header className="topbar"><div className="breadcrumb"><span>Không gian làm việc</span><span>/</span><strong>Google Forms</strong></div><div className="top-actions"><div className="desktop-account-tools"><AccountTools cloud={cloud} busy={busy} working={working} act={act} account={account} onLogout={signOut}/></div><Dialog surfaceMotion={null} inertTrapFocus><DialogTrigger disableButtonEnhancement><Button className="mobile-tools-trigger" appearance="subtle" icon={<MoreHorizontalRegular/>} aria-label="Tài khoản và công cụ"/></DialogTrigger><DialogSurface className="mobile-tools-dialog"><DialogBody><DialogTitle>Tài khoản và công cụ</DialogTitle><DialogContent><div className="mobile-account-tools">{chinesetestEnabled&&<Button as="a" href="/chinesetest" appearance="subtle">ChineseTest</Button>}{hcmueEnabled&&<Button as="a" href="/hcmue" appearance="subtle">HSK HCMUE</Button>}<AccountTools closeOnLogout cloud={cloud} busy={busy} working={working} act={act} account={account} onLogout={signOut}/></div></DialogContent><DialogActions><DialogTrigger disableButtonEnhancement><Button>Đóng</Button></DialogTrigger></DialogActions></DialogBody></DialogSurface></Dialog><Button appearance="subtle" icon={dark?<WeatherSunnyRegular/>:<WeatherMoonRegular/>} aria-label="Đổi giao diện sáng tối" onClick={toggleTheme}/><Button className="add-profile-button" aria-label="Thêm profile" icon={<AddRegular/>} disabled={busy} onClick={openPair}><span className="add-profile-label">Thêm profile</span><span className="add-profile-short">Thêm</span></Button></div></header>
+    <div className="app-main"><WorkspaceHeader title="Google Forms" icon={<Browsers size={20}/>} dark={dark} toggleTheme={toggleTheme} account={account} guideHref={cloud?'/extension-downloads/index.html':undefined} guideLabel="Hướng dẫn cài extension" products={[...(chinesetestEnabled?[{label:'ChineseTest',href:'/chinesetest'}]:[]),...(hcmueEnabled?[{label:'HSK HCMUE',href:'/hcmue'}]:[])]} tools={<AccountTools closeOnLogout cloud={cloud} busy={busy} working={working} act={act} account={account} onLogout={signOut}/>} primaryAction={<Button appearance="primary" aria-label="Thêm profile" icon={<AddRegular/>} disabled={busy} onClick={openPair}>Thêm profile</Button>}/>
     <main className="workspace">
       <div className="page-heading"><div><h1>Quản lý các phiên</h1><p>Mỗi profile một hồ sơ. Sẵn sàng trước giờ đăng ký.</p></div><div className="heading-connection"><PlugConnectedRegular/><span><strong>{state.sessions.filter(s=>s.connected).length}/{state.sessions.length}</strong> profile đang kết nối</span></div></div>
       {cloud&&<div className="forms-guide-strip"><BookOpen size={19}/><div><a href="/extension-downloads/index.html">Hướng dẫn cài extension và kết nối</a><span>Tải extension, liên kết lần đầu và cách mở lại những lần sau.</span></div></div>}
