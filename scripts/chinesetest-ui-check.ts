@@ -1,0 +1,32 @@
+import { chromium,expect } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { httpFixture } from "../tests/cloud/fixture";
+import { connectRunner } from "../tests/chinesetest/relay-fixture";
+import { fixtureEngine } from "../tests/chinesetest/support";
+const app=await httpFixture(resolve("build/cloud-ui"),true,true),runner=await connectRunner(app,()=>fixtureEngine(3));
+const browser=await chromium.launch({channel:process.platform==="win32"?"msedge":"chrome",headless:true});
+await mkdir("test-results/chinesetest",{recursive:true});
+try{
+ const context=await browser.newContext({viewport:{width:1440,height:1100},colorScheme:"light"}),page=await context.newPage(),errors:string[]=[];
+ page.on("pageerror",e=>{errors.push(e.message);console.log("UI ERROR",e.message);});
+ await page.goto(app.config.origin+"/chinesetest");await page.getByRole("button",{name:"Tiếp tục với Google",exact:true}).click();await expect(page.getByText("an@example.test",{exact:true}).first()).toBeVisible();
+ await page.goto(app.config.origin+"/chinesetest");await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();
+ await page.getByRole("button",{name:"Liên kết máy",exact:true}).click();await page.getByLabel("Mã liên kết",{exact:true}).fill(runner.code);await page.getByRole("dialog").getByRole("button",{name:"Liên kết",exact:true}).click();
+ await expect(page.locator(".ct-fingerprint")).toHaveText(runner.identity.fingerprint);await page.getByRole("button",{name:"Đã đối chiếu, đúng máy",exact:true}).click();
+ await expect(page.locator(".ct-account")).toHaveCount(3);
+ const first=page.locator(".ct-account").first();await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
+ const at=Date.now()+20000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
+ await first.getByRole("button",{name:"Tải lại danh mục / điểm thi",exact:true}).click();await expect(first.getByRole("combobox",{name:"Cấp thi cho Lê Minh Khuê",exact:true})).toHaveValue("828636");
+ await first.getByRole("button",{name:"Kiểm tra API",exact:true}).click();await expect(first).toContainText("Phí cuối 60 USD");
+ await first.getByRole("button",{name:"Chuẩn bị",exact:true}).click();await expect(page.locator(".ct-runs")).toContainText("Sẵn sàng");
+ await first.getByRole("button",{name:"Bật lịch Test",exact:true}).click();await expect(page.locator(".ct-runs")).toContainText("Đã bật lịch");
+ await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:"test-results/chinesetest/desktop-light.png",fullPage:true});
+ await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/desktop-dark.png",fullPage:true});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:"test-results/chinesetest/mobile-dark.png",fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/mobile-light.png",fullPage:true});
+ await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:30000});expect(runner.shared.submits).toHaveLength(0);
+ await page.setViewportSize({width:1440,height:1100});await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();await expect(page.getByRole("dialog")).toContainText("Hồ sơ ChineseTest");await expect(page.getByRole("dialog").getByRole("combobox",{name:"Quốc tịch",exact:true})).toHaveValue("180");await page.screenshot({path:"test-results/chinesetest/profile-editor.png",fullPage:true});await page.getByRole("dialog").getByRole("button",{name:"Đóng",exact:true}).click();
+ await page.getByRole("link",{name:"Google Forms",exact:true}).click();await expect(page.getByLabel("Link Google Form",{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Tài khoản và công cụ",exact:true}).click();await page.getByRole("dialog").getByRole("link",{name:"ChineseTest",exact:true}).click();await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();expect(errors).toEqual([]);
+ console.log("PASS ChineseTest UI: encrypted real relay, pairing/fingerprint, three isolated accounts, Dong A reads, prepare/arm/Test with zero registration POSTs, profile editor, desktop/mobile light/dark, Google Forms navigation.");
+}finally{await browser.close();await runner.close();await app.close();}

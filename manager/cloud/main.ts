@@ -1,4 +1,5 @@
 import {HcmueRelay} from '../../integrations/hcmue/cloud/relay';
+import {ChineseTestRelay} from '../../integrations/chinesetest/cloud/relay';
 import {createReadStream} from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import {isIP} from 'node:net';
@@ -74,6 +75,8 @@ export async function serveCloud(options: {
   }
   const hcmue=config.hcmueEnabled?new HcmueRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
   if(hcmue)await hcmue.check();
+  const chinesetest=config.chinesetestEnabled?new ChineseTestRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
+  if(chinesetest)await chinesetest.check();
   const uiDir = options.uiDir ?? resolve(fileURLToPath(new URL('.', import.meta.url)), '../cloud-ui');
   const runtimes = new Map<string, Runtime>();
   const tickets = new Map<string, Ticket>();
@@ -228,7 +231,7 @@ export async function serveCloud(options: {
         { ok: !emergencyError && !closing, ...(!ready ? { coordinator: 'waiting' } : {}) }, emergencyError || closing ? 503 : 200);
       if (path === '/readyz' && req.method === 'GET') return json(res,
         ready && !emergencyError && !closing ? { ok: true } : { ok: false, error: emergencyError || updating }, ready && !emergencyError && !closing ? 200 : 503);
-      if (path === '/api/auth/config' && req.method === 'GET') return json(res, { cloud: true, ...(hcmue?{hcmueEnabled:true}:{}) });
+      if (path === '/api/auth/config' && req.method === 'GET') return json(res, { cloud: true, ...(hcmue?{hcmueEnabled:true}:{}), ...(chinesetest?{chinesetestEnabled:true}:{}) });
       if (path === '/auth/callback' && req.method === 'GET') {
         const requestAuth = auth.request(req, res);
         const code = url.searchParams.get('code');
@@ -308,6 +311,7 @@ export async function serveCloud(options: {
         // identify() just read the account from PostgreSQL for this verified
         // HTTP identity. Do not issue a second permission read for the same API.
         if(path.startsWith('/api/hcmue/')){if(!hcmue)throw new CloudError('HCMUE chưa được bật trên server.',404);return json(res,await hcmue.route(account,path,req.method??'GET',()=>body(req,3*1024*1024)));}
+        if(path.startsWith('/api/chinesetest/')){if(!chinesetest)throw new CloudError('ChineseTest chưa được bật trên server.',404);return json(res,await chinesetest.route(account,path,req.method??'GET',()=>body(req,3*1024*1024)));}
         const current = runtime(user.id), { store, coordinator } = current;
         if(path==='/api/import'&&req.method==='POST'){
           rate.check(`import:${user.id}`,3,3600000);
@@ -391,11 +395,11 @@ export async function serveCloud(options: {
         throw new CloudError('Không tìm thấy API.', 404);
       }
       if (req.method !== 'GET') throw new CloudError('Method không hợp lệ.', 405);
-      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', ...(hcmue?['/hcmue']:[])].includes(path) ? '/index.html' : path));
+      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');
-      if(path.startsWith('/hcmue-downloads/')&&extname(file)==='.zip'){res.setHeader('Content-Length',statSync(file).size);createReadStream(file).on('error',()=>res.destroy()).pipe(res);return;}
+      if((path.startsWith('/hcmue-downloads/')||path.startsWith('/chinesetest-downloads/'))&&extname(file)==='.zip'){res.setHeader('Content-Length',statSync(file).size);createReadStream(file).on('error',()=>res.destroy()).pipe(res);return;}
       res.end(readFileSync(file));
     } catch (error) {
       if (!(error instanceof CloudError) && /^(08|53|57|58)/.test(String((error as { code?: string }).code ?? ''))) failClosed(error);
@@ -409,6 +413,7 @@ export async function serveCloud(options: {
     try {
       const path = req.url;
       if(hcmue&&path==='/hcmue-runner'&&ready&&!closing&&!emergencyError){hcmue.upgrade(req,socket,head);return;}
+      if(chinesetest&&path==='/chinesetest-runner'&&ready&&!closing&&!emergencyError){chinesetest.upgrade(req,socket,head);return;}
       if (!ready || closing || emergencyError || req.headers.host !== new URL(config.origin).host) throw new CloudError('Unavailable', 503);
       if (path === '/events') {
         if (req.headers.origin !== config.origin) throw new CloudError('Origin', 403);
@@ -545,7 +550,7 @@ export async function serveCloud(options: {
     for (const [owner, current] of runtimes) if (!current.coordinator.scheduler.active&&!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.scheduler.close();current.coordinator.attention.close(); runtimes.delete(owner); }
   }, 5000);
   return { server, repository, runtimes, async close() {
-    closing = true; ready = false; hcmue?.close(); clearInterval(heartbeat); clearInterval(leaseTimer); clearTimeout(retryTimer);
+    closing = true; ready = false; hcmue?.close(); chinesetest?.close(); clearInterval(heartbeat); clearInterval(leaseTimer); clearTimeout(retryTimer);
     // An in-flight claim/recovery must finish before release, or a closing
     // waiting instance could acquire a lease after its cleanup had completed.
     await activation?.catch(() => {}); clearInterval(leaseTimer); await renewal; await accessCheck;

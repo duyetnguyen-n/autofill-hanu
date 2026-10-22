@@ -49,7 +49,13 @@
     "test:hcmue": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue",
     "test:hcmue-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-ui-check.ts",
     "bench:hcmue": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-benchmark.ts",
-    "test:hcmue-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-runner-smoke.ts"
+    "test:hcmue-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-runner-smoke.ts",
+    "build:chinesetest": "node scripts/run-node24.mjs scripts/build-chinesetest.mjs",
+    "chinesetest:runner": "node scripts/run-node24.mjs build/chinesetest/runner/main.mjs",
+    "test:chinesetest": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/chinesetest",
+    "test:chinesetest-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-ui-check.ts",
+    "test:chinesetest-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-runner-smoke.ts",
+    "package:chinesetest": "node scripts/run-node24.mjs scripts/package-chinesetest.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.9",
@@ -77,6 +83,7 @@
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
     "pg": "^8.23.1",
+    "playwright-core": "1.64.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "tough-cookie": "^6.0.2",

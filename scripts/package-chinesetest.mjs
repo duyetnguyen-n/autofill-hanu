@@ -1,0 +1,50 @@
+import { mkdir,readFile,writeFile,cp,chmod,stat,rm } from "node:fs/promises";
+import { join,resolve,dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+await import("./build-chinesetest.mjs");
+const version="24.21.0",base="https://nodejs.org/dist/v"+version;
+const response=await fetch(base+"/SHASUMS256.txt",{signal:AbortSignal.timeout(30000)});
+if(!response.ok)throw new Error("Không tải được checksum Node.js.");
+const sums=await response.text();
+const all=process.argv.includes("--all-platforms");
+if(all&&process.platform==="win32")throw new Error("Đóng gói Mac trên Linux/macOS để giữ quyền thực thi trong ZIP. Windows dùng gói Windows mặc định.");
+const targets=[["windows-x64","win-x64","zip"],["mac-arm64","darwin-arm64","tar.gz"],["mac-x64","darwin-x64","tar.gz"]].filter(([,platform])=>all||platform===(process.platform==="win32"?"win-x64":"darwin-"+process.arch));
+if(!targets.length)throw new Error("Dùng --all-platforms khi đóng gói trên Linux.");
+await mkdir(".runtime",{recursive:true});await mkdir("releases",{recursive:true});
+const downloads=resolve("build/cloud-ui/chinesetest-downloads");await mkdir(downloads,{recursive:true});const checksums=[];
+for(const [name,platform,extension] of targets){
+ const filename="node-v"+version+"-"+platform+"."+extension,archive=resolve(".runtime",filename);
+ try{await stat(archive);}catch{const r=await fetch(base+"/"+filename,{signal:AbortSignal.timeout(120000)});if(!r.ok)throw new Error("Không tải được "+filename);await writeFile(archive,Buffer.from(await r.arrayBuffer()));}
+ const actual=createHash("sha256").update(await readFile(archive)).digest("hex"),expected=sums.split("\n").find(l=>l.endsWith("  "+filename))?.split(" ")[0];
+ if(!expected||actual!==expected)throw new Error("Checksum runtime không khớp.");
+ const mac=platform.startsWith("darwin"),staging=resolve(".runtime/chinesetest-package",platform);await mkdir(staging,{recursive:true});
+ const entry="node-v"+version+"-"+platform;
+ if(mac)execFileSync("tar",["-xzf",archive,"-C",staging,entry+"/bin/node",entry+"/LICENSE"]);
+ else if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Expand-Archive -LiteralPath $env:CHINESETEST_ARCHIVE -DestinationPath $env:CHINESETEST_STAGING -Force"],{env:{...process.env,CHINESETEST_ARCHIVE:archive,CHINESETEST_STAGING:staging},windowsHide:true});
+ else execFileSync("unzip",["-qo",archive,entry+"/node.exe",entry+"/LICENSE","-d",staging]);
+ const releases=resolve("releases"),root=resolve(releases,"ChineseTest-"+name);
+ if(dirname(root)!==releases||!root.startsWith(releases+ (process.platform==="win32"?"\\":"/")))throw new Error("Unsafe package path");
+ await rm(root,{recursive:true,force:true});await mkdir(join(root,"runtime"),{recursive:true});
+ await cp("build/chinesetest/runner",join(root,"runner"),{recursive:true});
+ await cp(join(staging,entry,mac?"bin/node":"node.exe"),join(root,"runtime",mac?"node":"node.exe"));
+ await cp(join(staging,entry,"LICENSE"),join(root,"runtime/LICENSE"));
+ await mkdir(join(root,"node_modules"),{recursive:true});
+ await cp("node_modules/playwright-core",join(root,"node_modules/playwright-core"),{recursive:true});
+ await cp("docs/chinesetest/HUONG-DAN.md",join(root,"HUONG-DAN.md"));
+ let notices="ChineseTest Runner uses Node.js "+version+", Playwright, ws and tough-cookie.\n";
+ for(const pkg of ["playwright-core","ws","tough-cookie","tldts","tldts-core"])notices+="\n"+await readFile(join("node_modules",pkg,"LICENSE"),"utf8");
+ await writeFile(join(root,"NOTICES.txt"),notices);
+ await writeFile(join(root,"BUILD.json"),JSON.stringify({provider:"chinesetest",node:version,platform,builtAt:new Date().toISOString(),runtimeArchiveSha256:actual,realMachineVerified:false,realRegistrationVerified:false},null,2));
+ if(mac){await chmod(join(root,"runtime/node"),0o755);await writeFile(join(root,"Start ChineseTest.command"),'#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$TASK_DIR/runtime/node" "$TASK_DIR/runner/main.mjs" "$@"\n');await chmod(join(root,"Start ChineseTest.command"),0o755);}
+ else await writeFile(join(root,"Start ChineseTest.cmd"),'@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\main.mjs" %*\r\nif errorlevel 1 pause\r\n');
+ const zip=root+".zip";await rm(zip,{force:true});
+ if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Compress-Archive -LiteralPath $env:CHINESETEST_PACKAGE_ROOT -DestinationPath $env:CHINESETEST_PACKAGE_ZIP -Force"],{env:{...process.env,CHINESETEST_PACKAGE_ROOT:root,CHINESETEST_PACKAGE_ZIP:zip},windowsHide:true});
+ else if(process.platform==="darwin")execFileSync("ditto",["-c","-k","--keepParent",root,zip]);
+ else execFileSync("zip",["-q","-r",zip,"."],{cwd:root});
+ const out="ChineseTest-"+name+".zip";await cp(zip,join(downloads,out));checksums.push(createHash("sha256").update(await readFile(zip)).digest("hex")+"  "+out);
+ console.log("Packaged "+out+" (verified runtime; real registration remains unverified).");
+}
+await cp("docs/chinesetest",downloads,{recursive:true});
+await writeFile(join(downloads,"ChineseTest-SHA256SUMS.txt"),checksums.join("\n")+"\n");
+await cp(join(downloads,"ChineseTest-SHA256SUMS.txt"),"releases/ChineseTest-SHA256SUMS.txt");

@@ -1,0 +1,2 @@
+import { build } from "esbuild";
+await build({ entryPoints: ["integrations/chinesetest/runner/main.ts", "integrations/chinesetest/runner/worker.ts"], outdir: "build/chinesetest/runner", platform: "node", target: "node24", bundle: true, format: "esm", outExtension: { ".js": ".mjs" }, packages: "bundle", banner: { js: "import {createRequire as __createRequire} from 'node:module';const require=__createRequire(import.meta.url);" }, external: ["node:*", "playwright-core"] });

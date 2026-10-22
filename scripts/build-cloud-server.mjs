@@ -7,3 +7,4 @@ await viteBuild({configFile:'manager/vite.config.ts'});
 // Documentation only; runner archives are produced by package:hcmue after this build.
 const {cp}=await import('node:fs/promises');
 await cp('docs/hcmue','build/cloud-ui/hcmue-downloads',{recursive:true});
+await cp('docs/chinesetest','build/cloud-ui/chinesetest-downloads',{recursive:true});

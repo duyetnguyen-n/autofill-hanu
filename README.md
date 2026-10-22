@@ -1,5 +1,14 @@
 # HANU Coordinator 1.9.0
 
+## ChineseTest (chức năng tùy chọn)
+
+Mục `/chinesetest` trên website điều khiển runner API riêng: nhiều tài khoản,
+hồ sơ/ảnh, điểm thi chưa mở, hẹn giờ Test/Live và đối chiếu kết quả.
+Người dùng tự đăng nhập trong Chrome riêng; runner dùng phiên đã xác minh gọi API
+bằng Node, không phụ thuộc Chrome lúc gửi. Xem [hướng dẫn](docs/chinesetest/HUONG-DAN.md)
+và [triển khai](docs/chinesetest/IMPLEMENTATION.md).
+Mặc định tắt; cần migration riêng và `HANU_CHINESETEST_ENABLED=1`.
+
 App cục bộ quản lý nhiều Chrome profile, mỗi profile giữ một hồ sơ thí sinh và ảnh riêng. Người dùng tự mở profile, đăng nhập Google, liên kết extension rồi chọn các phiên để chạy Test hoặc Live. Bản này chưa dùng AI.
 
 ## HSK HCMUE (chức năng tùy chọn)

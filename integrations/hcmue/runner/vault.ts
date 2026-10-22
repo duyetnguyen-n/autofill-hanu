@@ -24,14 +24,14 @@ export async function atomicWrite(file: string, data: string) {
   }
   await rename(temp, file);
 }
-export async function systemKey(dir: string): Promise<Buffer> {
+export async function systemKey(dir: string, service = "vn.hcmue.runner"): Promise<Buffer> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   if (process.platform === "darwin") {
     try {
       const { stdout } = await exec("/usr/bin/security", [
         "find-generic-password",
         "-s",
-        "vn.hcmue.runner",
+        service,
         "-a",
         "vault",
         "-w",
@@ -45,7 +45,7 @@ export async function systemKey(dir: string): Promise<Buffer> {
       await exec("/usr/bin/security", [
         "add-generic-password",
         "-s",
-        "vn.hcmue.runner",
+        service,
         "-a",
         "vault",
         "-w",
