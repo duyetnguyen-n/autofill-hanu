@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <p>Score report information</p>
+    <button id="next">Next</button>
+    <script>
+      history.replaceState({}, "", "/kshengbminfo");
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const store = { [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" } };
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => Object.assign(store, values),
+        remove: async (key) => { delete store[key]; }
+      }};
+      chrome.runtime = { id: "test-extension", onMessage: { addListener: () => {} } };
+      document.querySelector("#next").addEventListener("click", () => {
+        document.body.dataset.nextClicked = "true";
+        const result = document.createElement("div");
+        result.id = "mailing-result";
+        result.textContent = "MAILING_NEXT_CLICKED";
+        document.body.appendChild(result);
+      });
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

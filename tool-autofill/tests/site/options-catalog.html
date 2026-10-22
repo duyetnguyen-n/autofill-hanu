@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="vi">
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <form id="profile-form">
+      <button id="sync-catalog" type="button">Sync</button>
+      <span id="catalog-status"></span>
+      <span id="save-status"></span>
+      <input name="testType" list="test-type-options" value="HSK" />
+      <input name="testLevel" list="test-level-options" value="HSK Level 4" />
+      <input name="testFormat" list="test-format-options" value="Internet-based Test (at center)" />
+      <input name="testDate" list="test-date-options" value="2026-10-18" />
+      <input name="continent" list="continent-options" value="Asia" />
+      <input name="countryArea" list="country-options" value="VIET NAM" />
+      <input name="testCenter" list="test-center-options" value="Ha Noi Test Center" />
+      <input name="fullName" value="MANUAL VALUE" />
+      <input name="chineseName" /><input name="dateOfBirth" /><input name="gender" />
+      <input name="nationality" /><input name="idType" /><input name="idNumber" />
+      <input name="phone" /><input name="address" /><input name="motherTongue" />
+      <input name="learningDuration" /><input name="occupation" />
+      <datalist id="test-type-options"></datalist><datalist id="test-level-options"></datalist>
+      <datalist id="test-format-options"></datalist><datalist id="test-date-options"></datalist>
+      <datalist id="continent-options"></datalist><datalist id="country-options"></datalist>
+      <datalist id="test-center-options"></datalist>
+    </form>
+    <p id="options-result">WAITING</p>
+    <script>
+      const requests = [];
+      const responses = {
+        "/portal/index/getOptionList": { projectList: [{ KMID: "p1", KMENAME: "HSK" }] },
+        "/portal/index/getSubjectList": [{ KMID: "s4", KMENAME: "HSK Level 4" }],
+        "/examinee/enroll/getExamTimeList": [{ KTTIME: "2026-10-18" }],
+        "/examinee/enroll/getZhouList": [{ zId: "z1", eName: "Asia" }],
+        "/examinee/enroll/getCountryList": [{ gjId: "vn", gjEName: "VIET NAM" }],
+        "/examinee/enroll/getExamSiteList": [{ kdId: "hn", kdEName: "Ha Noi Test Center" }]
+      };
+      globalThis.chrome = {
+        tabs: {
+          async query() { return [{ id: 9, url: "https://www.chinesetest.cn/kaoshibaoming" }]; },
+          async sendMessage(_tabId, message) {
+            requests.push(message);
+            return { code: 200, data: responses[message.path] };
+          }
+        },
+        storage: {
+          local: {
+            async get() { return {}; },
+            async set() {}
+          }
+        }
+      };
+    </script>
+    <script src="/options.js"></script>
+    <script>
+      (async () => {
+        document.querySelector("#sync-catalog").click();
+        for (let attempt = 0; attempt < 100 && document.querySelector("#sync-catalog").disabled; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        const paths = requests.map((request) => request.path);
+        const expected = Object.keys(responses);
+        document.body.dataset.allReadEndpoints = String(paths.every((path) => expected.includes(path)));
+        document.body.dataset.fullChain = String(expected.every((path) => paths.includes(path)));
+        document.body.dataset.paramsMapped = String(
+          requests.find((request) => request.path.endsWith("getCountryList"))?.params?.ZId === "z1" &&
+          requests.findLast((request) => request.path.endsWith("getExamSiteList"))?.params?.gjId === "vn"
+        );
+        document.body.dataset.allListsRendered = String(
+          [...document.querySelectorAll("datalist")].every((list) => list.options.length > 0)
+        );
+        document.body.dataset.manualPreserved = String(document.querySelector('[name="fullName"]').value === "MANUAL VALUE");
+        document.querySelector("#options-result").textContent = "OPTIONS_CATALOG_DONE";
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <p id="catalog-result">WAITING</p>
+    <script>
+      let messageListener = null;
+      const requestedUrls = [];
+      const emptyStore = {};
+
+      globalThis.$nuxt = { $indexApi: {
+        async ApigetOptionList() {
+          requestedUrls.push("/portal/index/getOptionList");
+          document.body.dataset.method = "GET";
+          return { code: 200, data: { projectList: [{ KMID: 1, KMENAME: "HSK" }] } };
+        },
+        async getSubjectList() {},
+        async getExamTimeList() {}
+      }};
+      globalThis.chrome = {
+        runtime: {
+          id: "test-extension",
+          lastError: null,
+          getURL(path) { return `/${path}`; },
+          onMessage: {
+            addListener(listener) { messageListener = listener; }
+          }
+        },
+        storage: {
+          local: {
+            get(_key, callback) {
+              callback?.(emptyStore);
+              return Promise.resolve(emptyStore);
+            },
+            set(_value, callback) {
+              callback?.();
+              return Promise.resolve();
+            },
+            remove(_key, callback) {
+              callback?.();
+              return Promise.resolve();
+            }
+          },
+          onChanged: { addListener() {} }
+        }
+      };
+
+      function send(message) {
+        return new Promise((resolve) => {
+          const keptOpen = messageListener(message, {}, resolve);
+          if (keptOpen !== true) resolve({ error: "Message channel was not kept open." });
+        });
+      }
+    </script>
+    <script src="/content.js"></script>
+    <script>
+      (async () => {
+        const valid = await send({
+          type: "HSK_AUTOFILL_CATALOG_READ",
+          path: "/portal/index/getOptionList",
+          params: {}
+        });
+        const fetchCountAfterValid = requestedUrls.length;
+        const blocked = await send({
+          type: "HSK_AUTOFILL_CATALOG_READ",
+          path: "/examinee/enroll/submitPersonalInfo",
+          params: {}
+        });
+
+        document.body.dataset.readSucceeded = String(valid?.data?.projectList?.[0]?.KMENAME === "HSK");
+        document.body.dataset.onlyGet = String(document.body.dataset.method === "GET");
+        document.body.dataset.blockedWrite = String(/không thuộc danh sách/i.test(blocked?.error || ""));
+        document.body.dataset.noBlockedFetch = String(requestedUrls.length === fetchCountAfterValid);
+        document.body.dataset.readUrl = requestedUrls[0] || "";
+        document.querySelector("#catalog-result").textContent = "CATALOG_TEST_DONE";
+      })();
+    </script>
+  </body>
+</html>

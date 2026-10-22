@@ -1,0 +1,26 @@
+.hsk-safe-autofill-highlight {
+  outline: 2px solid #e55a2b !important;
+  outline-offset: 2px !important;
+  transition: outline-color 0.2s ease;
+}
+
+#hsk-safe-autofill-status {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  top: 18px !important;
+  right: 18px !important;
+  max-width: 380px !important;
+  border: 1px solid #b9e4cb !important;
+  border-radius: 12px !important;
+  padding: 11px 14px !important;
+  color: #11613a !important;
+  background: #eaf8f0 !important;
+  box-shadow: 0 10px 30px rgba(23, 32, 51, 0.16) !important;
+  font: 700 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif !important;
+}
+
+#hsk-safe-autofill-status[data-kind="error"] {
+  border-color: #f0c2bc !important;
+  color: #9a3028 !important;
+  background: #fff0ee !important;
+}

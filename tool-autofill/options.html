@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hồ sơ HSK Safe Autofill</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">HSK SAFE AUTOFILL</p>
+          <h1>Hồ sơ đăng ký</h1>
+          <p>Nhập một lần, dữ liệu chỉ được lưu cục bộ trong hồ sơ trình duyệt này.</p>
+        </div>
+        <span class="safe-badge">Dừng trước Submit</span>
+      </header>
+
+      <form id="profile-form">
+        <section class="catalog-section">
+          <div>
+            <h2>Danh mục ChineseTest</h2>
+            <p class="note">Lấy danh sách bằng API đọc mà giao diện đang sử dụng. Không gửi thông tin cá nhân và không tạo đăng ký.</p>
+          </div>
+          <div class="catalog-actions">
+            <button id="sync-catalog" type="button" class="ghost">Đồng bộ dropdown từ ChineseTest</button>
+            <span id="catalog-status" role="status">Cần mở và đăng nhập ChineseTest trong một tab.</span>
+          </div>
+        </section>
+
+        <section>
+          <h2>1. Kỳ thi</h2>
+          <p class="note">Chỉ nhập những trường bạn muốn extension tự điền. Trường để trống sẽ dành cho người dùng tự chọn trên ChineseTest.</p>
+          <div class="grid">
+            <label>Loại kỳ thi<input name="testType" list="test-type-options" placeholder="Để trống hoặc chọn danh mục" autocomplete="off" /></label>
+            <label>Cấp độ<input name="testLevel" list="test-level-options" placeholder="Chọn loại kỳ thi trước" autocomplete="off" /></label>
+            <label>Hình thức<input name="testFormat" list="test-format-options" placeholder="Để trống hoặc chọn danh mục" autocomplete="off" /></label>
+            <label>Ngày thi<input name="testDate" list="test-date-options" placeholder="Chọn cấp độ và hình thức trước" autocomplete="off" /></label>
+            <label>Châu lục<input name="continent" list="continent-options" placeholder="Chọn ngày thi trước" autocomplete="off" /></label>
+            <label>Quốc gia/khu vực<input name="countryArea" list="country-options" placeholder="Chọn châu lục trước" autocomplete="off" /></label>
+            <label class="wide">Trung tâm thi<input name="testCenter" list="test-center-options" placeholder="Chọn ngày thi hoặc quốc gia trước" autocomplete="off" /></label>
+          </div>
+          <datalist id="test-type-options"></datalist>
+          <datalist id="test-level-options"></datalist>
+          <datalist id="test-format-options"></datalist>
+          <datalist id="test-date-options"></datalist>
+          <datalist id="continent-options"></datalist>
+          <datalist id="country-options"></datalist>
+          <datalist id="test-center-options"></datalist>
+        </section>
+
+        <section>
+          <h2>2. Thông tin cá nhân</h2>
+          <div class="grid">
+            <label>Họ tên trên giấy tờ<input name="fullName" autocomplete="off" /></label>
+            <label>Tên tiếng Trung<input name="chineseName" autocomplete="off" /></label>
+            <label>Ngày sinh<input name="dateOfBirth" type="date" /></label>
+            <label>Giới tính
+              <select name="gender">
+                <option value="">Chọn</option><option>Male</option><option>Female</option><option>Other</option>
+              </select>
+            </label>
+            <label>Quốc tịch<input name="nationality" placeholder="Ví dụ: VIET NAM" /></label>
+            <label>Loại giấy tờ<input name="idType" placeholder="Ví dụ: Passport" /></label>
+            <label>Số giấy tờ<input name="idNumber" autocomplete="off" /></label>
+            <label>Số điện thoại<input name="phone" type="tel" autocomplete="off" /></label>
+            <label class="wide">Địa chỉ<input name="address" autocomplete="off" /></label>
+            <label>Tiếng mẹ đẻ<input name="motherTongue" placeholder="Ví dụ: Vietnamese" /></label>
+            <label>Thời gian học tiếng Trung<input name="learningDuration" placeholder="Ví dụ: Less than 6 months" /></label>
+            <label>Nghề nghiệp<input name="occupation" placeholder="Ví dụ: Student" /></label>
+          </div>
+        </section>
+
+        <section id="photo-section">
+          <h2>3. Ảnh thẻ (Tự động tải lên)</h2>
+          <p class="note">Ảnh chân dung 2 inch phông nền trắng chuẩn thi HSK. Extension sẽ tự động nén định dạng JPEG &lt; 100KB và tự động nạp vào trang đăng ký ở bước 2.</p>
+          <div class="photo-container">
+            <div class="photo-preview-wrapper" id="photo-preview-wrapper">
+              <img id="photo-preview" src="" alt="Ảnh thẻ xem trước" style="display: none;" />
+              <div id="photo-placeholder" class="photo-placeholder">
+                <svg class="photo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                  <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                <span>Chưa chọn ảnh</span>
+              </div>
+            </div>
+            <div class="photo-controls">
+              <input type="file" id="photo-file-input" accept="image/jpeg,image/png,image/jpg" style="display: none;" />
+              <div class="photo-buttons">
+                <button type="button" id="choose-photo-btn" class="ghost">Chọn ảnh thẻ…</button>
+                <button type="button" id="remove-photo-btn" class="ghost danger-ghost" style="display: none;">Xóa ảnh</button>
+              </div>
+              <div id="photo-info" class="photo-info">Định dạng JPG/PNG, nền trắng. Sẽ tự nén về JPEG &lt; 100KB.</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button type="submit" class="primary">Lưu hồ sơ</button>
+          <span id="save-status" role="status"></span>
+        </div>
+      </form>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

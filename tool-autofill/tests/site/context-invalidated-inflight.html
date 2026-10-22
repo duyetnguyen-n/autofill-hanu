@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <button id="next">Next</button>
+    <script>
+      history.replaceState({}, "", "/kaoshibaoming");
+      window.addEventListener("unhandledrejection", () => {
+        document.body.dataset.unhandledRejection = "true";
+      });
+
+      const PROFILE_KEY = "hskSafeAutofill.profile.v1";
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const store = {
+        [PROFILE_KEY]: { testType: "HSK" },
+        [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" }
+      };
+
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.runtime = { id: "test-extension", onMessage: { addListener: () => {} } };
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => Object.assign(store, values),
+        remove: async (key) => { delete store[key]; }
+      }};
+
+      document.querySelector("#next").addEventListener("click", () => {
+        document.body.dataset.nextClicked = "true";
+      });
+
+      // Simulate clicking Reload on chrome://extensions while a dependent
+      // dropdown is still loading.
+      setTimeout(() => { chrome.runtime.id = ""; }, 250);
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

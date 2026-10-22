@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>.el-select, input { display: block; width: 320px; min-height: 28px; }</style>
+  </head>
+  <body>
+    <div class="el-select"><input class="el-input__inner" placeholder="Select Test Type" readonly /></div>
+    <button id="next">Next</button>
+    <script>
+      history.replaceState({}, "", "/kaoshibaoming");
+      const PROFILE_KEY = "hskSafeAutofill.profile.v1";
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const store = {
+        [PROFILE_KEY]: { testType: "HSK" },
+        [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" }
+      };
+      let messageHandler = null;
+      window.addEventListener("unhandledrejection", () => {
+        document.body.dataset.unhandledRejection = "true";
+      });
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => Object.assign(store, values),
+        remove: async (key) => { delete store[key]; }
+      }};
+      chrome.runtime = {
+        id: "test-extension",
+        onMessage: { addListener: (handler) => { messageHandler = handler; } }
+      };
+      document.querySelector("#next").addEventListener("click", () => {
+        document.body.dataset.nextClicked = "true";
+      });
+      setTimeout(() => {
+        messageHandler?.({ type: "HSK_AUTOFILL_STOP" }, {}, () => {
+          document.body.dataset.stopAcknowledged = "true";
+        });
+      }, 300);
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

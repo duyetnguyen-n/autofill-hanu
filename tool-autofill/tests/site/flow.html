@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      .el-select, .el-input__inner, .el-select-dropdown, .el-select-dropdown__item {
+        display: block; width: 320px; min-height: 28px;
+      }
+      .el-select-dropdown { position: fixed; left: 400px; top: 10px; background: white; }
+    </style>
+  </head>
+  <body>
+    <div id="fields"></div>
+    <button id="next" disabled>Next</button>
+    <script>
+      history.replaceState({}, "", "/kaoshibaoming");
+      const PROFILE_KEY = "hskSafeAutofill.profile.v1";
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const profile = {
+        testType: "",
+        testLevel: "HSK Level 1",
+        testFormat: "",
+        testDate: "2026-11-07",
+        continent: "Asia",
+        countryArea: "MALAYSIA",
+        testCenter: "Malaysia Sabah Institute of Art（IBT)"
+      };
+      const store = {
+        [PROFILE_KEY]: profile,
+        [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" }
+      };
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => Object.assign(store, values),
+        remove: async (key) => { delete store[key]; }
+      }};
+      chrome.runtime = { id: "test-extension", onMessage: { addListener: () => {} } };
+
+      const definitions = [
+        ["Select Test Type", profile.testType, 120],
+        ["Select Test Level", profile.testLevel, 650],
+        ["Select Test Format", profile.testFormat, 180],
+        ["Select Test Date", profile.testDate, 700],
+        ["Select Continent", profile.continent, 130],
+        ["Select Country/Area", profile.countryArea, 620],
+        ["Select Test Center", profile.testCenter, 900]
+      ];
+      const fields = document.querySelector("#fields");
+      const wrappers = definitions.map(([placeholder]) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "el-select";
+        const input = document.createElement("input");
+        input.className = "el-input__inner";
+        input.placeholder = placeholder;
+        input.readOnly = true;
+        input.setAttribute("aria-expanded", "false");
+        wrapper.appendChild(input);
+        fields.appendChild(wrapper);
+        return wrapper;
+      });
+      wrappers[0].querySelector("input").value = "MANUAL HSK";
+      setTimeout(() => {
+        const input = wrappers[2].querySelector("input");
+        input.value = "MANUAL TEST FORMAT";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        document.body.dataset.manualDependencySelected = "true";
+        updateNext();
+      }, 1800);
+
+      function updateNext() {
+        document.querySelector("#next").disabled = wrappers.some((wrapper) => !wrapper.querySelector("input").value);
+      }
+
+      wrappers.forEach((wrapper, index) => {
+        wrapper.addEventListener("click", () => {
+          if (index > 0 && !wrappers[index - 1].querySelector("input").value) return;
+          const input = wrapper.querySelector("input");
+          input.setAttribute("aria-expanded", "true");
+          setTimeout(() => {
+            document.querySelectorAll(".el-select-dropdown").forEach((node) => node.remove());
+            const dropdown = document.createElement("div");
+            dropdown.className = "el-select-dropdown";
+            const option = document.createElement("div");
+            option.className = "el-select-dropdown__item";
+            option.textContent = definitions[index][1];
+            option.addEventListener("click", () => {
+              input.value = index === 6
+                ? "Malaysia Sabah Institute of Art (IBT)"
+                : definitions[index][1];
+              input.setAttribute("aria-expanded", "false");
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              input.dispatchEvent(new Event("change", { bubbles: true }));
+              dropdown.remove();
+              updateNext();
+            });
+            dropdown.appendChild(option);
+            document.body.appendChild(dropdown);
+          }, definitions[index][2]);
+        });
+      });
+
+      document.querySelector("#next").addEventListener("click", () => {
+        document.body.dataset.nextClicked = "true";
+        document.body.dataset.manualValuePreserved = String(
+          wrappers[0].querySelector("input").value === "MANUAL HSK" &&
+          wrappers[2].querySelector("input").value === "MANUAL TEST FORMAT"
+        );
+        document.body.dataset.progress = String(store[RUN_KEY]?.progress || 0);
+        document.body.dataset.omitted = String(store[RUN_KEY]?.omitted || 0);
+        const result = document.createElement("div");
+        result.id = "flow-result";
+        result.textContent = "NEXT_CLICKED";
+        document.body.appendChild(result);
+      });
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

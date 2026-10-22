@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      input, .el-select, .el-select-dropdown, .el-select-dropdown__item { display: block; width: 320px; min-height: 28px; }
+      .el-select-dropdown { position: fixed; left: 430px; top: 10px; background: white; }
+    </style>
+  </head>
+  <body>
+    <div class="el-form-item"><label>Fullname on ID</label><input placeholder="Enter your ID name" /></div>
+    <div class="el-form-item"><label>Chinese Name</label><input placeholder="Enter Chinese Name" /></div>
+    <div class="el-form-item el-date-editor"><label>Date of Birth</label><input placeholder="Select date of Birth" /></div>
+    <div class="el-form-item" id="gender">
+      <label><input type="radio" name="gender" value="Male" />Male</label>
+      <label><input type="radio" name="gender" value="Female" />Female</label>
+      <label><input type="radio" name="gender" value="Other" />Other</label>
+    </div>
+    <div id="nationality"></div>
+    <div id="id-type"></div>
+    <div class="el-form-item"><label>ID number</label><input placeholder="Enter ID number" /></div>
+    <div class="el-form-item"><label>Phone Number</label><input placeholder="Enter Phone Number" /></div>
+    <div class="el-form-item"><label>Address</label><input placeholder="Enter Address" /></div>
+    <div id="mother-tongue"></div>
+    <div id="learning-duration"></div>
+    <div id="occupation"></div>
+    <div class="el-form-item el-upload" id="photo-box">
+      <label>Photo</label>
+      <input type="file" accept="image/jpeg,image/png" class="el-upload__input" />
+    </div>
+    <button id="next" disabled>Next</button>
+
+    <script>
+      history.replaceState({}, "", "/signtw0totw");
+      const PROFILE_KEY = "hskSafeAutofill.profile.v1";
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const profile = {
+        fullName: "AUTOFILL TEST",
+        chineseName: "测试",
+        dateOfBirth: "2000-01-01",
+        gender: "Other",
+        nationality: "VIET NAM",
+        idType: "Passport",
+        idNumber: "TEST000000",
+        phone: "60123456789",
+        address: "AUTOFILL TEST ADDRESS",
+        motherTongue: "Vietnamese",
+        learningDuration: "Less than 6 months",
+        occupation: "Others (Freelance)",
+        photoDataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=",
+        photoName: "test.jpg"
+      };
+      const store = { [PROFILE_KEY]: profile, [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" } };
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => Object.assign(store, values),
+        remove: async (key) => { delete store[key]; }
+      }};
+      chrome.runtime = { id: "test-extension", onMessage: { addListener: () => {} } };
+
+      const selectDefinitions = [
+        ["nationality", "Select Nationality", profile.nationality, 500],
+        ["id-type", "Select Type of Identification", profile.idType, 180],
+        ["mother-tongue", "Select Mother Language", profile.motherTongue, 620],
+        ["learning-duration", "Select Number of Years", profile.learningDuration, 140],
+        ["occupation", "Select sector", profile.occupation, 550]
+      ];
+
+      const wrappers = selectDefinitions.map(([mountId, placeholder, value, delay]) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "el-select";
+        const input = document.createElement("input");
+        input.className = "el-input__inner";
+        input.placeholder = placeholder;
+        input.readOnly = true;
+        input.setAttribute("aria-expanded", "false");
+        wrapper.appendChild(input);
+        document.querySelector(`#${mountId}`).appendChild(wrapper);
+        wrapper.addEventListener("click", () => {
+          input.setAttribute("aria-expanded", "true");
+          setTimeout(() => {
+            document.querySelectorAll(".el-select-dropdown").forEach((node) => node.remove());
+            const dropdown = document.createElement("div");
+            dropdown.className = "el-select-dropdown";
+            const option = document.createElement("div");
+            option.className = "el-select-dropdown__item";
+            option.textContent = value;
+            option.addEventListener("click", () => {
+              input.value = value;
+              input.setAttribute("aria-expanded", "false");
+              input.dispatchEvent(new Event("change", { bubbles: true }));
+              dropdown.remove();
+              updateNext();
+            });
+            dropdown.appendChild(option);
+            document.body.appendChild(dropdown);
+          }, delay);
+        });
+        return wrapper;
+      });
+
+      function updateNext() {
+        const textValues = [...document.querySelectorAll(".el-form-item input:not([type=radio])")].map((input) => input.value);
+        const customValues = wrappers.slice(0, 3).map((wrapper) => wrapper.querySelector("input").value);
+        const gender = document.querySelector("input[name=gender]:checked");
+        document.querySelector("#next").disabled = !gender || [...textValues, ...customValues].some((value) => !value);
+      }
+      document.querySelectorAll("input").forEach((input) => {
+        input.addEventListener("input", updateNext);
+        input.addEventListener("change", (e) => {
+          if (input.type === "file" && input.files?.length) {
+            document.body.dataset.photoUploaded = "true";
+          }
+          updateNext();
+        });
+      });
+      document.querySelector("#next").addEventListener("click", () => {
+        document.body.dataset.nextClicked = "true";
+        const result = document.createElement("div");
+        result.id = "personal-result";
+        result.textContent = "PERSONAL_NEXT_CLICKED";
+        document.body.appendChild(result);
+      });
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

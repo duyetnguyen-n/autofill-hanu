@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <button id="submit">Submit</button>
+    <script>
+      history.replaceState({}, "", "/signtw0toth");
+      const RUN_KEY = "hskSafeAutofill.quickRun.v1";
+      const store = { [RUN_KEY]: { active: true, startedAt: Date.now(), version: "0.5.0" } };
+      globalThis.chrome = globalThis.chrome || {};
+      chrome.storage = { local: {
+        get: async (key) => ({ [key]: store[key] }),
+        set: async (values) => {
+          Object.assign(store, values);
+          if (values[RUN_KEY]?.active === false) document.body.dataset.runStopped = "true";
+        },
+        remove: async (key) => { delete store[key]; document.body.dataset.runStopped = "true"; }
+      }};
+      chrome.runtime = { id: "test-extension", onMessage: { addListener: () => {} } };
+      document.querySelector("#submit").addEventListener("click", () => {
+        document.body.dataset.submitted = "true";
+      });
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>

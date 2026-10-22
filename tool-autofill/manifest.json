@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "HSK Safe Autofill",
+  "version": "0.5.0",
+  "description": "Luu va dien lai cac truong tren chinesetest.cn ma khong tu dong gui bieu mau.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://www.chinesetest.cn/*"],
+  "action": {
+    "default_title": "HSK Safe Autofill",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["page-bridge.js"],
+      "matches": ["https://www.chinesetest.cn/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.chinesetest.cn/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

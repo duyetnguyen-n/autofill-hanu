@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HSK Safe Autofill</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <div class="title-row">
+        <div>
+          <p class="eyebrow">CHINESETEST.CN</p>
+          <h1>Safe Autofill</h1>
+        </div>
+        <div class="badge-column">
+          <span class="safe-badge">Không submit</span>
+          <span id="extension-version" class="extension-version">v…</span>
+        </div>
+      </div>
+
+      <p class="description">
+        Dùng hồ sơ đã cấu hình để điền nhanh. Chế độ chạy nhanh chỉ bấm Next ở bước
+        1–3 và bắt buộc dừng trước Submit.
+      </p>
+
+      <section class="summary" aria-live="polite">
+        <span>Trang hiện tại</span>
+        <strong id="page-name">Đang kiểm tra…</strong>
+        <span>Trường có thể điền</span>
+        <strong id="field-count">—</strong>
+      </section>
+
+      <section id="run-panel" class="run-panel" aria-live="polite" hidden>
+        <div class="progress-heading">
+          <strong>Tiến độ chạy</strong>
+          <span id="progress-percent">0%</span>
+        </div>
+        <progress id="run-progress" max="100" value="0">0%</progress>
+        <p id="run-message">Đang chuẩn bị…</p>
+        <p id="run-detail" class="run-detail"></p>
+        <button id="stop-run" class="danger" type="button">Dừng ngay</button>
+      </section>
+
+      <button id="quick-run" class="primary" type="button">Chạy nhanh trong cửa sổ tiến độ</button>
+      <button id="fill" class="secondary" type="button">Chỉ điền bước hiện tại</button>
+      <button id="settings" class="secondary" type="button">Nhập / sửa hồ sơ</button>
+      <button id="scan" class="ghost" type="button">Quét lại trang</button>
+
+      <p id="status" class="status" role="status">Không bao giờ bấm Confirm, Submit hoặc Pay.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
