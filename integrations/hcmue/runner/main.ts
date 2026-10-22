@@ -111,7 +111,7 @@ const server = createServer((req, res) => {
   )
     return json(res, { error: "Mở lại Runner từ ứng dụng." }, 401);
   if (req.url === "/state" && req.method === "GET")
-    return json(res, { connected, pairCode, identity, state, error, origin });
+    return json(res, { connected, paired:!!owner, pairCode, identity, state, error, origin });
   if (req.url === "/stop" && req.method === "POST") {
     if (req.headers.origin !== localOrigin)
       return json(res, { error: "Origin" }, 403);
@@ -121,7 +121,7 @@ const server = createServer((req, res) => {
   if (req.url === "/ui.js") {
     res.writeHead(200, { "Content-Type": "text/javascript" });
     res.end(
-      `async function refresh(){try{const r=await fetch('/state');const d=await r.json();document.getElementById('connection').textContent=d.connected?'Đã kết nối website':'Đang nối lại website';document.getElementById('code').textContent=d.pairCode||'Đã liên kết';document.getElementById('fp').textContent=d.identity?.fingerprint||'';document.getElementById('error').textContent=d.error||'';document.getElementById('site').href=d.origin+'/hcmue';document.getElementById('summary').textContent=(d.state?.accounts.length||0)+' tài khoản · '+(d.state?.schedules.filter(s=>['armed','reserved','sending','queued'].includes(s.status)).length||0)+' lịch đang hoạt động';document.getElementById('runs').textContent=(d.state?.schedules||[]).map(s=>s.exam.ten_cap_thi+' · '+s.status+' · '+new Date(s.targetAt).toLocaleString('vi-VN')+(s.attempt.registrationCode?' · '+s.attempt.registrationCode:'')).join('\\n');}catch{document.getElementById('connection').textContent='Runner đã dừng';}}document.getElementById('stop').onclick=async()=>{await fetch('/stop',{method:'POST'});await refresh()};refresh();setInterval(refresh,2000);`,
+      `async function refresh(){try{const r=await fetch('/state');const d=await r.json();document.getElementById('connection').textContent=d.connected?'Đã kết nối website':'Đang nối lại website';document.getElementById('code').textContent=d.pairCode||(d.paired?'Đã liên kết':'Chờ kết nối để lấy mã');document.getElementById('fp').textContent=d.identity?.fingerprint||'';document.getElementById('error').textContent=d.error||'';document.getElementById('site').href=d.origin+'/hcmue';document.getElementById('summary').textContent=(d.state?.accounts.length||0)+' tài khoản · '+(d.state?.schedules.filter(s=>['armed','reserved','sending','queued'].includes(s.status)).length||0)+' lịch đang hoạt động';document.getElementById('runs').textContent=(d.state?.schedules||[]).map(s=>s.exam.ten_cap_thi+' · '+s.status+' · '+new Date(s.targetAt).toLocaleString('vi-VN')+(s.attempt.registrationCode?' · '+s.attempt.registrationCode:'')).join('\\n');}catch{document.getElementById('connection').textContent='Runner đã dừng';}}document.getElementById('stop').onclick=async()=>{await fetch('/stop',{method:'POST'});await refresh()};refresh();setInterval(refresh,2000);`,
     );
     return;
   }
