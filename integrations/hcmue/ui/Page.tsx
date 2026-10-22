@@ -17,11 +17,9 @@ import {
 import {
   AddRegular,
   ArrowSyncRegular,
-  ArrowLeftRegular,
   CheckmarkCircleRegular,
   ClockRegular,
   DesktopRegular,
-  DocumentCheckmarkRegular,
   LinkRegular,
   PlayRegular,
   ShieldCheckmarkRegular,
@@ -50,6 +48,8 @@ import {
 } from "../protocol";
 import { vnInput, targetTime, suggestedTarget, planForSchedule, matchesPlan, eachAccount, type AccountPlan } from "./planning";
 import "./page.css";
+import { WorkspaceSidebar } from "../../../manager/ui/WorkspaceSidebar";
+import { Users, CalendarCheck, Desktop } from "@phosphor-icons/react";
 async function api<T>(path: string, value?: unknown) {
   const controller = new AbortController(),
     timer = setTimeout(() => controller.abort(), 95000);
@@ -88,9 +88,11 @@ const shortTime = (value: string) =>
 export function HcmuePage({
   account,
   logout,
+  chinesetestEnabled=false,
 }: {
   account: Account;
   logout: () => Promise<void>;
+  chinesetestEnabled?: boolean;
 }) {
   const { dark, toggleTheme } = useTheme();
   const [devices, setDevices] = useState<Device[]>([]),
@@ -331,46 +333,11 @@ export function HcmuePage({
       theme={dark ? darkTheme : lightTheme}
       className={`hc-app ${dark ? "hc-dark" : ""}`}
     >
-      <aside className="hc-sidebar">
-        <a href="/" className="hc-brand">
-          <span className="hc-mark">H</span>
-          <span>
-            HANU<span>Điều phối đăng ký</span>
-          </span>
-        </a>
-        <div className="hc-product-switch">
-          <a href="/">
-            <ArrowLeftRegular /> Google Forms
-          </a>
-          <strong>
-            <ClockRegular /> HSK HCMUE
-          </strong>
-        </div>
-        <nav aria-label="HCMUE">
-          <a href="#hc-accounts" className="hc-nav-active">
-            <DesktopRegular /> Tài khoản và lịch<span>{accounts.length}</span>
-          </a>
-          <a href="#hc-results">
-            <DocumentCheckmarkRegular /> Kết quả đăng ký
-            <span>{success.length}</span>
-          </a>
-          <a href="#hc-device">
-            <LinkRegular /> Máy thực thi
-          </a>
-        </nav>
-        <div className="hc-sidebar-bottom">
-          <ShieldCheckmarkRegular />
-          <p>
-            Phiên mã hóa trên máy.
-            <br />
-            Mật khẩu không được lưu.
-          </p>
-          <small>{account.email}</small>
-          <Button appearance="subtle" onClick={() => void logout()}>
-            Đăng xuất
-          </Button>
-        </div>
-      </aside>
+      <WorkspaceSidebar page="hcmue" hcmueEnabled chinesetestEnabled={chinesetestEnabled} connected={ready} email={account.email} logout={()=>void logout()} items={[
+        {label:'Tài khoản và lịch',href:'#hc-accounts',icon:<Users size={19}/>,count:accounts.length},
+        {label:'Kết quả đăng ký',href:'#hc-results',icon:<CalendarCheck size={19}/>,count:success.length},
+        {label:'Máy thực thi',href:'#hc-device',icon:<Desktop size={19}/>},
+      ]}/>
       <div className="hc-main">
         <header className="hc-topbar">
           <span>
