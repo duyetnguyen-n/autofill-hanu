@@ -4,7 +4,13 @@ import { CookieJar } from "tough-cookie";
 import { ORIGIN, type Row } from "../protocol";
 
 export interface Session { token: string; cookies: string; email: string; key: string }
-export class ApiError extends Error { constructor(message: string, public code?: number, public retryAfterMs?: number) { super(message); } }
+export type ApiFailure = "auth" | "identity" | "transient" | "protocol" | "api";
+export class ApiError extends Error {
+  constructor(message: string, public code?: number, public retryAfterMs?: number, public kind: ApiFailure = code === 401 ? "auth" : code === 429 || code != null && code >= 500 ? "transient" : "api", public stage?: "clock" | "identity" | "registration" | "order" | "upload" | "read") { super(message); }
+}
+export const invalidSession = (e: unknown) => e instanceof ApiError && ["auth", "identity"].includes(e.kind);
+export const transientFailure = (e: unknown) => e instanceof ApiError && e.kind === "transient";
+const requestStage = (path:string):ApiError["stage"] => path === "/common/get_safe_stamp" ? "clock" : path === "/userInfo/getInfo" ? "identity" : path.includes("submitPersonalInfo") ? "registration" : path.includes("selectOrder/") ? "order" : path === "/common/upload" ? "upload" : "read";
 export const requestSignature = (stamp: number) => createHash("md5").update("http://new.chinesetest.cn752f03ca0ef1b621fa4e" + stamp).digest("hex").toUpperCase();
 export class ChineseTestClient {
   private agent: Agent;
@@ -18,11 +24,12 @@ export class ChineseTestClient {
   async call(path: string, params?: Row, body?: Row | Buffer, contentType = "application/json"): Promise<Row> {
     if (!/^\/[a-zA-Z0-9_/?=&.,-]+$/.test(path) || path.includes("..") || path.startsWith("//")) throw new Error("Đường dẫn API không hợp lệ.");
     const stamp = await this.raw("/common/get_safe_stamp", undefined, undefined, Date.now());
-    if (Number(stamp.code) !== 200 || !Number.isFinite(stamp.data) || Math.abs(stamp.data - Date.now()) > 60000) throw new ApiError("Không xác minh được thời gian máy chủ. Kiểm tra đồng hồ máy và kết nối.", Number(stamp.code));
+    if (Number(stamp.code) !== 200) throw new ApiError("API thời gian ChineseTest từ chối yêu cầu (mã " + stamp.code + ").", Number(stamp.code), undefined, [401,403].includes(Number(stamp.code)) ? "auth" : undefined, "clock");
+    if (!Number.isFinite(stamp.data) || Math.abs(stamp.data - Date.now()) > 60000) throw new ApiError("Không xác minh được thời gian máy chủ. Kiểm tra đồng hồ máy và kết nối.", undefined, undefined, "protocol", "clock");
     const result = await this.raw(path, params, body, stamp.data, contentType);
     const message = String(result.msg || result.message || "request không được chấp nhận").slice(0, 400);
     const safe = /token|password|authorization|cookie|bearer|eyJ/i.test(message) ? "Request bị từ chối; kiểm tra trong ChineseTest" : message;
-    if (Number(result.code) !== 200) throw new ApiError([401, 403].includes(Number(result.code)) ? "Phiên ChineseTest hết hạn. Đăng nhập lại trước khi chạy." : `ChineseTest: ${safe} (${result.code ?? "không có mã"}).`, Number(result.code));
+    if (Number(result.code) !== 200) throw new ApiError([401, 403].includes(Number(result.code)) ? `ChineseTest từ chối phiên đăng nhập (mã ${result.code}). Đăng nhập lại trước khi chạy.` : `ChineseTest: ${safe} (${result.code ?? "không có mã"}).`, Number(result.code), undefined, [401,403].includes(Number(result.code)) ? "auth" : undefined, requestStage(path));
     return result;
   }
   private async raw(path: string, params: Row | undefined, body: Row | Buffer | undefined, stamp: number, contentType = "application/json"): Promise<Row> {
@@ -36,38 +43,38 @@ export class ChineseTestClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let deadline: ReturnType<typeof setTimeout>;
-      const fail = (error: ApiError) => { if (!settled) { settled = true; clearTimeout(deadline); reject(error); } };
+      const fail = (error: ApiError) => { if (!settled) { settled = true; clearTimeout(deadline); error.stage ??= requestStage(path); reject(error); } };
       const req = request(url, { method: bytes ? "POST" : "GET", agent: this.agent, headers }, res => {
         const chunks: Buffer[] = []; let size = 0;
         const cookies = Promise.all((res.headers["set-cookie"] || []).map(c => this.jar.setCookie(c, url.href)));
         void cookies.catch(() => {});
         res.on("data", chunk => { size += chunk.length; if (size > 4 * 1024 * 1024) { fail(new ApiError("Phản hồi ChineseTest quá lớn.")); req.destroy(); } else chunks.push(chunk); });
-        res.on("aborted", () => fail(new ApiError("Phản hồi bị ngắt; cần đối chiếu nếu đã gửi đơn.")));
-        res.on("error", () => fail(new ApiError("Mất kết nối khi đọc phản hồi.")));
+        res.on("aborted", () => fail(new ApiError("Phản hồi bị ngắt; cần đối chiếu nếu đã gửi đơn.", undefined, undefined, "transient")));
+        res.on("error", () => fail(new ApiError("Mất kết nối khi đọc phản hồi.", undefined, undefined, "transient")));
         res.on("end", () => { void (async () => {
           if (settled) return;
           await cookies;
           const retry = res.headers["retry-after"];
           const retryAfter = retry ? (/^\d+$/.test(String(retry)) ? Number(retry) * 1000 : Math.max(0, Date.parse(String(retry)) - Date.now())) : undefined;
           if ((res.statusCode || 500) >= 300) { fail(new ApiError(`ChineseTest HTTP ${res.statusCode}.`, res.statusCode, retryAfter)); return; }
-          let data: Row; try { data = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { fail(new ApiError("ChineseTest không trả JSON hợp lệ.")); return; }
-          if (!data || typeof data !== "object" || Array.isArray(data)) { fail(new ApiError("Cấu trúc API đã đổi.")); return; }
+          let data: Row; try { data = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { fail(new ApiError("ChineseTest không trả JSON hợp lệ.", undefined, undefined, "protocol")); return; }
+          if (!data || typeof data !== "object" || Array.isArray(data)) { fail(new ApiError("Cấu trúc API đã đổi.", undefined, undefined, "protocol")); return; }
           settled = true; clearTimeout(deadline); resolve(data);
         })().catch(() => fail(new ApiError("Không lưu được phiên phản hồi."))); });
       });
-      deadline = setTimeout(() => { fail(new ApiError("API quá thời gian chờ; cần đối chiếu nếu đã gửi đơn.")); req.destroy(); }, 15000);
-      req.setTimeout(15000, () => { fail(new ApiError("API quá thời gian chờ; không gửi lại đơn tự động.")); req.destroy(); });
-      req.on("error", () => fail(new ApiError("Không kết nối được ChineseTest; kiểm tra trạng thái trước khi gửi lại.")));
+      deadline = setTimeout(() => { fail(new ApiError("API quá thời gian chờ; cần đối chiếu nếu đã gửi đơn.", undefined, undefined, "transient")); req.destroy(); }, 15000);
+      req.setTimeout(15000, () => { fail(new ApiError("API quá thời gian chờ; không gửi lại đơn tự động.", undefined, undefined, "transient")); req.destroy(); });
+      req.on("error", () => fail(new ApiError("Không kết nối được ChineseTest; kiểm tra trạng thái trước khi gửi lại.", undefined, undefined, "transient")));
       if (bytes) req.end(bytes); else req.end();
     });
   }
   async identity() {
     const r = await this.call("/userInfo/getInfo");
     const d = r.data;
-    if (!d || typeof d !== "object") throw new ApiError("Chưa đọc được danh tính tài khoản.");
+    if (!d || typeof d !== "object") throw new ApiError("Chưa đọc được danh tính tài khoản.", undefined, undefined, "protocol", "identity");
     const email = String(d.userEmail || d.email || d.userInfo?.userEmail || "").trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError("Không xác định được email tài khoản.");
-    if (this.session?.email && email !== this.session.email.toLowerCase()) throw new ApiError("Phiên không khớp tài khoản đã chọn.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError("Không xác định được email tài khoản.", undefined, undefined, "protocol", "identity");
+    if (this.session?.email && email !== this.session.email.toLowerCase()) throw new ApiError("Phiên không khớp tài khoản đã chọn.", undefined, undefined, "identity", "identity");
     return { email, key: createHash("sha256").update(email).digest("hex") };
   }
   profile() { return this.call("/examinee/enroll/getLastBm"); }

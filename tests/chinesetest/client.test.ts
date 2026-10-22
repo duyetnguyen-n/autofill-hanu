@@ -23,6 +23,9 @@ it("reproduces headers, verifies TLS, isolates sessions, and never follows redir
   if(req.url?.endsWith("/redirect")){res.writeHead(302,{Location:"https://example.invalid/"});res.end();return;}
   if(req.url?.endsWith("/error")){res.end(JSON.stringify({code:500,msg:"Authorization Bearer fixture-secret"}));return;}
   if(req.url?.endsWith("/expired")){res.end(JSON.stringify({code:401,msg:"expired"}));return;}
+  if(req.url?.endsWith("/forbidden-json")){res.end(JSON.stringify({code:403,msg:"denied"}));return;}
+  if(req.url?.endsWith("/forbidden-http")){res.writeHead(403);res.end("access denied");return;}
+  if(req.url?.endsWith("/busy")){res.writeHead(503,{"Retry-After":"2"});res.end();return;}
   if(req.url?.endsWith("/examinee/enroll/submitPersonalInfo")){posts++;for await(const _chunk of req){}req.socket.destroy();return;}
   res.end(JSON.stringify({code:200,data:{ok:true}}));
  });
@@ -32,11 +35,14 @@ it("reproduces headers, verifies TLS, isolates sessions, and never follows redir
   a=new ChineseTestClient({token:"fixture-a",cookies:JSON.stringify(await jar.serialize()),email:"a@example.test",key:"a"},origin,ca);
   await jar.setCookie("sid=b; Secure; Path=/",origin);b=new ChineseTestClient({token:"fixture-b",cookies:JSON.stringify(await jar.serialize()),email:"b@example.test",key:"b"},origin,ca);
   await Promise.all([a.call("/read"),b.call("/read")]);expect(seen).toEqual(expect.arrayContaining([{authorization:"Bearer fixture-a",cookie:"sid=a"},{authorization:"Bearer fixture-b",cookie:"sid=b"}]));
-  await expect(a.call("/expired")).rejects.toMatchObject({code:401});
+  await expect(a.call("/expired")).rejects.toMatchObject({code:401,kind:"auth",stage:"read"});
+  await expect(a.call("/forbidden-json")).rejects.toMatchObject({code:403,kind:"auth"});
+  await expect(a.call("/forbidden-http")).rejects.toMatchObject({code:403,kind:"api"});
+  await expect(a.call("/busy")).rejects.toMatchObject({code:503,kind:"transient",retryAfterMs:2000});
   await expect(a.call("/redirect")).rejects.toMatchObject({code:302});
   await expect(a.call("/error")).rejects.not.toThrow("fixture-secret");
   await expect(a.identity()).rejects.toThrow("email");
-  await expect(a.submit({fixture:true})).rejects.toThrow();expect(posts).toBe(1);
+  await expect(a.submit({fixture:true})).rejects.toMatchObject({kind:"transient",stage:"registration"});expect(posts).toBe(1);
   expect(()=>new ChineseTestClient(undefined,"https://example.com")).toThrow();
   expect(()=>new ChineseTestClient(undefined,ORIGIN,ca)).toThrow("TLS");
   const untrusted=new ChineseTestClient(undefined,origin);try{await expect(untrusted.call("/read")).rejects.toThrow();}finally{untrusted.close();}

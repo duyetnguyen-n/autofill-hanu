@@ -42,6 +42,14 @@ ChineseTest được điều khiển tại /chinesetest trên website đang có.
 
 ## Dữ liệu và kiểm chứng
 
+### Khi kiểm tra phiên trước giờ mở thất bại
+
+- Bản runner đầu gộp mọi lỗi kiểm tra thành thông báo “Phiên ChineseTest không còn hợp lệ”, kể cả lỗi mạng. Bản sửa giữ mã và nguyên nhân lỗi. Thông báo cũ không đủ để xác định lỗi của lượt đã qua.
+- API trả mã xác thực 401/403: đăng nhập lại trên runner và bấm **Hoàn tất đăng nhập**, rồi chuẩn bị/bật lượt mới. Đăng nhập ở Chrome khác không tự cập nhật phiên đã lưu trong runner.
+- Timeout, ngắt kết nối, 429 hoặc lỗi máy chủ 5xx trong lần kiểm tra sớm: runner giữ lịch và kiểm tra lại. Lần xác minh danh tính cuối được thử lại tối đa một lần khi còn thời gian. Nếu vẫn không xác minh được thì dừng trước khi gửi, kèm nguyên nhân. Request đăng ký không được thử gửi lại.
+- Lỗi định dạng dữ liệu, lệch đồng hồ hoặc HTTP 403 từ tầng truy cập cần xử lý đúng nguyên nhân; không tự coi là hết phiên.
+- Sửa này nằm trong runner. Cần dừng runner cũ và dùng gói mới; deploy website đơn thuần không cập nhật tiến trình runner trên máy. Giữ nguyên kho dữ liệu để giữ liên kết và khóa gửi. Không cần migration hoặc biến môi trường mới cho bản sửa.
+
 Kho mã hóa ở %LOCALAPPDATA%/ChineseTestRunner trên Windows, ~/Library/Application Support/ChineseTestRunner trên Mac. Khóa được bảo vệ bằng DPAPI/Keychain. Không chia sẻ state.enc, thư mục đăng nhập tạm hoặc mã liên kết.
 
-Đã kiểm chứng đăng nhập thủ công và API đọc bằng Node trên Windows, kể cả sau khi Chrome đóng. Test giả lập không thay cho nghiệm thu Live thật. Cần kiểm tra hàng đợi, mã đăng ký và hạn phí trong một đợt Live hợp lệ trước khi dựa vào công cụ ở giờ mở quan trọng. Không có cam kết tỷ lệ giành slot.
+Đã kiểm chứng đăng nhập thủ công và API đọc bằng Node trên Windows, kể cả sau khi Chrome đóng. Ngày 22/10/2026, lượt Live từ website quản lý qua runner Windows đã tạo đơn thật Dong A HSK 4 IBT ngày 13/12/2026, phí cuối 60 USD, gửi đúng một lần; đối chiếu Test Records nhận được mã đăng ký và hạn phí. Không thanh toán; người dùng tự xử lý hủy lượt thử. Lượt này xác minh luồng khi điểm thi đang cho đăng ký, chưa chứng minh thời hạn phiên, hàng đợi hoặc khả năng tranh slot đúng giờ mở. Không có cam kết tỷ lệ giành slot.

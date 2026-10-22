@@ -4,6 +4,7 @@ import { Engine } from "../../integrations/chinesetest/runner/engine";
 import { DONG_A } from "../../integrations/chinesetest/protocol";
 import { fixtureEngine, FakeClient, limits } from "./support";
 import type { ChineseTestClient } from "../../integrations/chinesetest/runner/client";
+import { ApiError } from "../../integrations/chinesetest/runner/client";
 const engines:Engine[]=[];
 beforeEach(()=>{vi.useFakeTimers();const base=Date.now();vi.spyOn(performance,"now").mockImplementation(()=>Date.now()-base);});
 afterEach(async()=>{for(const e of engines.splice(0))await e.close();vi.restoreAllMocks();vi.useRealTimers();});
@@ -46,4 +47,42 @@ it("runs 20 independent accounts and shares center discovery",async()=>{
 });
 it("does not expose sessions, full identity or order polling key in state",async()=>{
  const f=await setup();const p=await f.prepare(false);await f.arm(p);f.shared.order={code:200,data:null};await vi.advanceTimersByTimeAsync(7100);const state=JSON.stringify(f.engine.snapshot());expect(state).not.toContain("fixture-token");expect(state).not.toContain("FIXTURE-0");expect(state).not.toContain("FIXTURE-KEY");expect(state).not.toContain("idNo");
+});
+it.each([
+ new ApiError("Mất kết nối",undefined,undefined,"transient"),
+ new ApiError("ChineseTest HTTP 503.",503),
+ new ApiError("ChineseTest HTTP 429.",429,2000),
+])("keeps a schedule armed on a transient precheck failure and verifies again before sending: $message",async(error)=>{
+ const f=await setup();const p=await f.prepare(true,"account-0",Date.now()+45000);await f.arm(p);f.shared.identityError=error;
+ await vi.advanceTimersByTimeAsync(16000);expect(f.engine.snapshot().schedules[0]).toMatchObject({status:"armed",attempt:{count:0}});expect(f.engine.snapshot().schedules[0].message).toContain("lỗi tạm thời");expect(f.engine.snapshot().accounts[0].loggedIn).toBe(true);
+ f.shared.identityError=undefined;await vi.advanceTimersByTimeAsync(30000);expect(f.engine.snapshot().schedules[0].status).toBe("test_passed");expect(f.shared.submits).toHaveLength(0);
+});
+it("reports a confirmed auth rejection with its code and stops before sending",async()=>{
+ const f=await setup();const p=await f.prepare(false,"account-0",Date.now()+45000);await f.arm(p);f.shared.identityError=new ApiError("ChineseTest từ chối phiên đăng nhập (mã 401).",401);
+ await vi.advanceTimersByTimeAsync(46000);expect(f.engine.snapshot().schedules[0].status).toBe("stopped");expect(f.engine.snapshot().schedules[0].message).toContain("401");expect(f.engine.snapshot().accounts[0].loggedIn).toBe(false);expect(f.shared.submits).toHaveLength(0);
+});
+it.each([new ApiError("ChineseTest không trả JSON hợp lệ.",undefined,undefined,"protocol"),new ApiError("ChineseTest HTTP 403.",403)])("preserves the actual non-auth failure rather than claiming expiry: $message",async(error)=>{
+ const f=await setup();const p=await f.prepare(true,"account-0",Date.now()+45000);await f.arm(p);f.shared.identityError=error;await vi.advanceTimersByTimeAsync(16000);
+ expect(f.engine.snapshot().schedules[0].status).toBe("stopped");expect(f.engine.snapshot().schedules[0].message).toContain(error.message);expect(f.engine.snapshot().schedules[0].message).not.toContain("hết hạn");expect(f.engine.snapshot().accounts[0].loggedIn).toBe(true);expect(f.shared.submits).toHaveLength(0);
+});
+it("retries only the final identity read once after a transient failure",async()=>{
+ const f=await setup();const p=await f.prepare(false);await f.arm(p);await vi.advanceTimersByTimeAsync(6500);const before=f.shared.identityCalls;f.shared.identityError=new ApiError("Lỗi mạng",undefined,undefined,"transient");
+ await vi.advanceTimersByTimeAsync(600);expect(f.engine.snapshot().schedules[0].status).toBe("checking");expect(f.shared.submits).toHaveLength(0);f.shared.identityError=undefined;
+ await vi.advanceTimersByTimeAsync(3500);expect(f.shared.identityCalls-before).toBe(3);expect(f.engine.snapshot().schedules[0].status).toBe("confirmed");expect(f.shared.submits).toHaveLength(1);
+});
+it("stops after two failed final identity reads without calling registration or claiming expiry",async()=>{
+ const f=await setup();const p=await f.prepare(false);await f.arm(p);await vi.advanceTimersByTimeAsync(6500);const before=f.shared.identityCalls;f.shared.identityError=new ApiError("ChineseTest HTTP 503.",503);
+ await vi.advanceTimersByTimeAsync(20000);expect(f.shared.identityCalls-before).toBe(2);expect(f.engine.snapshot().schedules[0].status).toBe("failed");expect(f.engine.snapshot().schedules[0].message).toContain("503");expect(f.shared.submits).toHaveLength(0);
+});
+it("coalesces overlapping prechecks and the final identity read for one account",async()=>{
+ const f=await setup();const p=await f.prepare(true,"account-0",Date.now()+45000);await f.arm(p);const before=f.shared.identityCalls;let release!:()=>void;f.shared.identityGate=new Promise(r=>release=r);
+ await vi.advanceTimersByTimeAsync(45100);expect(f.shared.identityCalls-before).toBe(1);release();await vi.advanceTimersByTimeAsync(100);expect(f.engine.snapshot().schedules[0].status).toBe("test_passed");expect(f.shared.submits).toHaveLength(0);
+});
+it("stop cancels the final identity retry before any registration POST",async()=>{
+ const f=await setup();const p=await f.prepare(false);await f.arm(p);await vi.advanceTimersByTimeAsync(6500);f.shared.identityError=new ApiError("Mất kết nối",undefined,undefined,"transient");await vi.advanceTimersByTimeAsync(600);await f.engine.execute("stop",{id:p.schedule.id},limits);f.shared.identityError=undefined;await vi.advanceTimersByTimeAsync(5000);expect(f.engine.snapshot().schedules[0].status).toBe("stopped");expect(f.shared.submits).toHaveLength(0);
+});
+it("a late rejection of the old session cannot invalidate a newly imported login",async()=>{
+ const f=await setup();const p=await f.prepare(true,"account-0",Date.now()+45000);await f.arm(p);let release!:()=>void;f.shared.identityGate=new Promise(r=>release=r);await vi.advanceTimersByTimeAsync(16000);await f.engine.execute("stop",{id:p.schedule.id},limits);
+ const fresh={...f.data.accounts[0].session,token:"fresh-fixture-token"};f.login.finish=async()=>fresh;await f.engine.execute("finish-login",{},limits);f.shared.identityError=new ApiError("Old session rejected",401);release();await vi.advanceTimersByTimeAsync(100);
+ expect(f.engine.snapshot().accounts[0].loggedIn).toBe(true);f.shared.identityError=undefined;f.shared.identityGate=undefined;expect((await f.prepare()).schedule.status).toBe("prepared");expect(f.shared.submits).toHaveLength(0);
 });

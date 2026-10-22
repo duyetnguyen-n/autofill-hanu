@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { identityKeys, fingerprint } from "../../hcmue/crypto";
 import { atDeadline } from "../../hcmue/runner/deadline";
 import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type Row, type Personal, type Target, type AccountView, type Run, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
-import { ChineseTestClient, ApiError, type Session } from "./client";
+import { ChineseTestClient, ApiError, invalidSession, transientFailure, type Session } from "./client";
 import { LoginWindow } from "./login";
 import { candidateKey, inspectTarget, existingRegistration } from "./checks";
 
@@ -13,6 +13,7 @@ export const freshData = async (name: string): Promise<RunnerData> => ({ id: ran
 type Login = Pick<LoginWindow, "open" | "finish" | "close" | "pending">;
 export class Engine {
   private clients = new Map<string, ChineseTestClient>();
+  private identityChecks = new Map<string, Promise<void>>();
   private timers = new Map<string, () => void>();
   private tasks = new Map<string, Promise<void>>();
   private waits = new Map<string, Set<() => void>>();
@@ -70,9 +71,14 @@ export class Engine {
     this.discoveries.set(key, entry);
     try { return await entry.promise; } catch (e) { this.discoveries.delete(key); throw e; }
   }
-  private async checkIdentity(a: Account) {
-    try { const identity = await this.client(a).identity(); if (identity.key !== a.session.key) throw new Error("Tài khoản trong phiên đã đổi."); a.view.loggedIn = true; }
-    catch (e) { a.view.loggedIn = false; throw e; }
+  private checkIdentity(a: Account): Promise<void> {
+    const pending = this.identityChecks.get(a.view.id); if (pending) return pending;
+    const session = a.session;
+    const work = (async () => {
+      try { const identity = await this.client(a).identity(); if (a.session !== session) throw new ApiError("Phiên đã được thay mới trong khi kiểm tra.", undefined, undefined, "identity", "identity"); if (identity.key !== session.key) throw new ApiError("Tài khoản trong phiên đã đổi.", undefined, undefined, "identity", "identity"); a.view.loggedIn = true; }
+      catch (e) { if (a.session === session && invalidSession(e)) a.view.loggedIn = false; throw e; }
+    })().finally(() => { if (this.identityChecks.get(a.view.id) === work) this.identityChecks.delete(a.view.id); });
+    this.identityChecks.set(a.view.id, work); return work;
   }
   private async executeWork(command: Command, args: Row, limits: Limits): Promise<any> {
     if (this.closed) throw new Error("Runner đang dừng.");
@@ -94,7 +100,7 @@ export class Engine {
       const session = await this.login.finish();
       if (this.loginAccountId && this.account(this.loginAccountId).session.key !== session.key) throw new Error("Bạn đăng nhập tài khoản khác. Dùng đúng tài khoản hoặc hủy rồi thêm tài khoản mới.");
       let a = this.data.accounts.find(a => a.session.key === session.key);
-      if (a) { this.ensureEditable(a); this.clients.get(a.view.id)?.close(); this.clients.delete(a.view.id); a.session = session; a.view.loggedIn = true; }
+      if (a) { this.ensureEditable(a); this.clients.get(a.view.id)?.close(); this.clients.delete(a.view.id); this.identityChecks.delete(a.view.id); a.session = session; a.view.loggedIn = true; }
       else {
         if (this.data.accounts.length >= Math.min(MAX_ACCOUNTS, limits.maxAccounts)) throw new Error("Đã đạt giới hạn tài khoản.");
         a = { session, view: { id: randomUUID(), email: session.email, name: session.email, maskedId: "", hasPhoto: false, loggedIn: true }, personal: personalFrom({}) }; this.data.accounts.push(a);
@@ -169,8 +175,14 @@ export class Engine {
       });
       const prechecks: Array<() => void> = [];
       for (const ahead of [30000, 5000]) if (s.target.targetAt - Date.now() > ahead + 1000) prechecks.push(atDeadline(mono - ahead, () => {
-        void this.checkIdentity(a).catch(async () => {
-          if (s.status === "armed") { this.stop(s, "Phiên ChineseTest không còn hợp lệ trước giờ mở. Đăng nhập và chuẩn bị lại."); await this.persist(); }
+        void this.checkIdentity(a).then(async () => {
+          if (s.status === "armed" && s.version === version && !this.closed) { s.message = "Đã kiểm tra phiên trước giờ mở; tiếp tục chờ lịch."; s.updatedAt = Date.now(); await this.persist(); }
+        }).catch(async e => {
+          if (s.status !== "armed" || s.version !== version || this.closed) return;
+          const reason = (e as Error).message;
+          if (transientFailure(e)) { s.message = `Chưa kiểm tra được phiên do lỗi tạm thời: ${reason} Sẽ kiểm tra lại trước khi gửi; chưa gửi đăng ký.`; s.updatedAt = Date.now(); }
+          else this.stop(s, `Kiểm tra phiên trước giờ mở thất bại: ${reason} Chưa gửi đăng ký; xử lý nguyên nhân rồi chuẩn bị lại.`);
+          await this.persist();
         }).catch(() => {});
       }));
       this.timers.set(s.id, () => { cancelDispatch(); for (const cancel of prechecks) cancel(); });
@@ -222,7 +234,16 @@ export class Engine {
         check();
         const result = await inspectTarget(client, s.target, s.personal, sites, check); check();
         if (!result.ready) { s.message = result.reason; this.changed(); await wait(s.target.intervalMs); continue; }
-        s.status = "checking"; await this.checkIdentity(a); check();
+        s.status = "checking";
+        for (let attempt = 0; ; attempt++) {
+          try { await this.checkIdentity(a); check(); break; }
+          catch (e) {
+            check();
+            const backoff = Math.max(1000, Math.min(e instanceof ApiError ? e.retryAfterMs || 1000 : 1000, 60000));
+            if (attempt > 0 || !transientFailure(e) || Date.now() + backoff >= deadline) throw new Error(`Không xác minh được phiên trước khi gửi: ${(e as Error).message} Chưa gửi đăng ký.`);
+            s.message = `Kiểm tra phiên gặp lỗi tạm thời: ${(e as Error).message} Đang kiểm tra lại, chưa gửi đăng ký.`; this.changed(); await wait(backoff);
+          }
+        }
         if (await existingRegistration(client, s.target)) throw new Error("Đã có đăng ký trên Test Records; không gửi trùng.");
         check();
         if (Date.now() >= deadline) throw new Error("Đã hết thời gian chờ trước khi gửi.");
