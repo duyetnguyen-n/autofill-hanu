@@ -1,3 +1,4 @@
+import { writeRunnerLauncher } from "./write-runner-launcher.mjs";
 import {
   mkdir,
   readFile,
@@ -104,6 +105,7 @@ for (const [name, platform, format] of [
       join(root, "Start HCMUE.cmd"),
       '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\main.mjs" %*\r\nif errorlevel 1 pause\r\n',
     );
+  await writeRunnerLauncher(root, "hcmue", mac);
   await rm(root + ".zip", { force: true });
   if (process.platform === "darwin")
     execFileSync("ditto", ["-c", "-k", "--keepParent", root, root + ".zip"]);

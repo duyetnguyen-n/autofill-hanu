@@ -40,3 +40,5 @@
 @media(prefers-reduced-motion:reduce){.workspace-sidebar *{animation:none!important;transition:none!important}}
 /* Integration CSS is lazy-loaded; keep the compact shell above its base flex rule. */
 @media(max-width:900px){.hc-app:has(>.workspace-sidebar){display:block}}
+
+.forms-guide-strip{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;margin:0 0 24px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--accent)}.forms-guide-strip>svg{flex-shrink:0;margin-top:2px}.forms-guide-strip a{font-size:13px;font-weight:550;color:inherit;text-underline-offset:3px}.forms-guide-strip span{display:block;margin-top:5px;font-size:11px;line-height:1.7;color:var(--muted)}

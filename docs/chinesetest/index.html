@@ -1,1 +1,96 @@
-<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChineseTest Runner</title><style>body{font:16px/1.7 system-ui;max-width:760px;margin:48px auto;padding:24px;color:#20382c;background:#f5f8f6}h1{font-size:30px}a{color:#216951}li{margin:12px 0}</style><h1>ChineseTest Runner</h1><p>Tải gói đúng máy, giải nén rồi mở Start ChineseTest. Cần Google Chrome để tự đăng nhập. Runner gọi API bằng Node sau khi đăng nhập.</p><ul><li><a href="ChineseTest-windows-x64.zip">Windows x64</a></li><li><a href="ChineseTest-mac-arm64.zip">Mac Apple Silicon</a></li><li><a href="ChineseTest-mac-x64.zip">Mac Intel</a></li><li><a href="ChineseTest-SHA256SUMS.txt">SHA-256 các gói đã đóng</a></li><li><a href="HUONG-DAN.md">Hướng dẫn</a></li></ul><p>Mac cần nghiệm thu trên máy thật trước khi dùng Live. Đóng gói thành công không xác nhận đăng ký thật đã được kiểm thử. Công cụ không thanh toán và không bảo đảm slot.</p><p><a href="/chinesetest">Về trang ChineseTest</a></p></html>
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Tải ChineseTest Runner và hướng dẫn kết nối máy, đăng nhập tài khoản, giữ runner hoạt động khi đặt lịch.">
+  <title>Hướng dẫn kết nối · ChineseTest Runner</title>
+  <link rel="stylesheet" href="guide.css">
+  <script src="guide.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#huong-dan">Đến nội dung hướng dẫn</a>
+  <header class="site-header">
+    <a class="brand" href="/chinesetest" aria-label="Về ChineseTest"><span class="brand-mark">h.</span><span>HANU<small>ChineseTest Runner</small></span></a>
+    <a class="back-link" href="/chinesetest">Về ChineseTest <span aria-hidden="true">↗</span></a>
+  </header>
+  <main id="huong-dan">
+    <div class="intro">
+      <p class="eyebrow">CHINESETEST / HƯỚNG DẪN KẾT NỐI</p>
+      <h1>Kết nối máy.<br>Sẵn sàng trước giờ mở.</h1>
+      <p>Tải runner, liên kết với website và đăng nhập tài khoản ChineseTest trên máy của bạn.</p>
+      <nav class="jump-links" aria-label="Nội dung hướng dẫn"><a class="button primary" href="#tai-runner">Tải runner</a><a class="button" href="#ket-noi">Kết nối lần đầu</a><a class="button" href="#lan-sau">Cách mở lại lần sau</a></nav>
+    </div>
+    <aside class="keep-open" aria-labelledby="keep-open-title">
+      <span class="warning-mark" aria-hidden="true">!</span>
+      <div>
+        <p class="eyebrow">CẦN GIỮ MỞ KHI LỊCH ĐANG CHẠY</p>
+        <h2 id="keep-open-title">Không tắt runner. Không để máy ngủ.</h2>
+        <ul>
+          <li><strong>Không đóng cửa sổ CMD / Terminal đang chạy runner</strong>, không nhấn Ctrl+C hoặc thoát tiến trình. Có thể thu nhỏ cửa sổ.</li>
+          <li><strong>Không tắt hay khởi động lại máy, không gập laptop, không để máy Sleep / Hibernate.</strong> Cắm sạc và giữ kết nối Internet ổn định đến khi có kết quả.</li>
+          <li><strong>Không đóng Chrome khi đang đăng nhập</strong> hoặc làm CAPTCHA/OTP. Chờ bấm <strong>Hoàn tất đăng nhập</strong>; runner sẽ tự đóng Chrome sau khi lưu phiên thành công.</li>
+        </ul>
+        <p class="warning-foot">Mở lại runner <strong>không tự bật lại lịch cũ</strong>. Kiểm tra trạng thái từng lượt trước khi chuẩn bị và bật lịch lại.</p>
+      </div>
+    </aside>
+    <section id="tai-runner" aria-labelledby="downloads-title">
+      <div class="section-heading"><h2 id="downloads-title">Tải runner cho máy của bạn</h2><p>Chạy trên máy tính Windows hoặc Mac, cần cài Google Chrome. Gói đã kèm Node.js; không cần cài Node hay npm.</p></div>
+      <div class="downloads">
+        <div class="download-row"><div><h3>Windows</h3><p>Máy dùng Windows x64</p></div><a class="button primary" href="ChineseTest-windows-x64.zip" download>Tải cho Windows <span aria-hidden="true">↓</span></a></div>
+        <div class="download-row"><div><h3>Mac · Apple Silicon</h3><p>Chip Apple M1, M2, M3, M4…</p></div><a class="button" href="ChineseTest-mac-arm64.zip" download>Tải cho Mac Apple Silicon <span aria-hidden="true">↓</span></a></div>
+        <div class="download-row"><div><h3>Mac · Intel</h3><p>Máy Mac dùng bộ xử lý Intel</p></div><a class="button" href="ChineseTest-mac-x64.zip" download>Tải cho Mac Intel <span aria-hidden="true">↓</span></a></div>
+      </div>
+      <p class="download-note">Trên Mac, mở menu Apple → Giới thiệu về máy Mac để xem loại chip. Bản Mac cần kiểm chứng trên máy thật trước khi dùng Live.</p>
+      <a class="text-link" href="ChineseTest-SHA256SUMS.txt">Xem mã kiểm tra SHA-256 của các gói</a>
+    </section>
+    <section id="mo-tu-web" aria-labelledby="web-launch-title">
+      <div class="section-heading"><h2 id="web-launch-title">Mở lại runner bằng nút trên web</h2><p>Cài một lần trên máy thực hiện đăng ký, sau đó mở app ngay từ website.</p></div>
+      <ol><li>Trong gói mới đã giải nén, chạy <strong>Enable web launch.cmd</strong> trên Windows hoặc <strong>Enable web launch.command</strong> trên Mac.</li><li>Mở <strong>Start ChineseTest</strong> và nhập website này một lần. Những lần sau bấm <strong>Mở runner trên máy này</strong> trên trang ChineseTest, rồi chọn mở ứng dụng nếu trình duyệt hỏi.</li><li>Chờ web hiện runner kết nối. Nếu có nhiều máy, chọn đúng máy thực hiện; có thể lưu máy ưu tiên trên trình duyệt này.</li></ol>
+      <p>Nút mở app trên máy đang xem web; không bật máy ở xa, không tự bật lịch. Bấm lại khi runner đang chạy chỉ mở cửa sổ hiện có. HCMUE và ChineseTest có thể chạy cùng lúc, mỗi chức năng có liên kết và kho riêng.</p><p>Đổi máy trên web không chuyển lịch hay phiên đăng nhập. Giữ máy thực hiện bật và có mạng. Giữ thư mục gói cố định; khi cập nhật hoặc chuyển thư mục, chạy Enable web launch lại từ gói mới.</p>
+    </section>
+
+    <section id="lan-sau" aria-labelledby="return-title">
+      <div class="section-heading"><h2 id="return-title">Đã liên kết rồi: lần sau mở lại</h2><p>Giữ nguyên gói runner và kho dữ liệu trên máy. Không cần tải lại hoặc nhập mã liên kết mới mỗi lần sử dụng.</p></div>
+      <ol class="steps">
+        <li><div><h3>Mở runner trên máy đã liên kết</h3><p>Bật máy, nối mạng. Nếu đã chạy Enable web launch, mở ChineseTest trên website rồi bấm <strong>Mở runner trên máy này</strong> và chấp nhận mở ứng dụng. Hoặc mở <strong>Start ChineseTest.cmd</strong> / <strong>Start ChineseTest.command</strong> trong thư mục gói cũ; nếu được hỏi địa chỉ, dùng đúng website đã liên kết.</p></div></li>
+        <li><div><h3>Mở đúng tài khoản và chọn đúng máy</h3><p>Đăng nhập website bằng tài khoản quản lý trước đây, vào ChineseTest và chọn máy cũ trong <strong>Máy thực thi</strong>. Chờ runner kết nối. Nếu dùng trình duyệt mới hoặc đã xóa dữ liệu trình duyệt, đối chiếu lại dấu vân tay; không cần tạo liên kết máy mới chỉ vì mất kết nối tạm thời.</p></div></li>
+        <li><div><h3>Kiểm tra phiên và lịch trước khi bật</h3><p>Tài khoản ChineseTest và hồ sơ được giữ trên máy. Chỉ đăng nhập lại khi runner báo cần cập nhật phiên. Xem <strong>Lịch và kết quả</strong>; khởi động lại runner không tự phát lại lịch cũ. Đối chiếu lượt có khả năng đã gửi; chuẩn bị và bật lại lượt chưa gửi khi còn đủ thời gian.</p></div></li>
+      </ol>
+      <p class="inline-note">Mở website trên điện thoại hoặc máy khác để theo dõi được, nhưng nút mở runner chỉ mở ứng dụng trên máy đang xem web. Máy thực hiện đăng ký vẫn phải bật, có mạng và giữ runner hoạt động.</p>
+    </section>
+
+    <section id="ket-noi" aria-labelledby="steps-title">
+      <div class="section-heading"><h2 id="steps-title">Kết nối lần đầu</h2><p>Thực hiện trên máy sẽ chạy lịch đăng ký. Điện thoại có thể mở website để theo dõi sau khi đã liên kết máy.</p></div>
+      <ol class="steps">
+        <li><div><h3>Giải nén và mở runner</h3><p>Giải nén toàn bộ gói vào một thư mục cố định. Không chạy trực tiếp trong file ZIP.</p><p>Windows: mở <code>Start ChineseTest.cmd</code>.<br>Mac: mở <code>Start ChineseTest.command</code>.</p><p>Giữ cửa sổ CMD / Terminal này mở trong suốt thời gian chạy lịch.</p></div></li>
+        <li><div><h3>Nhập địa chỉ website điều khiển</h3><p>Khi runner hỏi <strong>Website điều khiển (https://...)</strong>, nhập địa chỉ website quản lý đang dùng rồi nhấn Enter. Đây là địa chỉ website HANU, không phải chinesetest.cn.</p><div class="origin-box"><span>Địa chỉ website này</span><code data-site-origin>https://ten-mien-website-cua-ban</code></div><p>Runner sẽ mở trang điều khiển trên máy, hiển thị <strong>mã liên kết một lần</strong> và <strong>dấu vân tay</strong>.</p></div></li>
+        <li><div><h3>Liên kết và xác minh đúng máy</h3><p>Đăng nhập website, mở <a href="/chinesetest">ChineseTest</a> → <strong>Liên kết máy</strong>. Nhập mã từ runner rồi bấm <strong>Liên kết</strong>.</p><p>Đối chiếu <strong>toàn bộ dấu vân tay</strong> trên website với trang runner trên máy. Khớp hoàn toàn thì bấm <strong>Đã đối chiếu, đúng máy</strong>. Chờ trạng thái <strong>Runner đã kết nối</strong>.</p></div></li>
+        <li><div><h3>Đăng nhập tài khoản ChineseTest</h3><p>Trên website, bấm <strong>Thêm tài khoản</strong>. Trong cửa sổ Chrome riêng mở trên máy chạy, tự nhập mật khẩu và hoàn tất CAPTCHA/OTP nếu có.</p><p>Quay lại website hoặc trang runner trên máy, bấm <strong>Hoàn tất đăng nhập</strong>. Chờ tài khoản xuất hiện trên website. Runner lưu phiên mã hóa và tự đóng Chrome khi hoàn tất.</p><p>Mỗi tài khoản đăng nhập riêng. Không gửi mật khẩu hay mã OTP lên website điều khiển hoặc trong chat.</p></div></li>
+        <li><div><h3>Chuẩn bị hồ sơ, sau đó bật lịch</h3><p>Mở <strong>Hồ sơ / ảnh</strong> để kiểm tra thông tin. Chọn đúng cấp thi, ngày thi, điểm thi, giờ bắt đầu dò theo <strong>giờ Việt Nam</strong> và mức phí tối đa.</p><p>Bấm <strong>Kiểm tra API</strong> → <strong>Chuẩn bị</strong> → <strong>Bật lịch Test</strong> hoặc <strong>Bật lịch Live</strong>. Chỉ coi lịch đã bật khi runner xác nhận <strong>Đã bật lịch</strong>.</p><p><strong>Lưu cấu hình hoặc Chuẩn bị chưa bật lịch.</strong> Test là diễn tập, không gửi đơn đăng ký. Live gửi đăng ký thật khi đủ điều kiện và có quyền sử dụng.</p></div></li>
+      </ol>
+    </section>
+    <section aria-labelledby="running-title">
+      <div class="section-heading"><h2 id="running-title">Trước khi chờ đến giờ đăng ký</h2><p>Giữ những điều này cho đến khi runner báo kết quả cuối của từng lượt.</p></div>
+      <ul class="checklist">
+        <li><strong>Runner còn mở, máy không ngủ.</strong><span>Cắm sạc, đặt chế độ ngủ tự động thành Không bao giờ trong thời gian chạy. Không gập laptop.</span></li>
+        <li><strong>Mạng ổn định, đồng hồ tự đồng bộ.</strong><span>Không đổi giờ hệ điều hành khi lịch đã bật. Kiểm tra giờ bắt đầu dò là giờ Việt Nam.</span></li>
+        <li><strong>Đã có xác nhận bật lịch.</strong><span>Kiểm tra trong Lịch và kết quả. Giữ website mở để tiện theo dõi và xử lý khi cần.</span></li>
+      </ul>
+      <p class="inline-note"><strong>Website và runner là hai phần riêng:</strong> đóng tab website không hủy lịch đã được runner lưu và xác nhận. Cửa sổ CMD / Terminal chạy runner và máy tính vẫn phải hoạt động, có mạng. Chrome đăng nhập không cần giữ mở sau khi runner đã lưu phiên thành công.</p>
+    </section>
+    <section aria-labelledby="help-title">
+      <div class="section-heading"><h2 id="help-title">Khi cần xử lý</h2></div>
+      <div class="faq">
+        <details><summary>Website báo mất kết nối runner</summary><p>Kiểm tra CMD / Terminal còn chạy, máy không ngủ và có mạng. Chờ runner nối lại rồi bấm <strong>Đọc lại trạng thái</strong> trên website. Mất kết nối website không có nghĩa lịch trên máy đã dừng; không bật thêm lượt chỉ vì chưa thấy phản hồi.</p></details>
+        <details><summary>Lỡ tắt runner hoặc khởi động lại máy</summary><p>Mở lại Start ChineseTest trong thư mục cũ và nhập đúng website. Lịch không tự phát lại sau khi runner khởi động lại. Đọc trạng thái; lượt có khả năng đã gửi cần <strong>Đối chiếu kết quả</strong> hoặc kiểm tra Test Records trước khi thao tác tiếp. Lượt chưa gửi cần chuẩn bị và bật lại khi còn đủ thời gian.</p></details>
+        <details><summary>Muốn dừng lịch đang chạy</summary><p>Bấm <strong>Dừng lượt</strong> hoặc <strong>Dừng tất cả trên máy</strong> và chờ xác nhận. Nếu website mất kết nối, dùng <strong>Dừng tất cả trên máy</strong> ở trang runner trên máy. Request đã gửi không thể thu hồi; tiếp tục đối chiếu kết quả.</p></details>
+        <details><summary>Runner báo hết phiên đăng nhập</summary><p>Bấm <strong>Đăng nhập lại</strong>, hoàn tất xác minh trong Chrome do runner mở rồi bấm <strong>Hoàn tất đăng nhập</strong>. Chuẩn bị và bật lại lượt chưa gửi. Đăng nhập ở một cửa sổ Chrome khác không tự cập nhật phiên trong runner.</p></details>
+        <details><summary>Cập nhật sang gói runner mới</summary><p>Dừng lịch và chờ xác nhận trước khi tắt runner cũ. Giải nén gói mới rồi mở Start ChineseTest. Giữ nguyên kho dữ liệu ChineseTestRunner trên máy để giữ liên kết, hồ sơ và lịch sử gửi; không xóa hoặc sao chép kho sang máy khác để gửi lại.</p></details>
+      </div>
+    </section>
+    <footer><p>Công cụ không thanh toán và không bảo đảm giữ được slot. Theo dõi kết quả từng tài khoản trong Lịch và kết quả.</p><div><a class="button primary" href="/chinesetest">Mở ChineseTest <span aria-hidden="true">↗</span></a><a class="text-link" href="HUONG-DAN.md">Đọc hướng dẫn chi tiết</a></div></footer>
+  </main>
+</body>
+</html>

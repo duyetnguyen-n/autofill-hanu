@@ -9,36 +9,9 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { runnerDirectory } from "./vault";
 import { activeStatus, type RunnerState } from "../protocol";
-let originArg =
-  process.argv.find((a) => a.startsWith("--origin="))?.slice(9) ??
-  process.env.HCMUE_CLOUD_ORIGIN;
-if (!originArg && process.stdin.isTTY) {
-  const { createInterface } = await import("node:readline/promises");
-  const prompt = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    originArg = (
-      await prompt.question("Website điều khiển (https://...): ")
-    ).trim();
-  } finally {
-    prompt.close();
-  }
-}
-if (!originArg) throw new Error("Chạy với --origin=https://website-cua-ban");
-const url = new URL(originArg);
-if (
-  url.protocol !== "https:" &&
-  !(
-    process.env.HCMUE_FIXTURE &&
-    url.hostname === "127.0.0.1" &&
-    url.protocol === "http:"
-  )
-)
-  throw new Error("Website cần HTTPS.");
-const origin = url.origin,
-  dir = runnerDirectory();
+import { startupOrigin, reuseRunner, saveRunnerWindow, openRunnerWindow, rememberWebsite } from "../../runner/startup";
+const dir = runnerDirectory();
+const origin = await startupOrigin("hcmue", dir, process.env.HCMUE_FIXTURE === "1");
 await mkdir(dir, { recursive: true, mode: 0o700 });
 // One process per vault: two runners must never execute the same local schedule.
 const lockFile = join(dir, "runner.pid");
@@ -46,7 +19,14 @@ let lock;
 try {
   lock = await fsOpen(lockFile, "wx", 0o600);
 } catch {
-  const pid = Number(await readFile(lockFile, "utf8").catch(() => ""));
+  // A second click can arrive between exclusive creation and the PID write.
+  // Never remove a lock whose owner has not finished publishing its PID.
+  let pid = 0;
+  for (let attempt = 0; attempt < 50 && !pid; attempt++) {
+    pid = Number(await readFile(lockFile, "utf8").catch(() => ""));
+    if (!pid) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!pid) throw new Error("Runner đang khởi động hoặc khóa chưa hoàn tất. Chờ rồi mở lại; không mở thêm tiến trình.");
   let alive = false;
   try {
     if (pid > 0) {
@@ -54,13 +34,16 @@ try {
       alive = true;
     }
   } catch {}
-  if (alive)
-    throw new Error("HCMUE Runner đã chạy. Mở cửa sổ điều khiển đang có.");
+  if (alive) {
+    await reuseRunner("hcmue", dir, origin, pid);
+    process.exit(0);
+  }
   await unlink(lockFile).catch(() => {});
   lock = await fsOpen(lockFile, "wx", 0o600);
 }
 await lock.writeFile(String(process.pid));
 await lock.close();
+await rememberWebsite(dir, origin);
 const worker = new Worker(new URL("./worker.mjs", import.meta.url), {
   workerData: { name: hostname(), dir },
 });
@@ -137,11 +120,9 @@ const server = createServer((req, res) => {
 await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 localOrigin = `http://127.0.0.1:${(server.address() as any).port}`;
 const openUrl = localOrigin + "/?token=" + localToken;
-if (!process.argv.includes("--no-open")) {
-  if (process.platform === "darwin") execFile("open", [openUrl]);
-  else if (process.platform === "win32")
-    execFile("rundll32", ["url.dll,FileProtocolHandler", openUrl]);
-}
+await saveRunnerWindow("hcmue", dir, origin, openUrl);
+if (process.env.HCMUE_FIXTURE === "1" && process.send) process.send({ type: "LOCAL_READY", url: openUrl });
+if (!process.argv.includes("--no-open")) openRunnerWindow(openUrl);
 console.log("HCMUE Runner mở tại " + openUrl);
 function keepAwake() {
   const needed = state?.schedules.some((s) => activeStatus(s.status));
@@ -290,6 +271,7 @@ async function close() {
   await worker.terminate();
   awake?.kill();
   server.close();
+  await unlink(join(dir, "runner-open.json")).catch(() => {});
   await unlink(lockFile).catch(() => {});
   process.exit(0);
 }

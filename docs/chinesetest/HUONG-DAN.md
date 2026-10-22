@@ -2,7 +2,18 @@
 
 ChineseTest được điều khiển tại /chinesetest trên website đang có. Một runner trên máy giữ phiên, hồ sơ và lịch riêng cho tối đa 20 tài khoản, còn tùy giới hạn quyền website. Google Forms và HCMUE giữ luồng riêng.
 
+## Mở runner từ website và dùng nhiều máy
+
+- Dùng gói mới, giải nén vào thư mục cố định. Chạy **Enable web launch.cmd** (Windows) hoặc **Enable web launch.command** (Mac) một lần. Bước này chỉ đăng ký nút mở app; không cài dịch vụ nền hoặc tự khởi động cùng máy.
+- Mở **Start ChineseTest** và nhập đúng địa chỉ website một lần. Sau đó trên trang ChineseTest bấm **Mở runner trên máy này**; chấp nhận mở ứng dụng nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
+- Nút luôn mở trên máy đang xem web, không bật máy ở xa. Nếu runner cùng chức năng đã chạy, nút mở lại cửa sổ hiện có, giữ nguyên lịch đang chạy. Mở lại sau khi đã thoát không tự bật lịch cũ.
+- Chọn rõ **máy thực hiện đăng ký**. Khi có nhiều máy, trang không tự chọn máy đầu tiên; có thể đánh dấu máy ưu tiên, lưu riêng theo tài khoản/chức năng/trình duyệt. Đăng nhập web ở máy khác không chuyển phiên hoặc lịch và không tự chuyển việc chạy khi máy cũ mất kết nối.
+- HCMUE và ChineseTest dùng liên kết mở app, kho phiên, khóa tiến trình và cổng cục bộ riêng; có thể chạy đồng thời. Mỗi chức năng vẫn chỉ chạy một tiến trình cho cùng kho dữ liệu.
+- Giữ nguyên thư mục gói sau khi cài. Khi đổi thư mục hoặc cập nhật gói, chạy **Enable web launch** từ gói mới để cập nhật đường dẫn. Giữ nguyên kho dữ liệu để giữ liên kết và lịch sử.
+
 ## Liên kết và đăng nhập
+
+Trang **Hướng dẫn kết nối** tại `/chinesetest-downloads/index.html` có các bước kết nối và nút tải runner cho Windows x64, Mac Apple Silicon, Mac Intel. Mở từ ChineseTest → Hướng dẫn kết nối.
 
 1. Tải runner đúng máy, giải nén vào thư mục cố định, mở Start ChineseTest.cmd (Windows) hoặc Start ChineseTest.command (Mac). Cần cài Google Chrome. Gói có Node, không cần cài Node/npm.
 2. Nhập HTTPS URL của website điều khiển. Trên website chọn ChineseTest → Liên kết máy, nhập mã một lần và đối chiếu toàn bộ dấu vân tay với cửa sổ runner.
@@ -33,6 +44,9 @@ ChineseTest được điều khiển tại /chinesetest trên website đang có.
 
 ## Mất kết nối và dừng
 
+- **KHÔNG đóng cửa sổ CMD / Terminal chạy runner, không nhấn Ctrl+C hoặc thoát tiến trình khi đang chờ lịch / chạy đăng ký.** Có thể thu nhỏ cửa sổ.
+- **KHÔNG tắt hoặc khởi động lại máy, không để máy Sleep / Hibernate, không gập laptop.** Cắm sạc và giữ mạng ổn định đến khi có kết quả. Tạm đặt chế độ ngủ tự động thành Không bao giờ trong thời gian chạy.
+- **KHÔNG đóng Chrome trong lúc đăng nhập / CAPTCHA / OTP.** Bấm Hoàn tất đăng nhập và chờ runner lưu phiên thành công; sau đó runner tự đóng Chrome, không cần giữ cửa sổ Chrome đăng nhập mở.
 - Giữ runner và máy hoạt động, có mạng. Đóng website hoặc mất kết nối cloud không hủy lịch đã được runner lưu/xác nhận. Dùng Dừng tất cả trên máy tại cửa sổ local khi không kết nối website.
 - Không thể thu hồi request đã gửi. Dừng lúc đang gửi giữ khóa để đối chiếu; phản hồi xác nhận đến muộn có thể cập nhật kết quả.
 - Máy ngủ, đồng hồ thay đổi, runner treo hoặc thức quá trễ sẽ dừng lượt chưa gửi. Bật tự đồng bộ giờ hệ điều hành, không chỉnh đồng hồ khi đang bật lịch.

@@ -13,6 +13,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/build/cloud-server ./build/cloud-server
+COPY --from=builder /app/build/cloud-extension ./build/cloud-extension
 COPY --from=builder /app/build/cloud-ui ./build/cloud-ui
 USER node
 EXPOSE 3000

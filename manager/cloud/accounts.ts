@@ -156,6 +156,22 @@ export class Accounts {
       return { account: managed(row), interrupt };
     });
   }
+  async promoteAdmin(actorId: string, id: string, value: Record<string, unknown>) {
+    keys(value, ['version']);
+    if (!Number.isInteger(value.version)) throw new CloudError('Phiên bản tài khoản không hợp lệ.');
+    return transaction(this.pool, async db => {
+      const actor = await this.requireAdmin(actorId, db);
+      const old = (await db.query('SELECT * FROM hanu.accounts WHERE user_id=$1 FOR UPDATE', [id])).rows[0];
+      if (!old) throw new CloudError('Không tìm thấy tài khoản.', 404);
+      if (old.version !== value.version) throw new CloudError('Thông tin vừa thay đổi. Tải lại trước khi cấp quyền.', 409);
+      if (old.role === 'admin') throw new CloudError('Tài khoản đã là quản trị viên.', 409);
+      // A role change does not approve a blocked, pending, expired or unverified account.
+      assertAccess(accountView(old));
+      const row = (await db.query("UPDATE hanu.accounts SET role='admin',expires_at=NULL,version=version+1 WHERE user_id=$1 RETURNING *", [id])).rows[0];
+      await this.audit(db, actorId, actor.email, id, old.email, 'promote_admin', { before: { role: old.role, expiresAt: iso(old.expires_at) }, after: { role: 'admin', expiresAt: null } });
+      return managed(row);
+    });
+  }
   async grants() { return (await this.pool.query('SELECT * FROM hanu.access_grants ORDER BY created_at DESC LIMIT 200')).rows.map(grantView); }
   async createGrant(actorId: string, value: Record<string, unknown>) {
     keys(value, ['email', 'maxProfiles', 'maxConcurrent', 'liveEnabled', 'expiresAt']);

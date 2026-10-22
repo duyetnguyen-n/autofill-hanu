@@ -139,6 +139,22 @@ quyền định danh cơ bản (email/profile/openid); không áp dụng mô t�
 cho mọi loại OAuth. Nếu thêm quyền nhạy cảm hoặc hạn chế, kiểm tra lại yêu cầu
 verification và giới hạn của Google trước khi triển khai.
 
+## Trang hướng dẫn và gói tải trên website
+
+Google Forms → **Hướng dẫn cài extension và kết nối** mở `/extension-downloads/index.html`.
+Nút tải gọi `/extension-downloads/hanu-autofill-online.zip`. `build:cloud-server`
+build sẵn template extension tại `build/cloud-extension`; backend đóng ZIP theo
+`config.origin` đã xác thực, gồm host permissions, CSP, URL kết nối và checksum.
+Không cần cấu hình origin production trong Docker build để tạo gói tải. Dockerfile
+đã copy template này sang image chạy. Nếu deploy thủ công, cần mang theo cả
+`build/cloud-server`, `build/cloud-ui` và `build/cloud-extension`.
+
+Gói tải dùng chung mã nguồn với `build:cloud-extension`. Người dùng giữ nguyên
+thư mục extension khi cập nhật và Reload; không Remove hoặc xóa dữ liệu.
+Các trang hướng dẫn Google Forms, ChineseTest và HCMUE đều có phần mở lại sau
+khi đã liên kết. Chức năng cấp quản trị nằm trong chi tiết tài khoản đang hoạt
+động, yêu cầu xác nhận email và ghi sự kiện `promote_admin`; không cần migration.
+
 ## 4. Khi nào phải gửi lại extension?
 
 Chỉ sửa website/backend mà giao thức extension không đổi thì không cần gửi lại.

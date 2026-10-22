@@ -1,0 +1,8 @@
+.runner-launch{flex-basis:100%;min-width:0;padding-top:14px;border-top:1px solid var(--hc-line);color:var(--hc-muted);font-size:12px;line-height:1.7}
+.runner-launch p{margin:8px 0!important;font-size:12px!important;overflow-wrap:anywhere}
+.runner-launch strong{color:var(--hc-text)}
+.runner-launch a{color:var(--hc-accent)}
+.runner-launch .runner-preferred{display:flex;flex-direction:row!important;justify-content:flex-start;align-items:center;gap:8px;font-size:12px!important;font-weight:400!important}
+.runner-launch .runner-preferred input{margin:0;width:17px!important;height:17px!important;min-height:0!important;flex-shrink:0}
+.runner-launch-status{margin-top:12px;padding:10px 14px;border-left:2px solid var(--hc-accent);background:var(--hc-tint)}
+.hc-device:has(>.runner-launch){flex-wrap:wrap}

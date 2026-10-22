@@ -48,6 +48,7 @@ import {
 } from "../protocol";
 import { vnInput, targetTime, suggestedTarget, planForSchedule, matchesPlan, eachAccount, type AccountPlan } from "./planning";
 import "./page.css";
+import { RunnerLaunch, preferredRunner } from "../../runner/ui/RunnerLaunch";
 import { WorkspaceSidebar } from "../../../manager/ui/WorkspaceSidebar";
 import { Users, CalendarCheck, Desktop } from "@phosphor-icons/react";
 async function api<T>(path: string, value?: unknown) {
@@ -197,7 +198,7 @@ export function HcmuePage({
     if (!mounted.current) return;
     setDevices(d);
     setDeviceId((old) =>
-      d.some((x) => x.id === old) ? old : (d[0]?.id ?? ""),
+      d.some((x) => x.id === old) ? old : preferredRunner("hcmue", account.id, d),
     );
     setLoading(false);
   }
@@ -432,7 +433,7 @@ export function HcmuePage({
                   ? `${device.platform === "darwin" ? "macOS" : "Windows"} · ${device.connected ? "Đã kết nối website" : "Chưa kết nối"}${trusted ? " · Đã đối chiếu thiết bị" : ""}`
                   : "Mở HCMUE Runner trên máy, rồi nhập mã liên kết một lần."}
               </p>
-              <p className="hc-runner-help">Runner là chương trình gửi đăng ký trên máy này. Giữ máy bật, có mạng và không ngủ. Website chỉ dùng để điều khiển và xem kết quả.</p>
+              <p className="hc-runner-help">Runner là chương trình gửi đăng ký trên máy đã chọn. Giữ máy bật, có mạng và không ngủ. Website chỉ dùng để điều khiển và xem kết quả.</p>
               {state && <p>{state.awake ? "Runner đang chạy" : "Runner đang dừng"} · {active.length} lịch đang hoạt động · Lịch đã nhận vẫn chạy khi đóng website.</p>}
               {state && !updatedRunner && <p className="hc-row-error">Runner đang là bản cũ. Dừng các lịch trước, tải bản mới ở “Cài Runner”, đóng bản cũ rồi mở bản mới để dùng kiểm tra API và diễn tập. Tài khoản và liên kết được giữ trên cùng máy.</p>}
               {devices.length > 1 && (
@@ -441,9 +442,10 @@ export function HcmuePage({
                   value={deviceId}
                   onChange={(e) => setDeviceId(e.target.value)}
                 >
+                  <option value="">Chọn máy thực hiện đăng ký</option>
                   {devices.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name}
+                      {d.name} · {d.connected ? "đang kết nối" : "chưa kết nối"}
                     </option>
                   ))}
                 </Select>
@@ -470,6 +472,7 @@ export function HcmuePage({
                 Cài Runner <OpenRegular />
               </a>
             </div>
+            <RunnerLaunch provider="hcmue" accountId={account.id} device={device} onSelect={setDeviceId}/>
           </section>
           {loading ? (
             <div className="hc-empty">
@@ -717,7 +720,7 @@ export function HcmuePage({
                 <div className="hc-section-heading">
                   <div>
                     <h2>Lịch gửi và kết quả</h2>
-                    <p>Chỉ coi là có đơn khi trường trả mã đăng ký.</p>
+                    <p>Lịch trên máy <strong>{device?.name}</strong>. Đổi máy xem không chuyển lịch. Chỉ coi là có đơn khi trường trả mã đăng ký.</p>
                   </div>
                   <div className="hc-toolbar">
                     <Button

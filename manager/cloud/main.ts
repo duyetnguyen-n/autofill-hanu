@@ -22,6 +22,7 @@ import {MAX_ARCHIVE_BYTES} from '../server/archive';
 import {importArchive} from './import-archive';
 import { Accounts } from './accounts';
 import { AccessChecks } from './access-checks';
+import { extensionArchive } from './extension-download';
 import { assertAccess, assertLive } from './access-policy';
 import { StateStreamEncoder } from '../state-stream';
 
@@ -78,6 +79,7 @@ export async function serveCloud(options: {
   const chinesetest=config.chinesetestEnabled?new ChineseTestRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
   if(chinesetest)await chinesetest.check();
   const uiDir = options.uiDir ?? resolve(fileURLToPath(new URL('.', import.meta.url)), '../cloud-ui');
+  let extensionDownload: Promise<Buffer> | undefined;
   const runtimes = new Map<string, Runtime>();
   const tickets = new Map<string, Ticket>();
   const browserUsers = new Map<WebSocket, WebUser>();
@@ -277,6 +279,18 @@ export async function serveCloud(options: {
             await accounts.deleteGrant(user.id, String((await body(req, 1024)).email ?? ''));
             return json(res, { ok: true });
           }
+          const promotion = path.match(/^\/api\/admin\/accounts\/([0-9a-f-]{36})\/promote-admin$/);
+          if (promotion && req.method === 'POST') {
+            const target = promotion[1], value = await body(req, 1024);
+            if (changingAccess.has(target)) throw new CloudError('Tài khoản đang được cập nhật. Thử lại sau.', 409);
+            changingAccess.add(target);
+            try {
+              const updated = await accounts.promoteAdmin(user.id, target, value);
+              accessChecks.invalidate(target);
+              for (const ws of runtimes.get(target)?.browsers ?? []) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ACCOUNT_UPDATED' }));
+              return json(res, updated);
+            } finally { changingAccess.delete(target); }
+          }
           const match = path.match(/^\/api\/admin\/accounts\/([0-9a-f-]{36})(?:\/sessions\/([a-zA-Z0-9-]{20,80})\/revoke)?$/);
           if (match) {
             const target = match[1], session = match[2];
@@ -395,6 +409,17 @@ export async function serveCloud(options: {
         throw new CloudError('Không tìm thấy API.', 404);
       }
       if (req.method !== 'GET') throw new CloudError('Method không hợp lệ.', 405);
+      if (path === '/extension-downloads/hanu-autofill-online.zip') {
+        extensionDownload ??= extensionArchive(resolve(uiDir,'../cloud-extension'),config.origin).catch(() => {
+          extensionDownload = undefined;
+          throw new CloudError('Chưa có gói extension. Cần build lại website trước khi tải.', 503);
+        });
+        const archive = await extensionDownload;
+        res.setHeader('Content-Type','application/zip');
+        res.setHeader('Content-Disposition','attachment; filename="hanu-autofill-online.zip"');
+        res.setHeader('Content-Length',archive.length);
+        return res.end(archive);
+      }
       const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
