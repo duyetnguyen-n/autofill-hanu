@@ -1,5 +1,6 @@
 import { Agent, request } from "node:https";
 import { createHash, randomUUID } from "node:crypto";
+import { schoolCertificateAuthorities } from "./tls";
 import { CookieJar } from "tough-cookie";
 import {
   HCMUE_ORIGIN,
@@ -30,6 +31,8 @@ export class HcmueClient {
     maxSockets: 5,
     maxFreeSockets: 5,
     timeout: 60000,
+    rejectUnauthorized: true,
+    ca: schoolCertificateAuthorities(),
   });
   private jar: CookieJar;
   constructor(
@@ -69,6 +72,8 @@ export class HcmueClient {
     const headers: Record<string, string> = {
       Accept: "application/json",
       "X-Device-Id": this.session?.deviceId ?? this.loginDevice,
+      Origin: HCMUE_ORIGIN,
+      Referer: HCMUE_ORIGIN + "/sign-in",
     };
     if (this.session) headers.Authorization = `Bearer ${this.session.token}`;
     const cookie = await this.jar.getCookieString(url.href);
@@ -131,9 +136,14 @@ export class HcmueClient {
                 : undefined;
               fail(
                 new ApiFailure(
-                  res.statusCode === 401
-                    ? "Phiên đăng nhập đã hết hạn."
-                    : `Trường trả HTTP ${res.statusCode}.`,
+                  apiMessage(
+                    data,
+                    res.statusCode === 401
+                      ? path === "/auth/login"
+                        ? "CCCD hoặc mật khẩu không đúng."
+                        : "Phiên đăng nhập đã hết hạn. Đăng nhập lại tài khoản HCMUE."
+                      : `Trường trả HTTP ${res.statusCode}.`,
+                  ),
                   true,
                   res.statusCode,
                   data,
@@ -159,12 +169,9 @@ export class HcmueClient {
           });
       });
       req.on("close", () => clearTimeout(timer));
-      req.on("error", () =>
+      req.on("error", (error: NodeJS.ErrnoException) =>
         fail(
-          new ApiFailure(
-            "Không nhận được phản hồi. Cần đối chiếu kết quả.",
-            connected,
-          ),
+          new ApiFailure(transportMessage(error.code, connected), connected),
         ),
       );
       req.end(text);
@@ -178,13 +185,16 @@ export class HcmueClient {
       { cccd, password },
       20000,
     );
-    if (
-      String(response.status).toLowerCase() !== "success" ||
-      typeof response.token !== "string" ||
-      !response.token
-    )
+    if (String(response?.status).toLowerCase() !== "success")
       throw new Error(
-        "Đăng nhập không thành công. Kiểm tra tài khoản hoặc email xác thực trên trang trường.",
+        apiMessage(
+          response,
+          "Đăng nhập không thành công. Kiểm tra tài khoản hoặc email xác thực trên trang trường.",
+        ),
+      );
+    if (typeof response.token !== "string" || !response.token.trim())
+      throw new Error(
+        "API đăng nhập báo thành công nhưng thiếu token. Cần cập nhật Runner.",
       );
     this.session = {
       token: response.token,
@@ -204,20 +214,29 @@ export class HcmueClient {
   }
   async profile(): Promise<Identity> {
     const response = await this.call("/me/profile");
-    const { user, cccd } = response.data ?? {};
-    if (response.success !== true || !user?.cccd || !cccd?.ho_ten)
+    const { user, cccd } = response?.data ?? {};
+    if (
+      response?.success !== true ||
+      typeof user?.cccd !== "string" ||
+      !user.cccd.trim()
+    )
       throw new Error("Không đọc được hồ sơ HCMUE.");
     return {
       key: createHash("sha256").update(String(user.cccd)).digest("hex"),
-      name: cccd.ho_ten,
+      name:
+        typeof cccd?.ho_ten === "string" && cccd.ho_ten.trim()
+          ? cccd.ho_ten
+          : "Thí sinh " + String(user.cccd).slice(-4),
       maskedId: "•••• " + String(user.cccd).slice(-4),
       email: user.email ?? "",
-      hasPhoto: !!cccd.anh_the,
-      verified: !!(
-        user.isVerified ||
-        user.is_verified ||
-        user.email_verified_at
-      ),
+      hasPhoto:
+        typeof cccd?.anh_the === "string" && cccd.anh_the.trim().length > 0,
+      verified:
+        [user.isVerified, user.is_verified].some(
+          (v) => v === true || v === 1 || v === "1",
+        ) ||
+        (typeof user.email_verified_at === "string" &&
+          Number.isFinite(Date.parse(user.email_verified_at))),
     };
   }
   async exams(date = "", location = "HCMUE"): Promise<Exam[]> {
@@ -228,7 +247,7 @@ export class HcmueClient {
     });
     if (date) query.set("ngay_thi", date);
     const r = await this.call("/ky-thi-mo/comming-exam?" + query);
-    if (r.success !== true || !Array.isArray(r.data))
+    if (r?.success !== true || !Array.isArray(r.data))
       throw new Error("Không đọc được kỳ thi.");
     return r.data;
   }
@@ -247,7 +266,7 @@ export class HcmueClient {
     const r = await this.call(
       "/dang-ky-thi/check-registration?" + this.query(exam),
     );
-    if (r.status !== "success" || typeof r.data?.isRegistered !== "boolean")
+    if (r?.status !== "success" || typeof r.data?.isRegistered !== "boolean")
       throw new Error("Không xác định được đăng ký cũ.");
     return r.data as { isRegistered: boolean; registration?: any };
   }
@@ -255,15 +274,20 @@ export class HcmueClient {
     const r = await this.call(
       "/dang-ky-thi/check-schedule-conflict?" + this.query(exam),
     );
-    if (typeof r.data?.hasConflict !== "boolean")
+    if (r?.status !== "success" || typeof r.data?.hasConflict !== "boolean")
       throw new Error("Không kiểm tra được trùng lịch.");
     return r.data;
   }
   submit(body: unknown) {
     return this.call("/dang-ky-thi", "POST", body, 30000);
   }
-  job(id: string) {
-    return this.call("/dang-ky-thi/jobs/" + encodeURIComponent(id));
+  async job(id: string) {
+    const r = await this.call("/dang-ky-thi/jobs/" + encodeURIComponent(id));
+    if (typeof r?.data?.jobStatus !== "string")
+      throw new Error(
+        "API hàng đợi thiếu data.jobStatus. Chưa xác định được kết quả đăng ký.",
+      );
+    return r;
   }
   async export(): Promise<Session> {
     if (!this.session) throw new Error("Chưa đăng nhập.");
@@ -275,4 +299,40 @@ export class HcmueClient {
   close() {
     this.agent.destroy();
   }
+}
+
+function apiMessage(data: any, fallback: string) {
+  if (
+    data?.status === "email_not_verified" ||
+    data?.requiresEmailVerification === true
+  )
+    return "Tài khoản HCMUE chưa xác thực email. Mở trang trường để xác thực rồi đăng nhập lại.";
+  const message = typeof data?.message === "string" ? data.message.trim() : "";
+  // Forward the school's short explanation, never HTML, echoed credentials or tokens.
+  if (
+    !message ||
+    message.length > 350 ||
+    /[<>]|\bBearer\b|eyJ[A-Za-z0-9_-]{15}|\d{9,12}/.test(message)
+  )
+    return fallback;
+  return message;
+}
+export function transportMessage(code: string | undefined, connected: boolean) {
+  if (
+    code &&
+    [
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "CERT_HAS_EXPIRED",
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ].includes(code)
+  )
+    return `Không xác minh được chứng chỉ HTTPS của HCMUE (${code}). Cập nhật Runner; không tắt xác minh HTTPS.`;
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN")
+    return "Không tìm được máy chủ HCMUE. Kiểm tra DNS và kết nối mạng.";
+  if (!connected)
+    return "Chưa kết nối được tới máy chủ HCMUE. Kiểm tra mạng và thử đăng nhập lại.";
+  return "Kết nối HCMUE bị ngắt hoặc hết thời gian chờ. Nếu đã gửi đơn, kiểm tra kết quả trước khi gửi lại.";
 }

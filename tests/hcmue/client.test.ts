@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   HcmueClient,
   ApiFailure,
+  transportMessage,
 } from "../../integrations/hcmue/runner/client";
 import { exam } from "./support";
 it("uses strict TLS and isolated bearer/device/cookie sessions without redirects", async () => {
@@ -46,6 +47,43 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
       res.setHeader("Content-Type", "application/json");
       if (path.endsWith("/auth/login")) {
         const { cccd } = JSON.parse(raw);
+        if (cccd === "000000000003") {
+          res.writeHead(400);
+          res.end(
+            JSON.stringify({
+              status: "error",
+              message: "Số CCCD không tồn tại",
+            }),
+          );
+          return;
+        }
+        if (cccd === "000000000004") {
+          res.writeHead(403);
+          res.end(
+            JSON.stringify({
+              status: "email_not_verified",
+              requiresEmailVerification: true,
+              message: "Verify email",
+            }),
+          );
+          return;
+        }
+        if (cccd === "000000000005") {
+          res.end(
+            JSON.stringify({ status: "error", message: "Mật khẩu không đúng" }),
+          );
+          return;
+        }
+        if (cccd === "000000000007") {
+          res.writeHead(400);
+          res.end(
+            JSON.stringify({
+              status: "error",
+              message: "Account 031202001234 password eyJfixture-token-unsafe",
+            }),
+          );
+          return;
+        }
         res.setHeader("Set-Cookie", `sid=${cccd}; HttpOnly; Path=/`);
         res.end(JSON.stringify({ status: "success", token: "token-" + cccd }));
         return;
@@ -70,10 +108,70 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
                 email: "fixture@example.test",
                 isVerified: true,
               },
-              cccd: { ho_ten: "Fixture " + id, anh_the: "photo" },
+              cccd:
+                id === "000000000006"
+                  ? null
+                  : { ho_ten: "Fixture " + id, anh_the: "photo" },
             },
           }),
         );
+        return;
+      }
+      if (path.startsWith("/v1/api/ky-thi-mo/comming-exam?")) {
+        res.end(
+          JSON.stringify({
+            success: true,
+            message: "Lấy danh sách kỳ thi chưa diễn ra thành công",
+            data: [{ ...exam, phi: "1550000" }],
+            pagination: { page: 1, limit: 1000, total: 1, totalPages: 1 },
+          }),
+        );
+        return;
+      }
+      if (path.endsWith("/cau-hoi-va-tra-loi")) {
+        res.end(
+          JSON.stringify({
+            success: true,
+            message: "OK",
+            open_exam: {
+              ma_cap_thi: exam.ma_cap_thi,
+              ngay_mo_dang_ky: exam.ngay_mo_dang_ky,
+              hasRegisterCode: 0,
+            },
+            questions: [],
+          }),
+        );
+        return;
+      }
+      if (path.startsWith("/v1/api/dang-ky-thi/check-registration?")) {
+        res.end(
+          JSON.stringify({
+            status: "success",
+            data: { isRegistered: false, registration: null },
+          }),
+        );
+        return;
+      }
+      if (path.startsWith("/v1/api/dang-ky-thi/check-schedule-conflict?")) {
+        res.end(
+          JSON.stringify({
+            status: "success",
+            data: { hasConflict: false, conflictType: null, conflict: null },
+          }),
+        );
+        return;
+      }
+      if (path.endsWith("/dang-ky-thi/jobs/fixture-job")) {
+        res.end(
+          JSON.stringify({
+            status: "success",
+            data: { jobStatus: "completed", ma_dang_ky: "FIXTURE-TLS" },
+          }),
+        );
+        return;
+      }
+      if (path.endsWith("/dang-ky-thi/jobs/malformed-job")) {
+        res.end("{}");
         return;
       }
       if (path.endsWith("/redirect")) {
@@ -100,6 +198,14 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
   await new Promise<void>((r) => server.listen(0, "localhost", r));
   try {
     const origin = `https://localhost:${(server.address() as any).port}`;
+    const untrusted = new HcmueClient(undefined, origin);
+    try {
+      await expect(untrusted.call("/me/profile")).rejects.toThrow(
+        "chứng chỉ HTTPS",
+      );
+    } finally {
+      untrusted.close();
+    }
     a = new HcmueClient(undefined, origin, ca);
     b = new HcmueClient(undefined, origin, ca);
     const [sa, sb] = await Promise.all([
@@ -116,6 +222,25 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
     expect(ha.cookie).toBe("sid=000000000001");
     expect(hb.cookie).toBe("sid=000000000002");
     expect(ha.device).toBe(sa.deviceId);
+    expect(await a.exams()).toEqual([{ ...exam, phi: "1550000" }]);
+    expect(await a.questions(exam)).toMatchObject({
+      success: true,
+      open_exam: { hasRegisterCode: 0 },
+      questions: [],
+    });
+    expect(await a.registration(exam)).toEqual({
+      isRegistered: false,
+      registration: null,
+    });
+    expect(await a.conflict(exam)).toEqual({
+      hasConflict: false,
+      conflictType: null,
+      conflict: null,
+    });
+    expect(await a.job("fixture-job")).toMatchObject({
+      data: { jobStatus: "completed", ma_dang_ky: "FIXTURE-TLS" },
+    });
+    await expect(a.job("malformed-job")).rejects.toThrow("data.jobStatus");
     expect(
       await a.submit({ ma_cap_thi: exam.ma_cap_thi, answers: [] }),
     ).toEqual({ status: "success", data: "FIXTURE-TLS" });
@@ -128,6 +253,35 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
       retryAfterMs: 3000,
     });
     await expect(a.call("/broken")).rejects.toBeInstanceOf(ApiFailure);
+    for (const [id, message] of [
+      ["000000000003", "Số CCCD không tồn tại"],
+      ["000000000004", "chưa xác thực email"],
+      ["000000000005", "Mật khẩu không đúng"],
+    ]) {
+      const failed = new HcmueClient(undefined, origin, ca);
+      try {
+        await expect(failed.login(id, "fixture")).rejects.toThrow(message);
+      } finally {
+        failed.close();
+      }
+    }
+    const incomplete = new HcmueClient(undefined, origin, ca);
+    try {
+      const session = await incomplete.login("000000000006", "fixture");
+      expect(session.identity.hasPhoto).toBe(false);
+      expect(session.identity.name).toBe("Thí sinh 0006");
+    } finally {
+      incomplete.close();
+    }
+    const unsafe = new HcmueClient(undefined, origin, ca);
+    try {
+      await expect(unsafe.login("000000000007", "fixture")).rejects.toThrow(
+        "HTTP 400",
+      );
+    } finally {
+      unsafe.close();
+    }
+
     expect(
       () => new HcmueClient(undefined, "https://example.invalid", ca),
     ).toThrow("HCMUE");
@@ -141,3 +295,12 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
     await rm(dir, { recursive: true, force: true });
   }
 }, 20000);
+
+it("identifies certificate and network failures without weakening TLS", () => {
+  expect(transportMessage("UNABLE_TO_VERIFY_LEAF_SIGNATURE", false)).toContain(
+    "chứng chỉ HTTPS",
+  );
+  expect(transportMessage("ENOTFOUND", false)).toContain("DNS");
+  expect(transportMessage("ECONNREFUSED", false)).toContain("Chưa kết nối");
+  expect(transportMessage("ECONNRESET", true)).toContain("kiểm tra kết quả");
+});
