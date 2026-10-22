@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { httpFixture, users, extension } from './fixture';
 
@@ -30,6 +30,15 @@ async function connectExtension(f: Awaited<ReturnType<typeof setup>>, owner = 0)
   await expect.poll(async () => (await f.repository.store(users[owner]).session(sessionId)).synced).toBe(true);
   return { ...peer, sessionId, token: paired.token };
 }
+
+it('uses the freshly identified HTTP account without querying permissions twice',async()=>{
+  const f=await setup();await f.api('auth/me');
+  const query=vi.spyOn(f.pool,'query');
+  try{
+    expect((await f.api('events-ticket',0,{})).status).toBe(200);
+    expect(query.mock.calls.filter(([sql])=>sql==='SELECT * FROM hanu.accounts WHERE user_id=$1')).toHaveLength(1);
+  }finally{query.mockRestore();}
+},20000);
 
 it('requires authentication and same-origin mutations; login exposes no auth tokens', async () => {
   const f = await setup();

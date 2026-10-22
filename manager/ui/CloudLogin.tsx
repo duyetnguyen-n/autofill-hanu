@@ -1,4 +1,4 @@
-import React,{useCallback,useEffect,useState} from 'react';
+import React,{useCallback,useEffect,useRef,useState} from 'react';
 import {Button} from '@fluentui/react-components';
 import type {Account} from '../../src/account';
 import {AccountPage} from './AccountPage';
@@ -22,29 +22,58 @@ export function CloudLogin({error,onLogin,pending}:{error:string;onLogin:()=>voi
 export function CloudGate({children}:{children:(account:Account,logout:()=>Promise<void>)=>React.ReactNode}){
   const [account,setAccount]=useState<Account>(),[checking,setChecking]=useState(true),[pending,setPending]=useState(false),[unavailable,setUnavailable]=useState(false),[attempt,setAttempt]=useState(0);
   const [error,setError]=useState(new URLSearchParams(location.search).has('auth_error')?'Đăng nhập chưa hoàn tất. Bấm Tiếp tục với Google để thử lại.':'');
-  const refresh=useCallback(async()=>{const response=await fetch('/api/auth/me',{cache:'no-store'});const result=await response.json();if(response.status===401){setUnavailable(false);setAccount(undefined);return;}if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');setAccount(result);},[]);
+  const monitor=useRef({check:async()=>{},signedOut:()=>{}});
+  const refresh=useCallback(()=>monitor.current.check(),[]);
   useEffect(()=>{
-    let stopped=false,generation=0,inFlight=false;let retry:ReturnType<typeof setTimeout>|undefined;
-    async function check(){if(inFlight)return;clearTimeout(retry);inFlight=true;const current=++generation;try{
-      const response=await fetch('/api/auth/me',{cache:'no-store'});const result=await response.json();if(stopped||current!==generation)return;
-      if(response.status===401){setUnavailable(false);setAccount(undefined);setError('Phiên đăng nhập đã hết hạn. Đăng nhập lại bằng Google.');}else if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');else{setAccount(result);setUnavailable(false);setError('');}
-    }catch(e){if(!stopped&&current===generation){setUnavailable(true);setError('Chưa kiểm tra được phiên đăng nhập. Đang thử lại…');retry=setTimeout(()=>void check(),5000);}}finally{inFlight=false;if(!stopped&&current===generation)setChecking(false);}}
+    let stopped=false,generation=0,failures=0,lastChecked=-Infinity;
+    let currentAccount:Account|undefined,inFlight:Promise<void>|undefined,controller:AbortController|undefined;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    function schedule(){
+      clearTimeout(timer);
+      if(stopped||document.visibilityState==='hidden'||!currentAccount&&!failures)return;
+      // Push handles access edits immediately. Poll only as a fallback; pending
+      // accounts have no dashboard channel and still need approval discovery.
+      let delay=failures?Math.min(5000*2**Math.min(failures-1,4),60000):currentAccount?.status==='pending'?30000:300000;
+      if(!failures&&currentAccount?.status==='active'&&currentAccount.expiresAt){
+        const expires=Date.parse(currentAccount.expiresAt);if(Number.isFinite(expires))delay=Math.min(delay,Math.max(1000,expires-Date.now()));
+      }
+      timer=setTimeout(()=>void check(),delay);
+    }
+    function check():Promise<void>{
+      if(stopped)return Promise.resolve();
+      if(inFlight)return inFlight;
+      clearTimeout(timer);const current=++generation;
+      controller=new AbortController();const signal=controller.signal;
+      const timeout=setTimeout(()=>controller?.abort(),15000);
+      inFlight=(async()=>{try{
+        const response=await fetch('/api/auth/me',{cache:'no-store',signal});const result=await response.json();if(stopped||current!==generation)return;
+        if(response.status===401){currentAccount=undefined;setUnavailable(false);setAccount(undefined);setError('Phiên đăng nhập đã hết hạn. Đăng nhập lại bằng Google.');}
+        else if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');
+        else{currentAccount=result;setAccount(result);setUnavailable(false);setError('');}
+        failures=0;lastChecked=Date.now();
+      }catch(e){if(!stopped&&current===generation){failures++;setUnavailable(true);setError('Chưa kiểm tra được phiên đăng nhập. Đang thử lại…');}}
+      finally{clearTimeout(timeout);inFlight=undefined;if(!stopped&&current===generation){setChecking(false);schedule();}}})();
+      return inFlight;
+    }
     // A row-level 401 or a transient outage must not unmount the workspace.
     // Only /auth/me can confirm that this browser's login has ended.
     const expired=()=>{void check();};
-    const visible=()=>{if(document.visibilityState==='visible')void check();};
+    const visible=()=>{clearTimeout(timer);if(document.visibilityState!=='hidden'){if(Date.now()-lastChecked>=30000)void check();else schedule();}};
     const updated=()=>void check();
+    const storage=(event:StorageEvent)=>{if(event.key==='hanu-session-updated')void check();};
+    monitor.current={check,signedOut:()=>{generation++;controller?.abort();clearTimeout(timer);currentAccount=undefined;failures=0;}};
     window.addEventListener('hanu-auth-expired',expired);window.addEventListener('hanu-account-updated',updated);document.addEventListener('visibilitychange',visible);
-    const timer=setInterval(()=>void check(),30000);void check();
+    window.addEventListener('storage',storage);void check();
     if(location.search)history.replaceState(null,'',location.pathname);
-    return()=>{stopped=true;clearTimeout(retry);clearInterval(timer);window.removeEventListener('hanu-auth-expired',expired);window.removeEventListener('hanu-account-updated',updated);document.removeEventListener('visibilitychange',visible);};
+    return()=>{stopped=true;controller?.abort();clearTimeout(timer);window.removeEventListener('hanu-auth-expired',expired);window.removeEventListener('hanu-account-updated',updated);window.removeEventListener('storage',storage);document.removeEventListener('visibilitychange',visible);};
   },[attempt]);
   async function login(){setPending(true);setError('');try{
     const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const data=await response.json();
     if(!response.ok)throw new Error(data.error??'Không mở được đăng nhập.');location.assign(data.url);
   }catch(e){setError((e as Error).message);setPending(false);}}
   async function logout(){setPending(true);try{
-    const response=await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const result=await response.json();if(!response.ok)throw new Error(result.error??'Không đăng xuất được.');setAccount(undefined);setError('');
+    const response=await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const result=await response.json();if(!response.ok)throw new Error(result.error??'Không đăng xuất được.');monitor.current.signedOut();setAccount(undefined);setError('');
+    try{localStorage.setItem('hanu-session-updated',crypto.randomUUID());}catch{}
   }finally{setPending(false);}}
   if(checking)return <div className="login-loading" role="status"><div className="login-skeleton"/><span>Đang mở không gian của bạn…</span></div>;
   if(account){

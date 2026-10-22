@@ -20,9 +20,9 @@ import { digest } from '../server/store';
 import {MAX_ARCHIVE_BYTES} from '../server/archive';
 import {importArchive} from './import-archive';
 import { Accounts } from './accounts';
+import { AccessChecks } from './access-checks';
 import { assertAccess, assertLive } from './access-policy';
 import { StateStreamEncoder } from '../state-stream';
-import type { Account } from '../../src/account';
 
 interface Runtime {
   store: PostgresStore; coordinator: Coordinator; browsers: Set<WebSocket>;
@@ -67,18 +67,10 @@ export async function serveCloud(options: {
   const { config, repository } = options;
   const auth = options.auth ?? supabaseAuth(config);
   const accounts = new Accounts(repository.pool, config.bootstrapAdminEmail);
-  const accessCache = new Map<string, { account: Account; checked: number }>();
+  const accessChecks = new AccessChecks(owner=>accounts.get(owner));
   const changingAccess = new Set<string>();
   async function allowed(owner: string, fresh = false) {
-    const cached = accessCache.get(owner);
-    let account = cached?.account;
-    if (fresh || !cached || Date.now() - cached.checked >= 2000) {
-      account = await accounts.get(owner);
-      if (account) accessCache.set(owner, { account, checked: Date.now() });
-    }
-    if (account?.expiresAt && Date.parse(account.expiresAt) <= Date.now()) account = { ...account, status: 'expired' };
-    assertAccess(account);
-    return account;
+    return accessChecks.allowed(owner,fresh);
   }
   const hcmue=config.hcmueEnabled?new HcmueRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
   if(hcmue)await hcmue.check();
@@ -204,7 +196,7 @@ export async function serveCloud(options: {
     return result;
   }
   async function interruptAccess(owner: string, message = 'Quyền sử dụng đã thay đổi. Tải lại để kiểm tra.') {
-    accessCache.delete(owner);
+    accessChecks.invalidate(owner);
     for (const [key, ticket] of tickets) if (ticket.user.id === owner) tickets.delete(key);
     const current = runtimes.get(owner);
     if (!current) return;
@@ -268,7 +260,7 @@ export async function serveCloud(options: {
         if (path === '/api/account' && req.method === 'PATCH') {
           rate.check(`account:${user.id}`, 10, 60000);
           const result = await accounts.profile(user.id, await body(req, 4096));
-          accessCache.delete(user.id);
+          accessChecks.invalidate(user.id);
           return json(res, result);
         }
         if (path.startsWith('/api/admin/')) {
@@ -292,7 +284,7 @@ export async function serveCloud(options: {
               changingAccess.add(target);
               try {
                 const updated = await accounts.update(user.id, target, value);
-                accessCache.delete(target);
+                accessChecks.invalidate(target);
                 if (updated.interrupt) await interruptAccess(target);
                 else for (const ws of runtimes.get(target)?.browsers ?? []) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ACCOUNT_UPDATED' }));
                 return json(res, { ...updated.account, interrupted: updated.interrupt });
@@ -313,7 +305,8 @@ export async function serveCloud(options: {
           throw new CloudError('Không tìm thấy API quản trị.', 404);
         }
         assertAccess(account);
-        await allowed(user.id);
+        // identify() just read the account from PostgreSQL for this verified
+        // HTTP identity. Do not issue a second permission read for the same API.
         if(path.startsWith('/api/hcmue/')){if(!hcmue)throw new CloudError('HCMUE chưa được bật trên server.',404);return json(res,await hcmue.route(account,path,req.method??'GET',()=>body(req,3*1024*1024)));}
         const current = runtime(user.id), { store, coordinator } = current;
         if(path==='/api/import'&&req.method==='POST'){
@@ -546,7 +539,7 @@ export async function serveCloud(options: {
         catch (error) { if (error instanceof CloudError && error.status === 403) await interruptAccess(owner, error.message); else throw error; }
       })).catch(failClosed).finally(() => { accessCheck = undefined; });
     }
-    for (const [owner, entry] of accessCache) if (Date.now() - entry.checked > 300000) accessCache.delete(owner);
+    accessChecks.prune();
     for (const [ws, seen] of lastSeen) if (Date.now() - seen > 65000 && !browserUsers.has(ws)) ws.terminate();
     for (const [key, ticket] of tickets) if (ticket.expires < Date.now()) tickets.delete(key);
     for (const [owner, current] of runtimes) if (!current.coordinator.scheduler.active&&!current.coordinator.peers.size && !current.browsers.size && !current.coordinator.pending.size && Date.now() - current.touched > 5 * 60000) { current.coordinator.scheduler.close();current.coordinator.attention.close(); runtimes.delete(owner); }
