@@ -16,6 +16,16 @@ Discovery intervals accept 0–60 seconds. Zero waits for the previous response 
 
 Accepted and confirmed runs support explicit absence verification after external cancellation. Verification requires user confirmation, a valid matching session, fully parsed Test Records with no matching level/date, and no in-flight task for that run. Unknown cancellation status codes are never guessed. A durable `released` state with `verifiedAbsentAt` preserves historical order identifiers; existing worker claim messages release the exact cloud claim before the command result. Persistence failures restore the lock. Later reconciliation of released runs cannot revive a historical order. No schema migration is needed. Both website assets and the local runner must be updated; this change does not cancel any registration itself.
 
+### UI feedback and polling correction
+
+The center picker uses an independent search field and native select. The former datalist filtered its suggestions by the full selected label, so opening it with Dong A selected concealed the other schools. The select now retains the complete directory until a separate query is entered and supports explicit custom-name/ID entry.
+
+Absence verification owns its progress/error state inside the modal. Active registrations, timeouts and old-runner errors remain visible without dismissing the modal; success requires the returned snapshot to explicitly mark the selected run `verifiedAbsent`. Legacy runners rejecting completed runs get an update instruction instead of a silent error behind the dialog.
+
+Dashboard refresh is independent of ChineseTest discovery. The visibility-aware monitor refreshes devices every 30 seconds and runner state every 60 seconds while idle, or every 2.5 seconds while active. Refresh cycles never overlap, failures back off, and hidden tabs issue no automatic refreshes. Concurrent state reads coalesce; a read started before a mutation cannot overwrite its result. Google Forms/auth fallback reductions are unchanged.
+
+Validation: 50 ChineseTest tests and typecheck pass. Browser integration opens a 10-center select with Dong A selected, filters and chooses an unpublished center, observes no idle devices/state calls over 6.5 seconds, and exercises verification loading, active-registration errors, timeout, legacy runner and successful release. Fixtures send zero registration POSTs; this does not claim a new production registration/cancellation test.
+
 The tested HCMUE RSA-OAEP/AES-GCM envelope and vault codec are reused with separate provider keys, schema, replay store, vault path and Keychain service. HCMUE's only shared vault change is an optional service argument preserving the default. Provider tables are owner-filtered and inaccessible to public/anon/authenticated roles. Account/device switching clears website state.
 
 ## Build and test

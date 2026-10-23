@@ -4,11 +4,17 @@ import { resolve } from "node:path";
 import { httpFixture } from "../tests/cloud/fixture";
 import { connectRunner } from "../tests/chinesetest/relay-fixture";
 import { fixtureEngine } from "../tests/chinesetest/support";
-const app=await httpFixture(resolve("build/cloud-ui"),true,true),runner=await connectRunner(app,()=>fixtureEngine(3));
+const app=await httpFixture(resolve("build/cloud-ui"),true,true),runner=await connectRunner(app,async()=>{
+ const fixture=await fixtureEngine(3);
+ for(let i=0;i<8;i++)fixture.shared.directory.push({kdId:String(9000+i),kdEName:`Test Center ${i+3}`,kdName:`考点 ${i+3}`,cityName:"Fixture city"});
+ return fixture;
+});
 const browser=await chromium.launch({channel:process.platform==="win32"?"msedge":"chrome",headless:true});
 await mkdir("test-results/chinesetest",{recursive:true});
 try{
  const context=await browser.newContext({viewport:{width:1440,height:1100},colorScheme:"light"}),page=await context.newPage(),errors:string[]=[];
+ const requests:Array<{path:string;command?:string}>=[];
+ page.on("request",r=>{const path=new URL(r.url()).pathname;if(path.startsWith("/api/chinesetest/"))requests.push({path,command:r.method()==="POST"?r.postDataJSON()?.command:undefined});});
  page.on("pageerror",e=>{errors.push(e.message);console.log("UI ERROR",e.message);});
  await page.goto(app.config.origin+"/chinesetest");await page.getByRole("button",{name:"Tiếp tục với Google",exact:true}).click();await expect(page.getByText("an@example.test",{exact:true}).first()).toBeVisible();
  await page.goto(app.config.origin+"/chinesetest");await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();
@@ -16,11 +22,17 @@ try{
  await expect(page.locator(".ct-fingerprint")).toHaveText(runner.identity.fingerprint);await page.getByRole("button",{name:"Đã đối chiếu, đúng máy",exact:true}).click();
  await expect(page.locator(".ct-account")).toHaveCount(3);
  const first=page.locator(".ct-account").first();await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
- await expect(first).toContainText("2 điểm trong danh mục theo hình thức");
- const centerInput=first.getByRole("combobox",{name:/^Điểm thi cho/});
- await centerInput.fill("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY · 44797750");await expect(first.locator(".ct-account-summary")).toContainText("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY");
+ await expect(first).toContainText("10 điểm trong danh mục theo hình thức");
+ const centerSelect=first.getByRole("combobox",{name:/^Điểm thi cho/}),centerSearch=first.getByRole("searchbox",{name:/^Tìm điểm thi cho/});
+ // The selected Dong A value must not filter the other nine schools out.
+ await centerSelect.click();await expect(centerSelect.locator("option")).toHaveCount(12);await centerSelect.press("Escape");
+ await centerSearch.fill("HANOI");await expect(centerSelect.locator("option")).toHaveCount(4);await centerSearch.fill("");await expect(centerSelect.locator("option")).toHaveCount(12);
+ await centerSelect.selectOption("44797750");await expect(first.locator(".ct-account-summary")).toContainText("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY");
  await expect(first).toContainText("runner sẽ chờ đúng mã xuất hiện");
- await centerInput.fill("Dong A University（IBT） · 46750135");
+ await centerSelect.selectOption("46750135");
+ const beforeIdle=requests.length;await page.waitForTimeout(6500);
+ expect(requests.slice(beforeIdle).filter(r=>r.path.endsWith("/devices")||r.command==="state")).toEqual([]);
+ await first.screenshot({path:"test-results/chinesetest/center-picker.png"});
  await first.getByLabel("Kiểm tra mỗi cho Lê Minh Khuê (giây)",{exact:true}).fill("0");
  const at=Date.now()+20000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
  await first.getByRole("button",{name:"Tải lại danh mục / điểm thi",exact:true}).click();await expect(first.getByRole("combobox",{name:"Cấp thi cho Lê Minh Khuê",exact:true})).toHaveValue("828636");
@@ -34,10 +46,24 @@ try{
  await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:30000});expect(runner.shared.submits).toHaveLength(0);
  // A synthetic completed run cancelled externally; no real registration is sent.
  Object.assign(runner.data.schedules[0],{status:"confirmed",test:false,attempt:{count:1,bmid:"FIXTURE-CANCELLED"}});await runner.engine.persist();
+ await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
  await page.getByRole("button",{name:"Xác minh đã hủy / đăng ký lại",exact:true}).click();
- await page.getByRole("dialog").getByRole("checkbox").check();await page.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();
+ const dialog=page.getByRole("dialog");await expect(dialog).toBeVisible();await dialog.getByRole("checkbox").check();
+ let releaseRecords!:()=>void;runner.shared.recordsGate=new Promise(r=>releaseRecords=r);
+ runner.shared.records=[{KSXM_kmid:"828636",KDZX_kaoshitime:"2026-12-13",KSBM_bmid:"still-active"}];
+ await dialog.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();await expect(dialog.getByRole("status")).toContainText("Đang kiểm tra");await expect(dialog.getByRole("button",{name:"Đang xác minh…",exact:true})).toBeDisabled();
+ releaseRecords();runner.shared.recordsGate=undefined;await expect(dialog.getByRole("alert")).toContainText("Máy chủ vẫn có đăng ký");
+ runner.shared.records=[];runner.shared.recordsError=new Error("Test Records bị timeout; chưa mở khóa.");
+ await dialog.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();await expect(dialog.getByRole("alert")).toContainText("Test Records bị timeout");
+ await page.screenshot({path:"test-results/chinesetest/verification-error.png"});
+ runner.shared.recordsError=undefined;
+ const execute=runner.engine.execute.bind(runner.engine);
+ runner.engine.execute=(command,args,limits)=>command==="verify-absent"?Promise.reject(new Error("Chỉ xác minh lượt chưa rõ kết quả sau khi kiểm tra Test Records và không còn hàng đợi.")):execute(command,args,limits);
+ await dialog.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();await expect(dialog.getByRole("alert")).toContainText("Runner đang dùng bản cũ");
+ runner.engine.execute=execute;
+ await dialog.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();
  await expect(page.locator(".ct-runs")).toContainText("Đã xác minh và mở khóa");expect(runner.shared.submits).toHaveLength(0);
  await page.setViewportSize({width:1440,height:1100});await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();await expect(page.getByRole("dialog")).toContainText("Hồ sơ ChineseTest");await expect(page.getByRole("dialog").getByRole("combobox",{name:"Quốc tịch",exact:true})).toHaveValue("180");await page.screenshot({path:"test-results/chinesetest/profile-editor.png",fullPage:true});await page.getByRole("dialog").getByRole("button",{name:"Đóng",exact:true}).click();
  await page.getByRole("link",{name:"Google Forms",exact:true}).click();await expect(page.getByLabel("Link Google Form",{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Tài khoản và công cụ",exact:true}).click();await page.getByRole("dialog").getByRole("link",{name:"ChineseTest",exact:true}).click();await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();expect(errors).toEqual([]);
- console.log("PASS ChineseTest UI: encrypted real relay, pairing/fingerprint, three isolated accounts, Dong A reads, prepare/arm/Test with zero registration POSTs, profile editor, desktop/mobile light/dark, Google Forms navigation.");
+ console.log("PASS ChineseTest UI: all 10 center options with Dong A selected, search/select unpublished center, zero idle refreshes over 6.5s, verification busy/error/old-runner/success feedback, encrypted relay, scheduled Test, mobile/dark and profile editing. Zero registration POSTs.");
 }finally{await browser.close();await runner.close();await app.close();}
