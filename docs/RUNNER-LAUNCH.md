@@ -9,11 +9,38 @@ khi máy cũ mất kết nối.
 ## Cài một lần
 
 Giải nén gói mới vào thư mục cố định rồi mở `Start HCMUE` / `Start ChineseTest`.
-Start tự cài liên kết mở từ web; lần đầu nhập website quản lý để lưu địa chỉ.
+Start tự cài liên kết mở từ web; lần đầu mở ô nhập website trên trình duyệt.
+Dán link website hoặc trang quản lý bằng Ctrl+V, rồi bấm **Kết nối runner**.
+Không cần nhập link trong CMD và không cần Run as administrator.
 Sau đó dùng nút **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi.
 Những lần mở Start tiếp theo dùng lại website đã lưu. Khi chuyển thư mục hoặc
 cập nhật gói, chỉ cần mở Start từ gói mới để cập nhật liên kết.
 Gói cũ có thể chạy `Enable web launch.cmd` / `Enable web launch.command` riêng.
+
+## Windows chặn file tải xuống
+
+Nếu thông báo là **Smart App Control blocked a file that may be unsafe**, đây
+là Smart App Control, không phải lời nhắc UAC hay SmartScreen. Tính năng này không
+có ngoại lệ cho từng app. Chạy admin hoặc Unblock ZIP không phải giải pháp cho
+mọi trường hợp. Bản `.cmd` hiện tại chưa phải bản phát hành tương thích SAC đã
+được nghiệm thu; cần bộ khởi chạy/bộ cài ký bằng chứng thư nhà phát hành được tin
+cậy và kiểm thử lại toàn bộ luồng tải về. Deploy website không tạo chữ ký số.
+Xem [FAQ Smart App Control của Microsoft](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+và [yêu cầu ký ứng dụng](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control).
+
+Gói ZIP có runtime Node chính thức đã kiểm tra checksum, nhưng chưa có bộ cài
+được ký số cho HANU. Windows có thể cảnh báo dựa trên nguồn tải và độ tin cậy của
+ứng dụng; không thể bảo đảm hết cảnh báo bằng việc thay script khởi động.
+Với dấu nguồn tải thông thường (khác thông báo SAC), nếu tin cậy đúng nguồn tải,
+mở Properties của chính file ZIP → Unblock nếu có →
+Apply trước khi giải nén lại. Chạy Start bằng tài khoản thường; không cần admin.
+Gói Windows có `Read first - Windows.html` để đọc các bước này ngay trên máy.
+Nếu Defender báo mã độc hoặc máy công ty chặn theo chính sách, kiểm tra với quản
+trị viên; không tắt bảo vệ. Xem [hướng dẫn Microsoft](https://support.microsoft.com/en-gb/windows/security/information-about-the-attachment-manager-in-microsoft-windows).
+
+Với gói cũ còn hỏi website trong CMD, có thể dùng Shift+Insert để dán. Ctrl+C có
+thể dừng tiến trình; phím Ctrl+V còn phụ thuộc cấu hình console. Bản mới dùng ô
+nhập trình duyệt. Nếu trình duyệt không tự mở, CMD in link trang nhập để mở thủ công.
 
 Windows đăng ký URI dưới HKCU, không cần quyền quản trị. Mac tạo một AppleScript
 app riêng cho từng chức năng trong `~/Applications`, ký ad-hoc và đăng ký với
@@ -45,6 +72,7 @@ npm run package:hcmue
 npm run package:chinesetest -- --all-platforms
 npm run test:runner-launch
 npm run test:runner-launch-ui
+npm run test:runner-setup-ui
 ```
 
 `tests/runner` kiểm tra URL sai, tách provider, tự thiết lập qua Start, nhớ website,

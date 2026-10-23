@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Mở {{RUNNER_LABEL}} Runner trên Windows</title>
+<style>body{font:17px system-ui;line-height:1.7;max-width:760px;margin:48px auto;padding:24px;color:#19312a;background:#f4f6f5}li{margin:14px 0}a{color:#216951}aside{padding:20px;background:#fff8ea;border:1px solid #d9ad5b;border-radius:10px}</style>
+<h1>Mở {{RUNNER_LABEL}} Runner trên Windows</h1>
+<aside>
+  <h2>Nếu xuất hiện “Smart App Control blocked a file that may be unsafe”</h2>
+  <p>Gói dùng file Start.cmd hiện có thể bị Smart App Control chặn. Đây không phải yêu cầu chạy quyền admin. Chạy admin hoặc Unblock ZIP không bảo đảm xử lý được lỗi này.</p>
+  <p>Bản phát hành cần bộ khởi chạy/bộ cài có chữ ký số từ nhà phát hành được tin cậy và được kiểm tra với Smart App Control. Gói hiện tại chưa được xác nhận đáp ứng yêu cầu đó. Deploy website không tự thêm chữ ký số.</p>
+  <p><a href="https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions">Microsoft: Smart App Control không có ngoại lệ cho từng ứng dụng</a>.</p>
+</aside>
+<h2>Mở runner lần đầu</h2>
+<ol>
+  <li>Tải ZIP từ website HANU bạn tin cậy rồi giải nén vào thư mục cố định trong tài khoản của bạn.</li>
+  <li>Mở <strong>Start {{RUNNER_LABEL}}.cmd</strong> bằng nhấp đúp thông thường. Runner không yêu cầu <strong>Run as administrator</strong>.</li>
+  <li>Lần đầu, trình duyệt mở ô nhập địa chỉ website. Dán link website HANU bằng <strong>Ctrl+V</strong>, rồi bấm <strong>Kết nối runner</strong>. Không cần dán vào CMD.</li>
+  <li>Lần sau bấm <strong>Mở runner trên máy này</strong> trên web, hoặc mở Start; địa chỉ đã được lưu.</li>
+</ol>
+<h2>Cảnh báo nguồn tải thông thường</h2>
+<p>Nếu chỉ là dấu nguồn tải của file, khác thông báo Smart App Control phía trên, và bạn đã xác minh đúng nguồn: mở Properties của chính file ZIP → Unblock (nếu có) → Apply, rồi giải nén lại.</p>
+<p>Nếu antivirus báo mã độc hoặc chính sách công ty chặn, dừng lại và kiểm tra với quản trị viên. Không tắt Defender hoặc Smart App Control để bỏ qua vấn đề phát hành.</p>
+<p><a href="https://support.microsoft.com/en-gb/windows/security/information-about-the-attachment-manager-in-microsoft-windows">Microsoft: thông tin về file tải xuống bị đánh dấu</a>.</p>
+<h2>Nếu đang dùng gói cũ nhập trong CMD</h2>
+<p>Thử <strong>Shift+Insert</strong> để dán. <strong>Ctrl+C</strong> có thể dừng runner. Bản mới nhập website trong trình duyệt nên không phụ thuộc phím tắt của CMD.</p>
+<p>Giữ cửa sổ runner mở khi chạy lịch; không tắt máy hoặc để máy ngủ.</p>
+</html>

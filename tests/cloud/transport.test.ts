@@ -80,7 +80,11 @@ it('keeps image drafts, isolates downloads and revokes tokens when a profile is 
   expect(session.profile.values.fullName).toBe('Tên đã lưu');
   const path = `sessions/${a.sessionId}/attachments/${session.profile.attachments.identityDocument.id}`;
   expect((await f.api(path, 1)).status).toBe(404);
-  expect(Buffer.from(await (await f.api(path, 0)).arrayBuffer())).toEqual(bytes);
+  const download = await f.api(path, 0);
+  expect(download.headers.get('content-type')).toBe('application/octet-stream');
+  expect(download.headers.get('content-disposition')).toBe('attachment');
+  expect(download.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes);
   const closed = new Promise<number>(r => a.ws.once('close', r));
   expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(200);
   expect(await closed).toBe(1008);

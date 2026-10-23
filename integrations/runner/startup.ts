@@ -1,12 +1,10 @@
-import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseRunnerLaunch, websiteOrigin, type Provider } from "./launch";
+import { createWebsiteSetup } from "./setup";
+import { openRunnerWindow } from "./open";
 
-export function openRunnerWindow(url: string) {
-  if (process.platform === "darwin") execFile("open", [url]);
-  else if (process.platform === "win32") execFile("rundll32", ["url.dll,FileProtocolHandler", url]);
-}
+export { openRunnerWindow } from "./open";
 
 export async function startupOrigin(provider: Provider, dir: string, fixture: boolean) {
   const launch = process.argv.find(arg => arg.startsWith("--launch-url="));
@@ -24,7 +22,14 @@ export async function startupOrigin(provider: Provider, dir: string, fixture: bo
     const saved = await readFile(config, "utf8").then(JSON.parse).catch(() => null);
     if (saved?.origin) value = saved.origin;
   }
-  if (!value && process.stdin.isTTY) {
+  if (!value && !process.argv.includes("--no-open") && ["win32", "darwin"].includes(process.platform)) {
+    const setup = await createWebsiteSetup(provider, fixture);
+    console.log("Dán địa chỉ website trong trang trình duyệt vừa mở, rồi bấm Kết nối runner.");
+    console.log("Nếu trình duyệt chưa mở, mở link này:", setup.url);
+    openRunnerWindow(setup.url);
+    try { value = await setup.result; }
+    finally { setup.close(); }
+  } else if (!value && process.stdin.isTTY) {
     const { createInterface } = await import("node:readline/promises");
     const prompt = createInterface({ input: process.stdin, output: process.stdout });
     try { value = (await prompt.question("Website điều khiển (https://...): ")).trim(); }

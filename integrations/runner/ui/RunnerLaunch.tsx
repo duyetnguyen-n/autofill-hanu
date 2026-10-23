@@ -20,7 +20,7 @@ export function RunnerLaunch({ provider, device, accountId, onSelect }: {
       </Button>
       <a href={guideUrl} target="_blank" rel="noreferrer">Cài runner lần đầu / mở không được</a>
     </div>
-    <p>Lần đầu: <a href={`${guideUrl}#tai-runner`} target="_blank" rel="noreferrer">tải runner</a> → giải nén vào thư mục cố định → mở <strong>Start {label}</strong> → nhập địa chỉ <strong>{window.location.origin}</strong>. Runner tự thiết lập nút mở từ web và nhớ địa chỉ cho lần sau.</p>
+    <p>Lần đầu: <a href={`${guideUrl}#tai-runner`} target="_blank" rel="noreferrer">tải runner</a> → giải nén vào thư mục cố định → mở <strong>Start {label}</strong> bằng nhấp đúp, không cần quyền admin → dán địa chỉ <strong>{window.location.origin}</strong> vào ô trên trình duyệt. Runner tự thiết lập nút mở từ web và nhớ địa chỉ cho lần sau.</p>
     <p>Nút mở {label} trên máy đang dùng để xem web. Máy đã chọn: <strong>{device?.name || "Chưa chọn"}</strong>{device ? ` · ${device.connected ? "đang kết nối" : "chưa kết nối"}` : ""}.</p>
     <p>Lịch thuộc máy đã chọn. Mở web ở máy khác không chuyển lịch hoặc phiên đăng nhập. Giữ máy thực hiện bật, có mạng và không ngủ.</p>
     {device && <label className="runner-preferred"><input type="checkbox" checked={preference === device.id} onChange={event => {

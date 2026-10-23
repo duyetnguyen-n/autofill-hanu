@@ -1,4 +1,4 @@
-import { writeFile, chmod } from "node:fs/promises";
+import { readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 
 // Manual Start installs the URL handler too. It creates no startup task/service.
@@ -58,7 +58,7 @@ child.on('exit', code => { process.exitCode = code ?? 1; });
   const startName = `Start ${label}.${mac ? "command" : "cmd"}`;
   const start = mac
     ? '#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n"$TASK_DIR/runtime/node" "$TASK_DIR/runner/start.mjs" "$@"\nTASK_STATUS=$?\nif [ "$TASK_STATUS" -ne 0 ]; then printf "\\nNhấn Enter để đóng..."; read TASK_REPLY; fi\nexit "$TASK_STATUS"\n'
-    : '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\start.mjs" %*\r\nif errorlevel 1 pause\r\n';
+    : '@echo off\r\nchcp 65001 >nul\r\ntitle HANU ' + label + ' Runner\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\start.mjs" %*\r\nif errorlevel 1 pause\r\n';
   await writeFile(join(root, startName), start);
   if (mac) await chmod(join(root, startName), 0o755);
   const filename = mac ? "Enable web launch.command" : "Enable web launch.cmd";
@@ -67,4 +67,5 @@ child.on('exit', code => { process.exitCode = code ?? 1; });
     : '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\install-web-launch.mjs"\r\npause\r\n';
   await writeFile(join(root, filename), wrapper);
   if (mac) await chmod(join(root, filename), 0o755);
+  if (!mac) await writeFile(join(root, "Read first - Windows.html"), (await readFile(new URL("../docs/runner/WINDOWS.html", import.meta.url), "utf8")).replaceAll("{{RUNNER_LABEL}}", label));
 }

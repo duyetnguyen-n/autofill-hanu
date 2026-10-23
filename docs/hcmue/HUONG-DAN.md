@@ -5,7 +5,7 @@ HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng lu�
 ## Mở runner từ website và dùng nhiều máy
 
 - Dùng gói mới, giải nén vào thư mục cố định rồi mở **Start HCMUE**. Start tự thiết lập nút mở từ web; không cài dịch vụ nền hoặc tự khởi động cùng máy.
-- Lần đầu nhập đúng địa chỉ website. Những lần sau Start tự nhớ website, hoặc trên trang HCMUE bấm **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
+- Lần đầu, Start mở ô nhập website trên trình duyệt. Dán link website HANU bằng Ctrl+V rồi bấm **Kết nối runner**; không cần dán trong CMD hay chạy quyền admin. Những lần sau Start tự nhớ website, hoặc trên trang HCMUE bấm **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
 - Nút luôn mở trên máy đang xem web, không bật máy ở xa. Nếu runner cùng chức năng đã chạy, nút mở lại cửa sổ hiện có, giữ nguyên lịch đang chạy. Mở lại sau khi đã thoát không tự bật lịch cũ.
 - Chọn rõ **máy thực hiện đăng ký**. Khi có nhiều máy, trang không tự chọn máy đầu tiên; có thể đánh dấu máy ưu tiên, lưu riêng theo tài khoản/chức năng/trình duyệt. Đăng nhập web ở máy khác không chuyển phiên hoặc lịch và không tự chuyển việc chạy khi máy cũ mất kết nối.
 - HCMUE và ChineseTest dùng liên kết mở app, kho phiên, khóa tiến trình và cổng cục bộ riêng; có thể chạy đồng thời. Mỗi chức năng vẫn chỉ chạy một tiến trình cho cùng kho dữ liệu.
@@ -13,8 +13,14 @@ HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng lu�
 
 ## Dùng trên máy
 
+Trên Windows, nếu thấy **Smart App Control blocked a file that may be unsafe**,
+gói `.cmd` hiện có thể bị chặn và chưa được nghiệm thu tương thích SAC. Chạy admin
+hoặc Unblock ZIP không bảo đảm giải quyết thông báo này. Cần bản phát hành có chữ
+ký số tin cậy; deploy website không tự thêm chữ ký số. Xem `Read first - Windows.html`
+trong gói và [FAQ Microsoft](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
+
 1. Tải gói đúng máy: macOS Apple Silicon (arm64), macOS Intel (x64), hoặc Windows x64. Giải nén vào thư mục riêng. Gói có Node.js kèm theo, không cần cài Node/npm.
-2. macOS: mở `Start HCMUE.command`. Windows: mở `Start HCMUE.cmd`. Nhập địa chỉ HTTPS của website điều khiển. Giữ cửa sổ này mở. Các gói chưa ký số; cần kiểm tra nguồn trước khi cho phép chạy trong cài đặt bảo mật của hệ điều hành.
+2. macOS: mở `Start HCMUE.command`. Windows: mở `Start HCMUE.cmd`. Dán địa chỉ HTTPS của website điều khiển vào ô trên trình duyệt rồi bấm **Kết nối runner**. Giữ cửa sổ chạy runner mở. Các gói chưa ký số; cần kiểm tra nguồn tải.
 3. Trên website, mở HSK HCMUE, chọn Liên kết máy, nhập mã từ cửa sổ Runner. Mã có hạn 5 phút. So sánh toàn bộ dấu vân tay trên hai cửa sổ rồi xác nhận.
 4. Thêm tài khoản HCMUE bằng CCCD và mật khẩu. Mật khẩu chỉ dùng cho lần đăng nhập; phiên và cookie được mã hóa trên máy bằng khóa trong Keychain (Mac) hoặc DPAPI (Windows).
 5. Hoàn tất ảnh thẻ và xác thực email tại trường. Bấm **Tải kỳ thi**. Danh sách giữ mọi đợt API trả về, kể cả hết hạn hoặc hết chỗ. Xem ngày thi, ngày mở/đóng, số chỗ, trạng thái gốc và toàn bộ dữ liệu kỳ thi trong phần **Kỳ thi từ trường**. Nhận xét theo thời gian của tool được tách riêng, không sửa trạng thái trường trả về.

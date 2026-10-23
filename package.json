@@ -50,6 +50,8 @@
     "test:hcmue-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-ui-check.ts",
     "bench:hcmue": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-benchmark.ts",
     "test:runner-launch-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-launch-ui-check.ts",
+    "test:runner-setup-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-setup-ui-check.ts",
+    "test:web-injection-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/web-injection-ui-check.ts",
     "test:runner-launch": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-launch-check.ts",
     "test:hcmue-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-runner-smoke.ts",
     "build:chinesetest": "node scripts/run-node24.mjs scripts/build-chinesetest.mjs",

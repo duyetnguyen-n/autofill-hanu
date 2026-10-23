@@ -5,18 +5,26 @@ ChineseTest được điều khiển tại /chinesetest trên website đang có.
 ## Mở runner từ website và dùng nhiều máy
 
 - Dùng gói mới, giải nén vào thư mục cố định rồi mở **Start ChineseTest**. Start tự thiết lập nút mở từ web; không cài dịch vụ nền hoặc tự khởi động cùng máy.
-- Lần đầu nhập đúng địa chỉ website. Những lần sau Start tự nhớ website, hoặc trên trang ChineseTest bấm **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
+- Lần đầu, Start mở ô nhập website trên trình duyệt. Dán link website HANU bằng Ctrl+V rồi bấm **Kết nối runner**; không cần dán trong CMD hay chạy quyền admin. Những lần sau Start tự nhớ website, hoặc trên trang ChineseTest bấm **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
 - Nút luôn mở trên máy đang xem web, không bật máy ở xa. Nếu runner cùng chức năng đã chạy, nút mở lại cửa sổ hiện có, giữ nguyên lịch đang chạy. Mở lại sau khi đã thoát không tự bật lịch cũ.
 - Chọn rõ **máy thực hiện đăng ký**. Khi có nhiều máy, trang không tự chọn máy đầu tiên; có thể đánh dấu máy ưu tiên, lưu riêng theo tài khoản/chức năng/trình duyệt. Đăng nhập web ở máy khác không chuyển phiên hoặc lịch và không tự chuyển việc chạy khi máy cũ mất kết nối.
 - HCMUE và ChineseTest dùng liên kết mở app, kho phiên, khóa tiến trình và cổng cục bộ riêng; có thể chạy đồng thời. Mỗi chức năng vẫn chỉ chạy một tiến trình cho cùng kho dữ liệu.
 - Giữ nguyên thư mục gói sau khi cài. Khi đổi thư mục hoặc cập nhật gói, mở **Start ChineseTest** từ gói mới để cập nhật đường dẫn. Gói cũ có thể chạy **Enable web launch** riêng. Giữ nguyên kho dữ liệu để giữ liên kết và lịch sử.
+
+## Windows và Smart App Control
+
+Nếu thấy **Smart App Control blocked a file that may be unsafe**, gói `.cmd` hiện có thể bị chặn và chưa được nghiệm thu tương thích SAC. Chạy admin hoặc Unblock ZIP không bảo đảm xử lý được thông báo này. Cần bộ khởi chạy/bộ cài ký số bằng chứng thư tin cậy và kiểm thử lại trên Windows bật SAC; deploy website không tự thêm chữ ký số. Không tắt bảo vệ để thay cho việc phát hành bản phù hợp. Xem [FAQ Microsoft](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions). Trong gói có `Read first - Windows.html` giải thích riêng trường hợp này.
+
+Nếu chỉ là dấu nguồn tải thông thường, khác thông báo SAC, và đã xác minh đúng nguồn tải, có thể mở Properties của ZIP → Unblock nếu có → Apply trước khi giải nén lại.
+
+Gói mới nhập website trên trình duyệt. Gói cũ dùng CMD có thể thử Shift+Insert để dán; Ctrl+C có thể dừng runner.
 
 ## Liên kết và đăng nhập
 
 Trang **Hướng dẫn kết nối** tại `/chinesetest-downloads/index.html` có các bước kết nối và nút tải runner cho Windows x64, Mac Apple Silicon, Mac Intel. Mở từ ChineseTest → Hướng dẫn kết nối.
 
 1. Tải runner đúng máy, giải nén vào thư mục cố định, mở Start ChineseTest.cmd (Windows) hoặc Start ChineseTest.command (Mac). Cần cài Google Chrome. Gói có Node, không cần cài Node/npm.
-2. Nhập HTTPS URL của website điều khiển. Trên website chọn ChineseTest → Liên kết máy, nhập mã một lần và đối chiếu toàn bộ dấu vân tay với cửa sổ runner.
+2. Dán HTTPS URL của website điều khiển vào ô trên trình duyệt, bấm **Kết nối runner**. Trên website chọn ChineseTest → Liên kết máy, nhập mã một lần và đối chiếu toàn bộ dấu vân tay với cửa sổ runner.
 3. Bấm Thêm tài khoản. Người dùng tự nhập mật khẩu và hoàn tất CAPTCHA/OTP trong Chrome riêng mở trên máy chạy. Không gửi mật khẩu hoặc mã xác minh trong chat/website điều khiển.
 4. Bấm Hoàn tất đăng nhập. Runner kiểm tra API bằng Node, mã hóa phiên trên máy rồi đóng Chrome riêng. Chrome không tham gia lúc gửi đăng ký.
 5. Mỗi tài khoản đăng nhập riêng. Đăng nhập lại cùng email giữ lịch sử và khóa gửi. Không sao chép kho runner để chạy cùng tài khoản trên nhiều máy.
