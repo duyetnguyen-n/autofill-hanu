@@ -4,12 +4,12 @@ ChineseTest được điều khiển tại /chinesetest trên website đang có.
 
 ## Mở runner từ website và dùng nhiều máy
 
-- Dùng gói mới, giải nén vào thư mục cố định. Chạy **Enable web launch.cmd** (Windows) hoặc **Enable web launch.command** (Mac) một lần. Bước này chỉ đăng ký nút mở app; không cài dịch vụ nền hoặc tự khởi động cùng máy.
-- Mở **Start ChineseTest** và nhập đúng địa chỉ website một lần. Sau đó trên trang ChineseTest bấm **Mở runner trên máy này**; chấp nhận mở ứng dụng nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
+- Dùng gói mới, giải nén vào thư mục cố định rồi mở **Start ChineseTest**. Start tự thiết lập nút mở từ web; không cài dịch vụ nền hoặc tự khởi động cùng máy.
+- Lần đầu nhập đúng địa chỉ website. Những lần sau Start tự nhớ website, hoặc trên trang ChineseTest bấm **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi. Website chỉ xác nhận kết nối khi nhận được trạng thái của runner.
 - Nút luôn mở trên máy đang xem web, không bật máy ở xa. Nếu runner cùng chức năng đã chạy, nút mở lại cửa sổ hiện có, giữ nguyên lịch đang chạy. Mở lại sau khi đã thoát không tự bật lịch cũ.
 - Chọn rõ **máy thực hiện đăng ký**. Khi có nhiều máy, trang không tự chọn máy đầu tiên; có thể đánh dấu máy ưu tiên, lưu riêng theo tài khoản/chức năng/trình duyệt. Đăng nhập web ở máy khác không chuyển phiên hoặc lịch và không tự chuyển việc chạy khi máy cũ mất kết nối.
 - HCMUE và ChineseTest dùng liên kết mở app, kho phiên, khóa tiến trình và cổng cục bộ riêng; có thể chạy đồng thời. Mỗi chức năng vẫn chỉ chạy một tiến trình cho cùng kho dữ liệu.
-- Giữ nguyên thư mục gói sau khi cài. Khi đổi thư mục hoặc cập nhật gói, chạy **Enable web launch** từ gói mới để cập nhật đường dẫn. Giữ nguyên kho dữ liệu để giữ liên kết và lịch sử.
+- Giữ nguyên thư mục gói sau khi cài. Khi đổi thư mục hoặc cập nhật gói, mở **Start ChineseTest** từ gói mới để cập nhật đường dẫn. Gói cũ có thể chạy **Enable web launch** riêng. Giữ nguyên kho dữ liệu để giữ liên kết và lịch sử.
 
 ## Liên kết và đăng nhập
 

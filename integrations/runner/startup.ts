@@ -20,6 +20,10 @@ export async function startupOrigin(provider: Provider, dir: string, fixture: bo
   }
   let value = process.argv.find(arg => arg.startsWith("--origin="))?.slice(9) ??
     process.env[`${provider.toUpperCase()}_CLOUD_ORIGIN`];
+  if (!value) {
+    const saved = await readFile(config, "utf8").then(JSON.parse).catch(() => null);
+    if (saved?.origin) value = saved.origin;
+  }
   if (!value && process.stdin.isTTY) {
     const { createInterface } = await import("node:readline/promises");
     const prompt = createInterface({ input: process.stdin, output: process.stdout });

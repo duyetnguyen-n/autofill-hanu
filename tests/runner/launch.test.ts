@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runnerLaunchUrl, parseRunnerLaunch, websiteOrigin } from "../../integrations/runner/launch";
+import { startupOrigin } from "../../integrations/runner/startup";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,47 @@ describe("provider-specific web launch", () => {
     expect(websiteOrigin("http://127.0.0.1:1234", true)).toBe("http://127.0.0.1:1234");
     expect(() => parseRunnerLaunch("hcmue", runnerLaunchUrl("hcmue", "http://127.0.0.1:1234"))).toThrow();
   });
+  it("remembers the website on manual reopen while still rejecting foreign deep links", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const dir = await mkdtemp(join(tmpdir(), "hanu-saved-website-"));
+    const argv = process.argv;
+    const origin = process.env.HCMUE_CLOUD_ORIGIN;
+    try {
+      delete process.env.HCMUE_CLOUD_ORIGIN;
+      await writeFile(join(dir, "website.json"), JSON.stringify({ origin: "https://example.test" }));
+      process.argv = [process.execPath, "main.mjs"];
+      expect(await startupOrigin("hcmue", dir, false)).toBe("https://example.test");
+      process.argv.push("--origin=https://other.test");
+      expect(await startupOrigin("hcmue", dir, false)).toBe("https://other.test");
+      process.argv = [process.execPath, "main.mjs", "--launch-url=" + runnerLaunchUrl("hcmue", "https://other.test")];
+      await expect(startupOrigin("hcmue", dir, false)).rejects.toThrow("đúng website");
+    } finally {
+      process.argv = argv;
+      if (origin === undefined) delete process.env.HCMUE_CLOUD_ORIGIN;
+      else process.env.HCMUE_CLOUD_ORIGIN = origin;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("manual Start sets up web launch, keeps working if setup fails, and forwards arguments", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { execFileSync } = await import("node:child_process");
+    const dir = await mkdtemp(join(tmpdir(), "hanu-start & "));
+    try {
+      await mkdir(join(dir, "runner"));
+      await writeRunnerLauncher(dir, "chinesetest", false);
+      const entry = join(dir, "runner/start.mjs");
+      const installer = join(dir, "runner/install-web-launch.mjs");
+      await writeFile(installer, "console.log('SETUP');");
+      await writeFile(join(dir, "runner/main.mjs"), "console.log(JSON.stringify(process.argv.slice(2))); process.exitCode = process.argv.includes('--fail') ? 7 : 0;");
+      const run = (...args: string[]) => execFileSync(process.execPath, [entry, ...args], { encoding: "utf8", stdio: "pipe" });
+      expect(run("--origin=https://example.test")).toContain('SETUP\n["--origin=https://example.test"]');
+      const launch = "--launch-url=" + runnerLaunchUrl("chinesetest", "https://example.test");
+      expect(run(launch).trim()).toBe(JSON.stringify([launch]));
+      await writeFile(installer, "throw new Error('fixture installation failure');");
+      expect(run("--no-open").trim()).toBe('["--no-open"]');
+      expect(() => run("--fail")).toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
   it("ships separate installers with quoted URL arguments and no autostart", async () => {
     const dir = await mkdtemp(join(tmpdir(), "hanu-web-launch-"));
     try {
@@ -40,6 +82,12 @@ describe("provider-specific web launch", () => {
         await writeRunnerLauncher(root, provider, true);
         await writeRunnerLauncher(root, provider, false);
         const source = await readFile(join(root, "runner/install-web-launch.mjs"), "utf8");
+        const start = await readFile(join(root, "runner/start.mjs"), "utf8");
+        expect(start).toContain("await import('./install-web-launch.mjs')");
+        expect(start).toContain("arg.startsWith('--launch-url=')");
+        const label = provider === "hcmue" ? "HCMUE" : "ChineseTest";
+        expect(await readFile(join(root, `Start ${label}.cmd`), "utf8")).toContain('runner\\start.mjs');
+        expect(await readFile(join(root, `Start ${label}.command`), "utf8")).toContain('runner/start.mjs');
         expect(source).toContain(`const provider = "${provider}"`);
         expect(source).toContain('\\\\shell\\\\open\\\\command');
         expect(source).toContain('--launch-url="%1"');

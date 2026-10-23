@@ -37,6 +37,8 @@ try {
   for (const [provider, running] of [["hcmue", hcmue], ["chinesetest", chinesetest]] as const) {
     const descriptorFile = join(root, provider, "runner-open.json");
     const before = await readFile(descriptorFile, "utf8");
+    const reopen = start(provider, []);
+    assert.equal(await reopen.exited, 0, "Manual reopen should reuse the saved website: " + reopen.error());
     const clicks = Array.from({ length: 3 }, () => start(provider, ["--launch-url=" + runnerLaunchUrl(provider, origin)]));
     for (const click of clicks) assert.equal(await click.exited, 0, click.error());
     assert.equal(await readFile(descriptorFile, "utf8"), before, "Opening again must preserve the running process");

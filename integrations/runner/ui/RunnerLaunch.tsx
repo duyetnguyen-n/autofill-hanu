@@ -12,10 +12,15 @@ export function RunnerLaunch({ provider, device, accountId, onSelect }: {
   const [preference, setPreference] = useState(() => localStorage.getItem(preferenceKey));
   useEffect(() => { setPreference(localStorage.getItem(preferenceKey)); setRequested(false); }, [preferenceKey]);
   const label = provider === "hcmue" ? "HCMUE" : "ChineseTest";
+  const guideUrl = `/${provider}-downloads/index.html`;
   return <div className="runner-launch">
-    <Button as="a" href={runnerLaunchUrl(provider, window.location.origin)} onClick={() => setRequested(true)}>
-      Mở runner trên máy này
-    </Button>
+    <div className="runner-launch-actions">
+      <Button as="a" href={runnerLaunchUrl(provider, window.location.origin)} onClick={() => setRequested(true)}>
+        Mở runner trên máy này
+      </Button>
+      <a href={guideUrl} target="_blank" rel="noreferrer">Cài runner lần đầu / mở không được</a>
+    </div>
+    <p>Lần đầu: <a href={`${guideUrl}#tai-runner`} target="_blank" rel="noreferrer">tải runner</a> → giải nén vào thư mục cố định → mở <strong>Start {label}</strong> → nhập địa chỉ <strong>{window.location.origin}</strong>. Runner tự thiết lập nút mở từ web và nhớ địa chỉ cho lần sau.</p>
     <p>Nút mở {label} trên máy đang dùng để xem web. Máy đã chọn: <strong>{device?.name || "Chưa chọn"}</strong>{device ? ` · ${device.connected ? "đang kết nối" : "chưa kết nối"}` : ""}.</p>
     <p>Lịch thuộc máy đã chọn. Mở web ở máy khác không chuyển lịch hoặc phiên đăng nhập. Giữ máy thực hiện bật, có mạng và không ngủ.</p>
     {device && <label className="runner-preferred"><input type="checkbox" checked={preference === device.id} onChange={event => {
@@ -25,8 +30,8 @@ export function RunnerLaunch({ provider, device, accountId, onSelect }: {
       setPreference(event.target.checked ? device.id : null);
     }}/>Ưu tiên máy này khi mở lại trang trên trình duyệt này</label>}
     {requested && <div className="runner-launch-status" role="status">
-      <p>Đã yêu cầu trình duyệt mở {label} Runner. Chọn Mở ứng dụng nếu được hỏi; trạng thái kết nối của máy phía trên mới xác nhận runner đã kết nối.</p>
-      <p>Nếu chưa mở được: tải gói mới, giải nén vào thư mục cố định, chạy <strong>Enable web launch</strong> một lần rồi mở <strong>Start {label}</strong> và nhập website này một lần. <a href={`/${provider}-downloads/index.html`} target="_blank" rel="noreferrer">Xem hướng dẫn và tải runner</a>.</p>
+      <p>Chọn <strong>Mở ứng dụng</strong> trong thông báo của trình duyệt để mở {label} Runner. Chờ máy phía trên hiện <strong>đang kết nối</strong> để xác nhận.</p>
+      <p>Nếu không có thông báo hoặc chưa mở được: mở <strong>Start {label}</strong> trong thư mục đã giải nén để thiết lập lại nút. Với gói cũ có thể chạy <strong>Enable web launch</strong>, hoặc <a href={guideUrl} target="_blank" rel="noreferrer">tải gói mới và xem hướng dẫn</a>.</p>
       <p>Nếu đang chọn máy khác, kiểm tra và chọn lại đúng máy vừa mở. Nút này không bật runner trên máy ở xa và không tự bật lịch.</p>
     </div>}
   </div>;

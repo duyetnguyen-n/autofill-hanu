@@ -8,10 +8,12 @@ khi máy cũ mất kết nối.
 
 ## Cài một lần
 
-Trong gói mới đã giải nén cố định, chạy `Enable web launch.cmd` trên Windows hoặc
-`Enable web launch.command` trên Mac. Mở `Start HCMUE` / `Start ChineseTest` và nhập
-website quản lý một lần để lưu địa chỉ. Sau đó dùng nút **Mở runner trên máy này**.
-Khi đổi thư mục gói hoặc cập nhật bản mới, chạy lại Enable web launch từ gói đó.
+Giải nén gói mới vào thư mục cố định rồi mở `Start HCMUE` / `Start ChineseTest`.
+Start tự cài liên kết mở từ web; lần đầu nhập website quản lý để lưu địa chỉ.
+Sau đó dùng nút **Mở runner trên máy này** và chọn **Mở ứng dụng** nếu trình duyệt hỏi.
+Những lần mở Start tiếp theo dùng lại website đã lưu. Khi chuyển thư mục hoặc
+cập nhật gói, chỉ cần mở Start từ gói mới để cập nhật liên kết.
+Gói cũ có thể chạy `Enable web launch.cmd` / `Enable web launch.command` riêng.
 
 Windows đăng ký URI dưới HKCU, không cần quyền quản trị. Mac tạo một AppleScript
 app riêng cho từng chức năng trong `~/Applications`, ký ad-hoc và đăng ký với
@@ -45,7 +47,8 @@ npm run test:runner-launch
 npm run test:runner-launch-ui
 ```
 
-`tests/runner` kiểm tra URL sai, tách provider, lệnh đăng ký Windows (mô phỏng),
+`tests/runner` kiểm tra URL sai, tách provider, tự thiết lập qua Start, nhớ website,
+lỗi thiết lập không ngăn mở runner, lệnh đăng ký Windows (mô phỏng),
 và biên dịch/ký/xác minh app macOS trong thư mục tạm. Kiểm thử native chạy đồng thời
 hai runner với dữ liệu tạm, bấm link lặp lại và thử sai website/provider, không gọi API
 trường. Kiểm thử UI dùng hai runner cho mỗi provider và hai browser context để kiểm

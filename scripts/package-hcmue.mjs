@@ -95,16 +95,7 @@ for (const [name, platform, format] of [
   );
   if (mac) {
     await chmod(join(root, "runtime/node"), 0o755);
-    await writeFile(
-      join(root, "Start HCMUE.command"),
-      '#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$TASK_DIR/runtime/node" "$TASK_DIR/runner/main.mjs" "$@"\n',
-    );
-    await chmod(join(root, "Start HCMUE.command"), 0o755);
-  } else
-    await writeFile(
-      join(root, "Start HCMUE.cmd"),
-      '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\main.mjs" %*\r\nif errorlevel 1 pause\r\n',
-    );
+  }
   await writeRunnerLauncher(root, "hcmue", mac);
   await rm(root + ".zip", { force: true });
   if (process.platform === "darwin")

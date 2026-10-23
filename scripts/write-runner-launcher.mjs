@@ -1,7 +1,7 @@
 import { writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 
-// Ships an explicit, one-time URL-handler installer. It creates no startup task/service.
+// Manual Start installs the URL handler too. It creates no startup task/service.
 export async function writeRunnerLauncher(root, provider, mac) {
   const label = provider === "hcmue" ? "HCMUE" : "ChineseTest";
   const source = `import { execFileSync } from 'node:child_process';
@@ -41,9 +41,26 @@ if (process.platform === 'win32') {
   execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', app]);
   execFileSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', app]);
 } else throw new Error('Chỉ hỗ trợ Windows và macOS.');
-console.log('Đã bật nút mở ' + label + ' Runner từ web. Giữ nguyên thư mục gói. Mở Start ' + label + ' và nhập website một lần nếu chưa làm. Không có tác vụ tự khởi động được cài.');
+console.log('Đã bật nút mở ' + label + ' Runner từ web. Giữ nguyên thư mục gói sau khi cài.');
 `;
   await writeFile(join(root, "runner/install-web-launch.mjs"), source);
+  await writeFile(join(root, "runner/start.mjs"), `import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+// Only a manual Start installs/repairs the handler; deep links keep their strict origin check.
+if (!process.argv.some(arg => arg.startsWith('--launch-url='))) {
+  try { await import('./install-web-launch.mjs'); }
+  catch { console.error('Chưa bật được nút mở từ web. Runner vẫn mở bình thường; có thể chạy Enable web launch để thử lại.'); }
+}
+const child = spawn(process.execPath, [fileURLToPath(new URL('./main.mjs', import.meta.url)), ...process.argv.slice(2)], { stdio: 'inherit' });
+child.on('error', () => { console.error('Không mở được runner. Giải nén lại toàn bộ gói rồi mở Start ${label}.'); process.exitCode = 1; });
+child.on('exit', code => { process.exitCode = code ?? 1; });
+`);
+  const startName = `Start ${label}.${mac ? "command" : "cmd"}`;
+  const start = mac
+    ? '#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n"$TASK_DIR/runtime/node" "$TASK_DIR/runner/start.mjs" "$@"\nTASK_STATUS=$?\nif [ "$TASK_STATUS" -ne 0 ]; then printf "\\nNhấn Enter để đóng..."; read TASK_REPLY; fi\nexit "$TASK_STATUS"\n'
+    : '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\start.mjs" %*\r\nif errorlevel 1 pause\r\n';
+  await writeFile(join(root, startName), start);
+  if (mac) await chmod(join(root, startName), 0o755);
   const filename = mac ? "Enable web launch.command" : "Enable web launch.cmd";
   const wrapper = mac
     ? '#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n"$TASK_DIR/runtime/node" "$TASK_DIR/runner/install-web-launch.mjs"\nprintf "\\nNhấn Enter để đóng..."\nread TASK_REPLY\n'

@@ -41,6 +41,9 @@ try {
     await expect(deviceSelect).toHaveValue("");
     const launcher = page.locator(".runner-launch");
     const launch = launcher.getByRole("link", { name: "Mở runner trên máy này", exact: true });
+    await expect(launcher.getByRole("link", { name: "Cài runner lần đầu / mở không được", exact: true })).toHaveAttribute("href", `/${provider}-downloads/index.html`);
+    await expect(launcher).toContainText(`Start ${provider === "hcmue" ? "HCMUE" : "ChineseTest"}`);
+    await expect(launcher).toContainText(app.config.origin);
     await expect(launch).toHaveAttribute("href", `hanu-${provider}://open?origin=${encodeURIComponent(app.config.origin)}`);
     // Exercise the click and guidance without invoking a real OS URL handler from a fixture.
     await launch.evaluate(element => element.addEventListener("click", event => event.preventDefault()));

@@ -37,8 +37,7 @@ for(const [name,platform,extension] of targets){
  for(const pkg of ["playwright-core","ws","tough-cookie","tldts","tldts-core"])notices+="\n"+await readFile(join("node_modules",pkg,"LICENSE"),"utf8");
  await writeFile(join(root,"NOTICES.txt"),notices);
  await writeFile(join(root,"BUILD.json"),JSON.stringify({provider:"chinesetest",node:version,platform,builtAt:new Date().toISOString(),runtimeArchiveSha256:actual,realMachineVerified:false,realRegistrationVerified:false},null,2));
- if(mac){await chmod(join(root,"runtime/node"),0o755);await writeFile(join(root,"Start ChineseTest.command"),'#!/bin/sh\nTASK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$TASK_DIR/runtime/node" "$TASK_DIR/runner/main.mjs" "$@"\n');await chmod(join(root,"Start ChineseTest.command"),0o755);}
- else await writeFile(join(root,"Start ChineseTest.cmd"),'@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0runner\\main.mjs" %*\r\nif errorlevel 1 pause\r\n');
+ if(mac)await chmod(join(root,"runtime/node"),0o755);
   await writeRunnerLauncher(root, "chinesetest", mac);
  const zip=root+".zip";await rm(zip,{force:true});
  if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Compress-Archive -LiteralPath $env:CHINESETEST_PACKAGE_ROOT -DestinationPath $env:CHINESETEST_PACKAGE_ZIP -Force"],{env:{...process.env,CHINESETEST_PACKAGE_ROOT:root,CHINESETEST_PACKAGE_ZIP:zip},windowsHide:true});
