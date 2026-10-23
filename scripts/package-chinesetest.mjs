@@ -9,10 +9,11 @@ const response=await fetch(base+"/SHASUMS256.txt",{signal:AbortSignal.timeout(30
 if(!response.ok)throw new Error("Không tải được checksum Node.js.");
 const sums=await response.text();
 const all=process.argv.includes("--all-platforms");
+const releaseDirectory=resolve(process.argv.find(arg=>arg.startsWith("--output-dir="))?.slice("--output-dir=".length)||"releases");
 if(all&&process.platform==="win32")throw new Error("Đóng gói Mac trên Linux/macOS để giữ quyền thực thi trong ZIP. Windows dùng gói Windows mặc định.");
 const targets=[["windows-x64","win-x64","zip"],["mac-arm64","darwin-arm64","tar.gz"],["mac-x64","darwin-x64","tar.gz"]].filter(([,platform])=>all||platform===(process.platform==="win32"?"win-x64":"darwin-"+process.arch));
 if(!targets.length)throw new Error("Dùng --all-platforms khi đóng gói trên Linux.");
-await mkdir(".runtime",{recursive:true});await mkdir("releases",{recursive:true});
+await mkdir(".runtime",{recursive:true});await mkdir(releaseDirectory,{recursive:true});
 const downloads=resolve("build/cloud-ui/chinesetest-downloads");await mkdir(downloads,{recursive:true});const checksums=[];
 for(const [name,platform,extension] of targets){
  const filename="node-v"+version+"-"+platform+"."+extension,archive=resolve(".runtime",filename);
@@ -24,9 +25,12 @@ for(const [name,platform,extension] of targets){
  if(mac)execFileSync("tar",["-xzf",archive,"-C",staging,entry+"/bin/node",entry+"/LICENSE"]);
  else if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Expand-Archive -LiteralPath $env:CHINESETEST_ARCHIVE -DestinationPath $env:CHINESETEST_STAGING -Force"],{env:{...process.env,CHINESETEST_ARCHIVE:archive,CHINESETEST_STAGING:staging},windowsHide:true});
  else execFileSync("unzip",["-qo",archive,entry+"/node.exe",entry+"/LICENSE","-d",staging]);
- const releases=resolve("releases"),root=resolve(releases,"ChineseTest-"+name);
+ const releases=releaseDirectory,root=resolve(releases,"ChineseTest-"+name);
  if(dirname(root)!==releases||!root.startsWith(releases+ (process.platform==="win32"?"\\":"/")))throw new Error("Unsafe package path");
- await rm(root,{recursive:true,force:true});await mkdir(join(root,"runtime"),{recursive:true});
+ // A user may be running this package or have a terminal open in it. Never
+ // partially delete an installed runner; use a fresh --output-dir instead.
+ try{await stat(root);throw new Error("Thư mục gói đã tồn tại. Dùng --output-dir với thư mục mới để giữ runner đang mở.");}catch(e){if(e.code!=="ENOENT")throw e;}
+ await mkdir(join(root,"runtime"),{recursive:true});
  await cp("build/chinesetest/runner",join(root,"runner"),{recursive:true});
  await cp(join(staging,entry,mac?"bin/node":"node.exe"),join(root,"runtime",mac?"node":"node.exe"));
  await cp(join(staging,entry,"LICENSE"),join(root,"runtime/LICENSE"));
@@ -48,4 +52,4 @@ for(const [name,platform,extension] of targets){
 }
 await cp("docs/chinesetest",downloads,{recursive:true});
 await writeFile(join(downloads,"ChineseTest-SHA256SUMS.txt"),checksums.join("\n")+"\n");
-await cp(join(downloads,"ChineseTest-SHA256SUMS.txt"),"releases/ChineseTest-SHA256SUMS.txt");
+await cp(join(downloads,"ChineseTest-SHA256SUMS.txt"),join(releaseDirectory,"ChineseTest-SHA256SUMS.txt"));

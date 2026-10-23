@@ -1,9 +1,22 @@
-import { DONG_A, type Plan, type Run, type Target, type Personal } from "../protocol";
+import { DONG_A, type Plan, type Run, type Target, type Personal, type Row } from "../protocol";
 import type { Profile } from "../../../src/shared";
 export const vnInput = (ms: number) => Number.isFinite(ms) ? new Date(ms + 7 * 3600000).toISOString().slice(0, 19) : "";
 export const vnTime = (value: string) => Date.parse(value + "+07:00");
 export const newPlan = (): Plan => ({ target: { ...DONG_A, targetAt: Math.ceil((Date.now() + 600000) / 60000) * 60000 }, test: true });
 export function matchesPlan(s: Pick<Run,"target"|"test">, p: Plan) { return s.test === p.test && JSON.stringify(s.target) === JSON.stringify(p.target); }
+export const centerLabel = (row: Row) => `${row.kdEName || row.kdName} · ${row.kdId}`;
+export function centerChoices(directory: Row[], available: Row[]) {
+  const merged = new Map(directory.map(row => [String(row.kdId), row]));
+  for (const row of available) merged.set(String(row.kdId), { ...merged.get(String(row.kdId)), ...row });
+  return [...merged.values()].sort((a, b) => centerLabel(a).localeCompare(centerLabel(b)));
+}
+export function selectedCenter(value: string, choices: Row[]) {
+  const normal = (v: unknown) => String(v ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+  const exactId = choices.find(row => String(row.kdId) === value.trim());
+  if (exactId) return exactId;
+  const matches = choices.filter(row => [centerLabel(row), row.kdName, row.kdEName].some(name => name && normal(name) === normal(value)));
+  return matches.length === 1 ? matches[0] : undefined;
+}
 export function profileFromWebsite(p: Profile, previous: Personal, countries: any[], languages: any[]): Personal {
   const v = p.values, out = { ...previous };
   const direct: Record<string,keyof Personal> = { fullName: "ksEName", chineseName: "ksName", phone: "phone", address: "address" };

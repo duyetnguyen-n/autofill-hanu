@@ -33,3 +33,18 @@ it("persists a send claim and rejects a second runner for the same candidate/exa
 it("is disabled unless explicitly configured",async()=>{
  const app=await httpFixture();try{expect((await app.api("chinesetest/devices")).status).toBe(404);expect(await(await fetch(app.config.origin+"/api/auth/config")).json()).not.toHaveProperty("chinesetestEnabled");}finally{await app.close();}
 },15000);
+it("releases both local and cloud claims after verifying cancellation before granting a new run",async()=>{
+ const app=await httpFixture(undefined,false,true),a=await connectRunner(app),b=await connectRunner(app);
+ try{
+  const da=await(await app.api("chinesetest/pair",0,{code:a.code})).json() as Device,db=await(await app.api("chinesetest/pair",0,{code:b.code})).json() as Device;
+  const target={...DONG_A,targetAt:Date.now()+60000},args={accountId:"account-0",target,test:false,agreeRules:true,agreePrivacy:true};
+  const pa=(await a.command(da,"prepare",args)).result.data,pb=(await b.command(db,"prepare",args)).result.data;
+  expect((await a.command(da,"arm",{id:pa.schedule.id,claimKey:pa.claimKey})).result.ok).toBe(true);
+  Object.assign(a.data.schedules[0],{status:"confirmed",attempt:{count:1,bmid:"old"}});
+  expect((await b.command(db,"arm",{id:pb.schedule.id,claimKey:pb.claimKey})).status).toBe(409);
+  expect((await a.command(da,"verify-absent",{id:pa.schedule.id,confirm:true})).result.ok).toBe(true);
+  expect((await app.pool.query("SELECT * FROM chinesetest.claims")).rows).toHaveLength(0);
+  expect((await b.command(db,"arm",{id:pb.schedule.id,claimKey:pb.claimKey})).result.ok).toBe(true);
+  expect(a.shared.submits).toHaveLength(0);expect(b.shared.submits).toHaveLength(0);
+ }finally{await a.close();await b.close();await app.close();}
+},15000);

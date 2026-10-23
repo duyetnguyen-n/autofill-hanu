@@ -16,6 +16,12 @@ try{
  await expect(page.locator(".ct-fingerprint")).toHaveText(runner.identity.fingerprint);await page.getByRole("button",{name:"Đã đối chiếu, đúng máy",exact:true}).click();
  await expect(page.locator(".ct-account")).toHaveCount(3);
  const first=page.locator(".ct-account").first();await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
+ await expect(first).toContainText("2 điểm trong danh mục theo hình thức");
+ const centerInput=first.getByRole("combobox",{name:/^Điểm thi cho/});
+ await centerInput.fill("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY · 44797750");await expect(first.locator(".ct-account-summary")).toContainText("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY");
+ await expect(first).toContainText("runner sẽ chờ đúng mã xuất hiện");
+ await centerInput.fill("Dong A University（IBT） · 46750135");
+ await first.getByLabel("Kiểm tra mỗi cho Lê Minh Khuê (giây)",{exact:true}).fill("0");
  const at=Date.now()+20000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
  await first.getByRole("button",{name:"Tải lại danh mục / điểm thi",exact:true}).click();await expect(first.getByRole("combobox",{name:"Cấp thi cho Lê Minh Khuê",exact:true})).toHaveValue("828636");
  await first.getByRole("button",{name:"Kiểm tra API",exact:true}).click();await expect(first).toContainText("Phí cuối 60 USD");
@@ -26,6 +32,11 @@ try{
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:"test-results/chinesetest/mobile-dark.png",fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/mobile-light.png",fullPage:true});
  await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:30000});expect(runner.shared.submits).toHaveLength(0);
+ // A synthetic completed run cancelled externally; no real registration is sent.
+ Object.assign(runner.data.schedules[0],{status:"confirmed",test:false,attempt:{count:1,bmid:"FIXTURE-CANCELLED"}});await runner.engine.persist();
+ await page.getByRole("button",{name:"Xác minh đã hủy / đăng ký lại",exact:true}).click();
+ await page.getByRole("dialog").getByRole("checkbox").check();await page.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();
+ await expect(page.locator(".ct-runs")).toContainText("Đã xác minh và mở khóa");expect(runner.shared.submits).toHaveLength(0);
  await page.setViewportSize({width:1440,height:1100});await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();await expect(page.getByRole("dialog")).toContainText("Hồ sơ ChineseTest");await expect(page.getByRole("dialog").getByRole("combobox",{name:"Quốc tịch",exact:true})).toHaveValue("180");await page.screenshot({path:"test-results/chinesetest/profile-editor.png",fullPage:true});await page.getByRole("dialog").getByRole("button",{name:"Đóng",exact:true}).click();
  await page.getByRole("link",{name:"Google Forms",exact:true}).click();await expect(page.getByLabel("Link Google Form",{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Tài khoản và công cụ",exact:true}).click();await page.getByRole("dialog").getByRole("link",{name:"ChineseTest",exact:true}).click();await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();expect(errors).toEqual([]);
  console.log("PASS ChineseTest UI: encrypted real relay, pairing/fingerprint, three isolated accounts, Dong A reads, prepare/arm/Test with zero registration POSTs, profile editor, desktop/mobile light/dark, Google Forms navigation.");

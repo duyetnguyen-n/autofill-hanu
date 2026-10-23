@@ -8,6 +8,14 @@ Live uses a frozen candidate/target snapshot and separate arming with website Li
 
 A synced reservation precedes every registration POST. No automatic POST retry is allowed. Reserved/sending/queued runs after restart require reconciliation. Order polling never resubmits. Cloud stores opaque owner-scoped account/exam claims across disconnect/device deletion; release requires an unsent terminal run or a user-verified absent result. Worker matches cloud grants to the encrypted run before arming. Cloning an already-armed vault is outside the cross-machine guarantee and must not be done.
 
+## Center discovery and registering again after cancellation (2026-10-23)
+
+The public `/portal/index/getExamSiteList` directory is paginated and scoped to Vietnam (`countryId=180`) and format (`type`). It normalizes `siteName/siteEName` to `kdName/kdEName` while preserving `kdId`. The UI loads it ahead of publication and automatically loads enrollment centers when level/date/format changes. Catalog promises coalesce by query and device; late results from another date/device are not displayed under the current selection. The enrollment `/examinee/enroll/getExamSiteList` uses `gjId=180` and remains the authority for actual registration. No claim is made that unpublished directory entries can be retrieved.
+
+Discovery intervals accept 0–60 seconds. Zero waits for the previous response and inspection, yields the event loop, then reads again; pending reads still coalesce across accounts. Existing rate-limit backoff and single registration POST behavior are preserved.
+
+Accepted and confirmed runs support explicit absence verification after external cancellation. Verification requires user confirmation, a valid matching session, fully parsed Test Records with no matching level/date, and no in-flight task for that run. Unknown cancellation status codes are never guessed. A durable `released` state with `verifiedAbsentAt` preserves historical order identifiers; existing worker claim messages release the exact cloud claim before the command result. Persistence failures restore the lock. Later reconciliation of released runs cannot revive a historical order. No schema migration is needed. Both website assets and the local runner must be updated; this change does not cancel any registration itself.
+
 The tested HCMUE RSA-OAEP/AES-GCM envelope and vault codec are reused with separate provider keys, schema, replay store, vault path and Keychain service. HCMUE's only shared vault change is an optional service argument preserving the default. Provider tables are owner-filtered and inaccessible to public/anon/authenticated roles. Account/device switching clears website state.
 
 ## Build and test
@@ -19,6 +27,8 @@ The tested HCMUE RSA-OAEP/AES-GCM envelope and vault codec are reused with separ
 - npm run test:chinesetest-ui
 - npm run test:chinesetest-native (Windows/macOS; isolated temporary vault)
 - npm run package:chinesetest
+
+Packaging refuses to overwrite an existing extracted runner directory, including one that a user may still be running. For another release, pass a new directory, for example `node scripts/run-node24.mjs scripts/package-chinesetest.mjs --output-dir=releases/chinesetest-update-20261023`. The ZIP and checksum are written there and copied to the website's download build.
 
 HTTPS fixture tests need OpenSSL (Git for Windows supplies it). Execution needs Google Chrome only for human login and playwright-core to launch that window; browser binaries are not shipped. Packages contain pinned Node 24.21.0 and the Playwright driver package. Packaging defaults to the current Windows/Mac architecture; --all-platforms on Linux/macOS builds Windows x64 and Mac arm64/x64 while preserving executable permissions. Packaging is separate from machine certification.
 

@@ -52,6 +52,8 @@ export async function connectRunner(
       } catch (e) {
         reply = { ok: false, error: (e as Error).message };
       }
+      // Same ordering as the native worker: durable claim releases precede RESULT.
+      ws.send(JSON.stringify({ type: "CLAIMS", claims: f.data.schedules.map(s => ({ key: s.identityHash, runId: s.id, release: s.verifiedAbsent === true || s.attempt.count === 0 && ["stopped", "failed", "test_passed"].includes(s.status) })) }));
       ws.send(
         JSON.stringify({
           type: "RESULT",

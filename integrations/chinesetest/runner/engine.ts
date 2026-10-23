@@ -115,6 +115,7 @@ export class Engine {
       if (kind === "projects") return this.publicClient.options();
       if (kind === "subjects") return this.publicClient.subjects(String(args.projectId));
       if (kind === "dates") return this.publicClient.dates(String(args.kmId), String(args.ksType));
+      if (kind === "directory") return { code: 200, data: await this.publicClient.directory(String(args.ksType)) };
       if (kind === "sites") return this.publicClient.sites(String(args.kmId), String(args.ksType), String(args.ksDate));
       const common: Record<string, string> = { countries: "/common/countryList", languages: "/common/firstLanguageList", professions: "/common/getProfessionList", config: "/common/config" };
       if (!common[kind]) throw new Error("Danh mục không được hỗ trợ.");
@@ -191,10 +192,16 @@ export class Engine {
     if (command === "reconcile") { const s = this.run(String(args.id)); await this.reconcile(s); return this.snapshot(); }
     if (command === "verify-absent") {
       const s = this.run(String(args.id));
-      if (!args.confirm || !["uncertain", "failed"].includes(s.status)) throw new Error("Chỉ xác minh lượt chưa rõ kết quả sau khi kiểm tra Test Records và không còn hàng đợi.");
+      if (s.verifiedAbsent) return this.snapshot();
+      if (args.confirm !== true || !["uncertain", "failed", "accepted", "confirmed"].includes(s.status)) throw new Error("Chỉ xác minh lượt chưa rõ kết quả hoặc đã hủy sau khi kiểm tra Test Records và không còn hàng đợi.");
+      if (this.tasks.has(s.id)) throw new Error("Lượt vẫn đang gửi hoặc đối chiếu. Dừng lượt và chờ xử lý hoàn tất trước khi mở khóa.");
       const a = this.account(s.accountId); await this.checkIdentity(a);
       if (await existingRegistration(this.client(a), s.target)) throw new Error("Máy chủ vẫn có đăng ký, không mở khóa.");
-      s.verifiedAbsent = true; s.message = "Đã ghi nhận xác minh chưa đăng ký; lượt mới cần chuẩn bị và bật lại."; await this.persist(); return this.snapshot();
+      const previous = { status: s.status, message: s.message, updatedAt: s.updatedAt, version: s.version };
+      s.verifiedAbsent = true; s.verifiedAbsentAt = Date.now(); s.version++; s.updatedAt = Date.now(); s.status = "released";
+      s.message = "Đã xác minh Test Records không còn đăng ký cùng cấp/ngày và ghi nhận xác nhận của bạn. Đã mở khóa; chuẩn bị và bật lượt mới để đăng ký lại.";
+      try { await this.persist(); } catch (e) { Object.assign(s, previous); delete s.verifiedAbsent; delete s.verifiedAbsentAt; throw e; }
+      return this.snapshot();
     }
     throw new Error("Lệnh không được hỗ trợ.");
   }
@@ -209,6 +216,8 @@ export class Engine {
     const version = s.version, deadline = s.target.targetAt + s.target.waitMs;
     const check = () => this.checkpoint(s, version);
     const wait = async (ms: number) => {
+      // Yield even with zero delay so stop/IO can run; never overlap discovery calls.
+      if (ms === 0) { await new Promise<void>(resolve => setImmediate(resolve)); check(); return; }
       const end = Date.now() + ms;
       while (Date.now() < end) {
         check();
@@ -279,11 +288,20 @@ export class Engine {
     }
   }
   private async reconcile(s: Run) {
+    if (s.verifiedAbsent) return;
+    const version = s.version;
     const a = this.account(s.accountId); await this.checkIdentity(a); const client = this.client(a);
-    if (s.attempt.orderKey) { const r = await client.order(s.attempt.orderKey); if (r.data?.bmid) { s.attempt.bmid = String(r.data.bmid); s.status = "confirmed"; s.message = "Máy chủ đã trả mã đăng ký. Kiểm tra và đóng phí đúng hạn."; await this.persist(); return; } }
     const row = await existingRegistration(client, s.target);
+    if (s.verifiedAbsent || s.version !== version) return;
     if (row) { s.attempt.bmid = String(row.KSBM_bmid ?? row.bmid ?? ""); s.status = "confirmed"; s.message = "Đã đối chiếu thấy đăng ký trên Test Records."; await this.persist(); }
-    else { s.message = "Chưa thấy kết quả cuối; giữ khóa gửi. Có thể đối chiếu lại sau."; this.changed(); }
+    else if (["accepted", "confirmed"].includes(s.status)) {
+      s.message = "Test Records không còn đăng ký cùng cấp/ngày. Nếu bạn đã hủy trên ChineseTest và không còn đơn xử lý, chọn Xác minh đã hủy / đăng ký lại để mở khóa."; await this.persist();
+    } else if (s.attempt.orderKey) {
+      const r = await client.order(s.attempt.orderKey);
+      if (s.verifiedAbsent || s.version !== version) return;
+      if (r.data?.bmid) { s.attempt.bmid = String(r.data.bmid); s.status = "confirmed"; s.message = "Máy chủ đã trả mã đăng ký. Kiểm tra Test Records và đóng phí đúng hạn."; await this.persist(); }
+      else { s.message = "Chưa thấy kết quả cuối; giữ khóa gửi. Có thể đối chiếu lại sau."; this.changed(); }
+    } else { s.message = "Chưa thấy kết quả cuối; giữ khóa gửi. Có thể đối chiếu lại sau."; this.changed(); }
   }
   async revoke() { for (const s of this.data.schedules) { if (activeStatus(s.status)) this.stop(s, "Thiết bị đã bị hủy liên kết."); s.personal = personalFrom({}); } for (const c of this.clients.values()) c.close(); this.clients.clear(); this.data.accounts = []; this.data.cloud = undefined; await this.login.close(); await this.persist(); }
   async close() { this.closed = true; clearInterval(this.health); for (const cancel of this.timers.values()) cancel(); this.timers.clear(); for (const s of this.data.schedules) if (activeStatus(s.status)) this.stop(s, "Runner đã dừng."); await this.login.close(); for (const c of this.clients.values()) c.close(); this.publicClient.close(); await Promise.allSettled(this.tasks.values()); await this.persist(); }

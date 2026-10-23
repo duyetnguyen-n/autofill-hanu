@@ -81,7 +81,25 @@ export class ChineseTestClient {
   options() { return this.call("/portal/index/getOptionList"); }
   subjects(projectId: string) { return this.call("/portal/index/getSubjectList", { projectId }); }
   dates(kmId: string, ksType: string) { return this.call("/examinee/enroll/getExamTimeList", { kmId, ksType }); }
-  sites(kmId: string, ksType: string, ksDate: string) { return this.call("/examinee/enroll/getExamSiteList", { kmId, ksType, ksDate }); }
+  sites(kmId: string, ksType: string, ksDate: string) { return this.call("/examinee/enroll/getExamSiteList", { kmId, ksType, ksDate, gjId: "180" }); }
+  async directory(ksType: string): Promise<Row[]> {
+    if (!["1", "2", "4"].includes(ksType)) throw new Error("Hình thức thi không hợp lệ.");
+    const rows: Row[] = [], ids = new Set<string>();
+    let total: number | undefined;
+    for (let pageNum = 1; ; pageNum++) {
+      const r = await this.call("/portal/index/getExamSiteList", { countryId: "180", type: ksType, pageNum, pageSize: 100 });
+      const count = Number(r.total);
+      if (!Array.isArray(r.rows) || !Number.isSafeInteger(count) || count < 0 || count > 10000 || total !== undefined && count !== total) throw new ApiError("Chưa đọc được toàn bộ danh mục điểm thi Việt Nam.");
+      total = count;
+      for (const row of r.rows) {
+        const id = String(row.kdId ?? "");
+        if (!/^\d+$/.test(id) || ids.has(id) || !(row.siteName || row.siteEName)) throw new ApiError("Cấu trúc danh mục điểm thi đã đổi.");
+        ids.add(id); rows.push({ ...row, kdId: id, kdName: row.siteName, kdEName: row.siteEName });
+      }
+      if (rows.length === total) return rows;
+      if (!r.rows.length || rows.length > total) throw new ApiError("Danh mục điểm thi chưa đầy đủ.");
+    }
+  }
   records() { return this.call("/userInfo/examRecord/list", { pageNum: 1, pageSize: 100 }); }
   submit(payload: Row) { return this.call("/examinee/enroll/submitPersonalInfo", undefined, payload); }
   order(key: string) { if (!/^[A-Za-z0-9_,.-]+$/.test(key)) throw new Error("Khóa tra cứu không hợp lệ."); return this.call("/examinee/enroll/selectOrder/" + key); }
