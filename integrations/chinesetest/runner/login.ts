@@ -6,21 +6,64 @@ import { join, resolve, dirname } from "node:path";
 import { ORIGIN } from "../protocol";
 import { ChineseTestClient, type Session } from "./client";
 
+async function removeLoginProfile(directory?: string) {
+  // Delete only a temporary profile created for this login, including on Windows
+  // where Chrome can briefly retain file handles after its window has closed.
+  if (directory && dirname(resolve(directory)) === resolve(tmpdir()) && directory.startsWith(join(tmpdir(), "chinesetest-login-"))) {
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+}
+function startupError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (/executable.*(?:exist|found)|distribution.*not found|ENOENT/i.test(message)) return "Không tìm thấy Google Chrome. Cài Google Chrome rồi mở lại cửa sổ đăng nhập.";
+  if (/timeout/i.test(message)) return "Chrome chưa khởi động xong trong thời gian cho phép. Kiểm tra cửa sổ cảnh báo của hệ điều hành rồi thử lại.";
+  return "Không khởi động được Chrome đăng nhập. Kiểm tra Google Chrome và quyền mở ứng dụng trên máy.";
+}
+function navigationError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const reason = /timeout/i.test(message) ? "Trang đăng nhập ChineseTest phản hồi chậm"
+    : /ERR_CERT|certificate/i.test(message) ? "Không xác minh được chứng chỉ HTTPS của trang đăng nhập"
+    : "Chưa tải được trang đăng nhập ChineseTest";
+  return `${reason}. Chrome vẫn mở; bạn có thể tải lại trang hoặc tự mở https://www.chinesetest.cn/login?redirect=%2Fpersonal-test trong cửa sổ này, đăng nhập rồi bấm Hoàn tất đăng nhập.`;
+}
+
 /** The human completes login/CAPTCHA. No passwords or challenges are read by the app. */
 export class LoginWindow {
   private context?: BrowserContext;
   private directory?: string;
   private busy = false;
+  private generation = 0;
   get pending() { return this.busy || Boolean(this.context); }
   async open() {
     if (this.pending) throw new Error("Một cửa sổ đăng nhập đang mở. Hoàn tất hoặc hủy trước.");
+    const generation = ++this.generation;
     this.busy = true;
     try {
-      this.directory = await mkdtemp(join(tmpdir(), "chinesetest-login-"));
-      this.context = await chromium.launchPersistentContext(this.directory, { channel: "chrome", headless: false, viewport: null, args: ["--no-first-run", "--no-default-browser-check"] });
-      await (this.context.pages()[0] || await this.context.newPage()).goto(ORIGIN + "/login?redirect=%2Fpersonal-test", { waitUntil: "domcontentloaded", timeout: 45000 });
-    } catch { await this.close(); throw new Error("Không mở được Chrome đăng nhập. Cần cài Google Chrome và cho phép mở cửa sổ đăng nhập."); }
-    finally { this.busy = false; }
+      const directory = await mkdtemp(join(tmpdir(), "chinesetest-login-"));
+      if (generation !== this.generation) { await removeLoginProfile(directory); throw new Error("Đã hủy mở cửa sổ đăng nhập."); }
+      let context: BrowserContext;
+      try {
+        context = await chromium.launchPersistentContext(directory, { channel: "chrome", headless: false, viewport: null, args: ["--no-first-run", "--no-default-browser-check"] });
+      } catch (error) {
+        await removeLoginProfile(directory);
+        if (generation !== this.generation) throw new Error("Đã hủy mở cửa sổ đăng nhập.");
+        throw new Error(startupError(error));
+      }
+      if (generation !== this.generation) {
+        await context.close().catch(() => {}); await removeLoginProfile(directory);
+        throw new Error("Đã hủy mở cửa sổ đăng nhập.");
+      }
+      this.context = context; this.directory = directory;
+      context.once("close", () => { if (this.context === context) void this.close().catch(() => {}); });
+      try {
+        // A human can already be typing before DOMContentLoaded (slow scripts,
+        // redirects or challenges). Navigation failure must never close that window.
+        await (context.pages()[0] || await context.newPage()).goto(ORIGIN + "/login?redirect=%2Fpersonal-test", { waitUntil: "commit", timeout: 45000 });
+      } catch (error) {
+        if (this.context !== context) throw new Error("Cửa sổ Chrome đăng nhập đã đóng hoặc đã hủy. Bấm Thêm tài khoản / Đăng nhập lại để mở lại.");
+        throw new Error(navigationError(error));
+      }
+    } finally { if (generation === this.generation) this.busy = false; }
   }
   async finish(): Promise<Session> {
     if (!this.context) throw new Error("Chưa mở cửa sổ đăng nhập trên máy chạy.");
@@ -44,9 +87,10 @@ export class LoginWindow {
     finally { client.close(); }
   }
   async close() {
-    await this.context?.close().catch(() => {}); this.context = undefined;
+    this.generation++; this.busy = false;
+    const context = this.context; this.context = undefined;
     const directory = this.directory; this.directory = undefined;
-    // Delete only the exact temporary login profile created by this instance.
-    if (directory && dirname(resolve(directory)) === resolve(tmpdir()) && directory.startsWith(join(tmpdir(), "chinesetest-login-"))) await rm(directory, { recursive: true, force: true });
+    await context?.close().catch(() => {});
+    await removeLoginProfile(directory);
   }
 }

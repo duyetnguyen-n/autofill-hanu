@@ -29,6 +29,27 @@ Trang **Hướng dẫn kết nối** tại `/chinesetest-downloads/index.html` c
 4. Bấm Hoàn tất đăng nhập. Runner kiểm tra API bằng Node, mã hóa phiên trên máy rồi đóng Chrome riêng. Chrome không tham gia lúc gửi đăng ký.
 5. Mỗi tài khoản đăng nhập riêng. Đăng nhập lại cùng email giữ lịch sử và khóa gửi. Không sao chép kho runner để chạy cùng tài khoản trên nhiều máy.
 
+## Chrome tự đóng trong lúc đang nhập tài khoản
+
+Bản runner cũ chờ trang đăng nhập tải DOM tối đa 45 giây. Trang có script tải chậm
+hoặc chuyển trang có thể vẫn cho nhập nhưng hết thời gian chờ; runner đóng Chrome
+và báo nhầm là không mở được Chrome. Đoạn xử lý này dùng chung cho Mac và Windows.
+
+Bản sửa chỉ chờ trang bắt đầu được điều hướng. Lỗi tải trang, chuyển trang hoặc
+chứng chỉ không tự đóng cửa sổ đang đăng nhập. Khi báo “Chrome vẫn mở”, tải lại
+trang hoặc mở địa chỉ đăng nhập ChineseTest trong chính cửa sổ đó, hoàn tất xác minh
+rồi bấm **Hoàn tất đăng nhập**. Runner vẫn xác minh phiên bằng API trước khi lưu.
+Nếu tự đóng Chrome, trạng thái đăng nhập được giải phóng để mở lại.
+
+Cần dùng **gói runner được build lại** sau bản sửa; kéo mã nguồn hoặc deploy website
+không tự thay tiến trình/gói runner đang mở. Dừng lịch và runner cũ trước khi cập nhật,
+giữ nguyên kho ChineseTestRunner để giữ liên kết, hồ sơ và khóa gửi. Không cần xóa
+phiên hoặc liên kết lại chỉ để nhận bản sửa này.
+
+Kiểm tra cửa sổ Chrome thật, chỉ dùng trang giả lập, không đăng nhập tài khoản và
+không gửi đăng ký: `npm run test:chinesetest-login-window`. Script chạy được trên
+Mac và Windows có Google Chrome. Báo cáo ghi đúng hệ điều hành đã thực sự chạy.
+
 ## Chuẩn bị hồ sơ và kỳ thi
 
 - Hồ sơ / ảnh: nhập thông tin ChineseTest hoặc sao chép trường phù hợp từ hồ sơ đang có trên website, rồi kiểm tra lại. Danh mục lấy từ ChineseTest, không suy đoán mã bằng tên gần giống.

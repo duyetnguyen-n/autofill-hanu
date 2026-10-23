@@ -40,7 +40,8 @@ for(const [name,platform,extension] of targets){
  let notices="ChineseTest Runner uses Node.js "+version+", Playwright, ws and tough-cookie.\n";
  for(const pkg of ["playwright-core","ws","tough-cookie","tldts","tldts-core"])notices+="\n"+await readFile(join("node_modules",pkg,"LICENSE"),"utf8");
  await writeFile(join(root,"NOTICES.txt"),notices);
- await writeFile(join(root,"BUILD.json"),JSON.stringify({provider:"chinesetest",node:version,platform,builtAt:new Date().toISOString(),runtimeArchiveSha256:actual,realMachineVerified:false,realRegistrationVerified:false},null,2));
+ const runnerFilesSha256=Object.fromEntries(await Promise.all(["main.mjs","worker.mjs"].map(async file=>[file,createHash("sha256").update(await readFile(join(root,"runner",file))).digest("hex")])));
+ await writeFile(join(root,"BUILD.json"),JSON.stringify({provider:"chinesetest",node:version,platform,builtAt:new Date().toISOString(),runnerFilesSha256,runtimeArchiveSha256:actual,realMachineVerified:false,realRegistrationVerified:false},null,2));
  if(mac)await chmod(join(root,"runtime/node"),0o755);
   await writeRunnerLauncher(root, "chinesetest", mac);
  const zip=root+".zip";await rm(zip,{force:true});
