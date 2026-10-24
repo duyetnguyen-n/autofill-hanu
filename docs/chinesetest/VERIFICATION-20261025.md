@@ -28,3 +28,20 @@ Nguồn đối chiếu: [frontend đăng ký chính thức](https://www.chineset
 Không kiểm chứng việc giữ phiên cả đêm hoặc tranh slot đúng giờ mở. Không dùng đăng ký Live để kiểm thử đợt này.
 
 Một lần chạy toàn bộ suite đồng thời với nén gói/native smoke bị timeout 5 giây ở test rollback SQLite không thuộc ChineseTest. Chạy lại nguyên suite với cùng giới hạn hai workers sau khi đóng gói xong: **711 đạt, 1 bỏ qua, 82 files đạt**; không tăng timeout hay sửa test để bỏ qua lỗi.
+
+## Bản đã deploy và kiểm tra production
+
+Trong lúc thực hiện, origin/main có thêm commit Facebook 530bc86. Đã giữ nguyên thay đổi đó và rebase bản ChineseTest lên trên. **Bản kết hợp cuối: 720 bài đạt, 1 bỏ qua, 83 files đạt**, typecheck đạt, build server/web đạt, chạy lại toàn bộ luồng UI Edge đạt. Mã ChineseTest và các bundle runner không thay đổi bởi commit Facebook.
+
+- Commit ứng dụng: **fd897ec2e6a8fd77d0f6c2ade03e6a0936986423**.
+- [Deploy Render](https://dashboard.render.com/web/srv-db74o9qd0e5s73b25jng/deploys/dep-dbeec4ss728c73bvg21g): Deploy succeeded / Live; coordinator ready lúc **00:11:33 ngày 25/10, giờ Việt Nam**.
+- `/healthz`, `/readyz`, `/api/auth/config` đạt; ChineseTest được bật. Asset `/assets/Page-KJWB8xnW.js` trên production khớp byte với bản local đã kiểm thử, SHA256 `eed5d58ffe1ea754cb7a1c8d84d05cb853dbb30aadc2e26ed646c54d13aa5379`.
+- Đã tải đủ cả Windows x64, Mac ARM64 và Mac Intel từ production: HTTP 200, SHA256 khớp danh sách phát hành, ZIP CRC đạt, hash main/worker khớp bản Windows đã kiểm thử. Hai runtime Mac đúng CPU và có quyền thực thi.
+- Đã giải nén **chính ZIP Windows tải từ production** và chạy native smoke bằng Node đóng kèm: DPAPI/worker/liên kết/relay mã hóa/chống replay/Origin/Dừng đạt. Không có request tới ChineseTest trong native smoke.
+- Trình duyệt đã đăng nhập tải lại được trang production, đọc lại máy Windows và ba lượt lịch sử. Cảnh báo cần runner mới xuất hiện đúng; không có lỗi console của mã ứng dụng trong lượt này (log lỗi của extension ngoài ứng dụng được tách theo URL nguồn).
+- Chưa thay tiến trình runner đang mở trên máy người dùng; cần dừng lịch, mở gói mới trên đúng máy và giữ nguyên kho dữ liệu/liên kết. Deploy website không tự thay executable. Không thay/khởi động lại runner hoặc sửa hồ sơ/lịch của thiết bị khác để phục vụ kiểm thử.
+- Đã dừng client nghiên cứu định kỳ sau khi kiểm tra xong. Không để tác vụ thử nghiệm tiếp tục tạo lưu lượng nền.
+
+Native Mac vẫn chưa chạy vì máy kiểm tra hiện tại là Windows. Các gói mới và mã dùng chung đã phát hành; kiểm tra ZIP không được báo thành kiểm chứng native macOS.
+
+Bằng chứng cục bộ (được bỏ qua bởi Git): `test-results/chinesetest/production-20261025/production-check.json`, `package-verification.json`, `render-live.jpg`; ảnh luồng UI ở `test-results/chinesetest/`.
