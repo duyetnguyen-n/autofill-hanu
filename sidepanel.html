@@ -18,16 +18,25 @@
       <section class="notice">
         Chỉ dùng cho hồ sơ của bạn. Dữ liệu được lưu cục bộ trên máy này.
       </section>
-      <section class="card">
-        <h2>Liên kết app quản lý</h2>
-        <div class="extension-id-row"><p>ID extension: <code id="extensionId"></code></p><button id="copyExtensionId" class="text-button">Sao chép ID</button></div>
-        <p id="nativeStatus" class="muted">Đang kiểm tra kết nối...</p>
-        <label class="field">Mã liên kết<input id="pairCode" autocomplete="off" placeholder="Mã từ màn hình quản lý" /></label>
-        <button id="pairProfile" class="secondary">Liên kết profile</button>
-        <button id="openCoordinator" class="text-button" disabled>Mở màn hình quản lý</button>
-        <button id="unlinkProfile" class="text-button" hidden>Ngắt liên kết profile</button>
-        <button id="enableFacebook" class="text-button">Cho phép theo dõi Facebook</button>
-        <p id="facebookPermissionStatus" class="muted">Chỉ cần bật ở một profile dùng đọc bài. Các profile đăng ký khác không cần quyền Facebook.</p>
+      <section class="card connection-card" aria-labelledby="connectionTitle">
+        <div class="connection-heading"><h2 id="connectionTitle">Kết nối quản lý</h2><span id="connectionBadge" class="connection-badge">Đang kiểm tra</span></div>
+        <p id="nativeStatus" class="muted" role="status">Đang kiểm tra kết nối…</p>
+        <button id="openCoordinator" class="manager-button" disabled><span>Mở màn hình quản lý</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+        <details id="pairingDetails" class="pairing-settings" open>
+          <summary id="pairingSummary">Liên kết profile</summary>
+          <div class="pairing-body">
+            <p class="pairing-help">Lấy mã từ màn hình quản lý, rồi dán vào đây.</p>
+            <div class="pair-code-row"><label class="field">Mã liên kết<input id="pairCode" autocomplete="off" placeholder="Dán mã liên kết" /></label><button id="pairProfile" class="pair-button">Liên kết profile</button></div>
+            <div class="extension-id-row"><p>ID extension: <code id="extensionId"></code></p><button id="copyExtensionId" class="text-button">Sao chép ID</button></div>
+            <p id="sessionInfo" class="muted" hidden></p>
+            <button id="unlinkProfile" class="unlink-button" hidden>Ngắt liên kết profile</button>
+          </div>
+        </details>
+        <div class="facebook-permission" id="facebookPermission">
+          <div class="permission-heading"><span class="permission-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 15l6-6m-7 4-1 1a4 4 0 0 0 6 6l3-3a4 4 0 0 0 0-6m0 0 1-1a4 4 0 0 0-6-6L7 7a4 4 0 0 0 0 6"/></svg></span><div><h3>Đọc bài Facebook</h3><p>Tự lấy link đăng ký đúng cấp HSK.</p></div></div>
+          <button id="enableFacebook" class="permission-button">Cho phép theo dõi Facebook</button>
+          <p id="facebookPermissionStatus" class="muted" role="status">Chỉ cần cấp quyền trên một profile đọc bài.</p>
+        </div>
       </section>
 
       <section class="card mode-card">

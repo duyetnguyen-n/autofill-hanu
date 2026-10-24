@@ -1,5 +1,11 @@
 # Cập nhật website HANU sau này
 
+**v1.9.2 — giao diện liên kết và quyền Facebook (25/10/2026):** gói extension
+hiển thị rõ trạng thái kết nối/cấp quyền, thu gọn phần đổi/ngắt liên kết khi đã
+liên kết và dùng giao diện đồng bộ với website. Giữ đầy đủ bản sửa đọc Facebook
+của 1.9.1. Deploy để cập nhật gói tải, cập nhật/Reload extension trong thư mục cũ.
+Quyền Facebook và dữ liệu liên kết được giữ; không cần migration hoặc liên kết lại.
+
 **v1.9.1 — đọc Facebook khi mạng lỗi hoặc bài dựng chậm:** deploy backend/UI để
 cập nhật gói tải và trạng thái chờ đọc; cập nhật/Reload extension trong đúng thư mục
 đang nạp. Bộ đọc tự thử lại khi cấu hình hoặc báo cáo thất bại dù DOM không đổi,
