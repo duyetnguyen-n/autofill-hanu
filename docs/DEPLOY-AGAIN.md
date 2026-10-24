@@ -8,20 +8,23 @@ Không cần migration. Phải cấp quyền Facebook tùy chọn trên profile 
 Bài mẫu `1134747255900532` ghi giờ mở 20:00 ngày 19/10/2026; lịch khác giờ/ngày
 vẫn bị chặn trong luồng đăng ký thật, diễn tập dùng riêng form thử.
 
-**ChineseTest: ảnh gốc, bản nháp và lệ phí chỉ đọc (24/10/2026):** chạy migration
+**ChineseTest: môn đi kèm, kiểm tra phiên và ảnh trực tiếp (25/10/2026):** giữ migration
 `supabase/migrations/202610240001_chinesetest_profiles.sql` trên project đã có
-migration ChineseTest runners trước khi deploy backend/UI. Dùng bucket private
-`hanu-private` hiện có, không cần tạo MinIO hoặc cache server. Ảnh gốc lưu ở Storage,
-bản nháp/phiên bản ảnh/trạng thái đồng bộ lưu trong bảng `chinesetest.profiles`.
-Phiên đăng nhập vẫn chỉ ở runner. Hồ sơ gắn với chủ sở hữu, runner và tài khoản thi.
+migration ChineseTest runners. Không cần migration mới nếu bảng profiles đã có.
+Ảnh chọn được tải thẳng lên ChineseTest qua runner, đọc lại và hiển thị trước khi báo
+thành công. Không ghi ảnh gốc hoặc bản nháp mới lên Supabase Storage; DB chỉ giữ
+đường dẫn và metadata. Hồ sơ và phiên đăng nhập nằm trong kho mã hóa trên runner.
+Runner mới xử lý danh sách có cả Speaking/HSKK, giữ tổng phí do ChineseTest trả về
+và kiểm tra phiên mỗi 5 phút khi lịch đang chờ. Website có cảnh báo/chặn chuẩn bị
+bằng runner cũ. Cần cập nhật cả website và runner.
 
 Cần cập nhật cả gói runner: Docker build đã đóng gói Windows x64, Mac ARM64 và Mac
 Intel từ mã mới. Nếu build thủ công, chạy `npm run build:cloud-server`, rồi
-`npm run package:chinesetest -- --all-platforms --output-dir=releases/chinesetest-20261024`
+`node scripts/run-node24.mjs scripts/package-chinesetest.mjs --all-platforms --output-dir=releases/chinesetest-20261025`
 (dùng thư mục đầu ra mới nếu đã tồn tại). Dừng lịch trước khi thay runner; giữ nguyên
 kho `ChineseTestRunner` và liên kết. Website sẽ nhắc cập nhật nếu runner chưa hỗ trợ.
-Ảnh cũ chỉ có trên ChineseTest chưa có bản gốc ở Storage: chọn lại ảnh một lần để
-lưu và dùng ảnh xem trước. Google Forms/HCMUE không cần cập nhật extension cho đợt này.
+Ảnh cũ còn đường dẫn ChineseTest được runner đọc lại; chỉ chọn ảnh mới khi cần thay
+hoặc đường dẫn không còn đọc được. Google Forms/HCMUE không cần cập nhật extension cho đợt này.
 
 
 **v1.7.3 — sửa thoát đăng nhập giả khi mạng lỗi, bàn giao render và chạy ngay khi có link:**

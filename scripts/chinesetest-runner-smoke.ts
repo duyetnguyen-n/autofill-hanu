@@ -71,7 +71,7 @@ try {
     throw new Error("Encrypted command failed: " + response.status);
   const envelope = (await response.json()) as any,
     result = await open<CommandReply>(replyKey, envelope.box, commandId);
-  if (!result.ok || (result.data as any).photoFlowVersion !== 2 || (result.data as any).profileSyncVersion !== 1 || (result.data as any).accounts.length !== 0)
+  if (!result.ok || (result.data as any).photoFlowVersion !== 2 || (result.data as any).enrollmentChecksVersion !== 1 || (result.data as any).profileSyncVersion !== 1 || (result.data as any).accounts.length !== 0)
     throw new Error("Unexpected state");
   const replay=await app.api("chinesetest/devices/"+device.id+"/command",0,{commandId,command:"state",box:encrypted});
   const replayEnvelope=await replay.json() as any;

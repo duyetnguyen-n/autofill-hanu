@@ -25,12 +25,26 @@ export function checkFee(t: Target, fee: unknown, center: Row) {
   }
   return {amount:Number(fee),currency};
 }
+// The official enrollment page uses jiList[0], including when the API returns
+// the new Speaking subject followed by its older HSKK equivalent. The rows are
+// not a set of compulsory subjects to register together.
+export function linkedSubject(group: unknown): Row | undefined {
+  const value=group as Row;
+  if(!value || typeof value.jiLian!=="boolean" || value.jiLian&&!Array.isArray(value.jiList))throw new Error("Chưa xác minh được danh sách môn đi kèm từ ChineseTest. Tải lại lệ phí để thử lại.");
+  if(!value.jiLian)return;
+  const first=value.jiList[0];
+  if(!first || !["string","number"].includes(typeof first.jlKmId) || !/^\d+$/.test(text(first.jlKmId)))throw new Error("ChineseTest chưa trả mã môn đi kèm hợp lệ ở dòng đầu. Chưa thể chuẩn bị đăng ký; tải lại lệ phí để kiểm tra lại.");
+  return first;
+}
+function checkLinkedQuote(t:Target, subject:Row|undefined){
+  if(t.feeQuote?.linkedId!==undefined && t.feeQuote.linkedId!==text(subject?.jlKmId))throw new Error("Môn đi kèm đã thay đổi. Tải lại lệ phí và xác nhận cấu hình trước khi chạy lại.");
+}
 export async function readFeeQuote(client: ChineseTestClient, t: Target, center: Row): Promise<FeeQuote> {
   const query={kmId:t.kmId,kdId:String(center.kdId),ksType:t.ksType,ksDate:t.ksDate};
   const [fees,group]=await Promise.all([client.call("/examinee/enroll/getKsFees",query),client.call("/examinee/enroll/getJiLianList",{...query,ksTime:t.ksDate})]);
-  if (!group.data || typeof group.data.jiLian !== "boolean" || group.data.jiLian && !Array.isArray(group.data.jiList)) throw new Error("Chưa xác minh được môn thi đi kèm.");
+  const subject=linkedSubject(group.data);
   const value=checkFee({...t,feeQuote:undefined,maxFee:undefined},fees.data,center);
-  return {key:feeKey(t),...value,linked:group.data.jiLian?group.data.jiList.map((r:Row)=>String(r.jlKmEName || r.jlKmName || r.jlKmId)):[]};
+  return {key:feeKey(t),...value,linkedId:text(subject?.jlKmId),linked:subject?[text(subject.jlKmEName || subject.jlKmName || subject.jlKmId)]:[]};
 }
 export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], checkpoint = () => {}): Promise<Inspection> {
   validateTarget(t); validatePersonal(personal); checkpoint();
@@ -51,12 +65,11 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
   if (![true, 1, "1"].includes(full.data)) return { ready: false, reason: "Điểm thi chưa cho đăng ký hoặc đã hết chỗ.", center };
   if ([true, 1, "1"].includes(europe.data)) throw new Error("Điểm thi dùng hệ thống eu.chinesetest.cn riêng.");
   const group = linked.data;
-  if (!group || typeof group.jiLian !== "boolean" || (group.jiLian && !Array.isArray(group.jiList))) throw new Error("Cấu trúc môn đi kèm đã đổi.");
+  const subject=linkedSubject(group);checkLinkedQuote(t,subject);
   let linkedId = "";
-  if (group.jiLian) {
+  if (subject) {
     if (!t.acceptLinked) throw new Error("Kỳ thi yêu cầu môn đi kèm. Cần chấp nhận môn này trước khi bật lịch.");
-    if (group.jiList.length !== 1 || !group.jiList[0]?.jlKmId) throw new Error("Cần kiểm tra thủ công danh sách môn đi kèm.");
-    linkedId = String(group.jiList[0].jlKmId);
+    linkedId = text(subject.jlKmId);
     await client.call("/examinee/enroll/validJiLian", { ...query, jlKmId: linkedId, ksDate: t.ksDate });
   } else if (["16", "24"].includes(t.projectId)) {
     const extra = await client.call("/examinee/enroll/hskJiLian", { ...query, ksTime: t.ksDate });

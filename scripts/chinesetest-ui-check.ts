@@ -31,6 +31,8 @@ try{
  await expect(first).toContainText("runner sẽ chờ đúng mã xuất hiện");
  await centerSelect.click();await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(10);await page.getByRole("listbox").getByRole("option",{name:/Dong A University/}).click();
  await expect(first.locator(".ct-account-summary")).toContainText("60 USD");
+ await expect(first.locator(".ct-fee-panel")).toContainText("Môn bắt buộc đi kèm: HSK (Level 4) Speaking.");
+ await expect(first.locator(".ct-fee-panel")).not.toContainText("HSK Speaking (Intermediate)");
  await expect(first.getByLabel(/^Phí tối đa/)).toHaveCount(0);await expect(first.getByLabel(/^Đơn vị tiền/)).toHaveCount(0);
  // Selecting a photo immediately uploads through the runner. Supabase receives
  // metadata only, after read-back AND the browser's successful image load.
@@ -102,6 +104,28 @@ try{
  await dialog.getByRole("button",{name:"Ghi nhận đã xác minh",exact:true}).click();
  await expect(page.locator(".ct-runs")).toContainText("Đã xác minh và mở khóa");expect(runner.shared.submits).toHaveLength(0);
  await page.setViewportSize({width:1440,height:1100});await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();await expect(page.getByRole("dialog")).toContainText("Hồ sơ ChineseTest");await expect(page.getByRole("dialog").getByRole("combobox",{name:"Quốc tịch",exact:true})).toHaveValue("180");await page.screenshot({path:"test-results/chinesetest/profile-editor.png",fullPage:true});await page.getByRole("dialog").getByRole("button",{name:"Đóng",exact:true}).click();
+ // Reopen after a different modal, with all profile controls initially disabled.
+ for(let reopen=0;reopen<3;reopen++){
+  let releasePhoto!:()=>void;runner.shared.photoGate=new Promise(r=>releasePhoto=r);
+  await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();
+  const loadingDialog=page.getByRole("dialog");await expect(loadingDialog).toBeVisible();
+  await expect(loadingDialog).not.toHaveAttribute("aria-hidden","true");
+  releasePhoto();runner.shared.photoGate=undefined;
+  await expect(loadingDialog).toContainText("Đã đọc và hiển thị ảnh từ ChineseTest");
+  await page.keyboard.press("Tab");
+  expect(await loadingDialog.evaluate(el=>el.contains(document.activeElement))).toBe(true);
+  await loadingDialog.getByRole("button",{name:"Đóng",exact:true}).click();await expect(loadingDialog).toHaveCount(0);
+ }
+ const snapshot=runner.engine.snapshot.bind(runner.engine);
+ runner.engine.snapshot=()=>({...snapshot(),enrollmentChecksVersion:undefined});
+ await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
+ await expect(page.getByRole("status").filter({hasText:"Runner đang dùng bản cũ."})).toBeVisible();
+ const beforeOldPrepare=requests.filter(r=>r.command==="prepare").length;
+ await page.locator(".ct-account").nth(1).getByRole("button",{name:"Chuẩn bị",exact:true}).click();
+ await expect(page.locator(".ct-account").nth(1).getByRole("alert")).toContainText("Cập nhật ChineseTest Runner");
+ expect(requests.filter(r=>r.command==="prepare").length).toBe(beforeOldPrepare);
+ runner.engine.snapshot=snapshot;await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
+ await expect(page.getByRole("status").filter({hasText:"Runner đang dùng bản cũ."})).toHaveCount(0);
  await page.getByRole("link",{name:"Google Forms",exact:true}).click();await expect(page.getByLabel("Link Google Form",{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Tài khoản và công cụ",exact:true}).click();await page.getByRole("dialog").getByRole("link",{name:"ChineseTest",exact:true}).click();await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();expect(errors).toEqual([]);
  console.log("PASS ChineseTest UI: direct ChineseTest photo upload on selection, read-back and browser decoding before success, no cloud originals/drafts, reload read-through runner, GET-only retry after read/decode failure, no duplicate uploads on save, read-only actual fees, all 10 center options with Dong A selected, search/select unpublished center, zero idle refreshes over 6.5s, verification busy/error/old-runner/success feedback, encrypted relay, scheduled Test, mobile/dark and profile editing. Zero registration POSTs.");
 }catch(error){const failed=browser.contexts()[0]?.pages()[0];if(failed){await failed.screenshot({path:"test-results/chinesetest/failure.png",fullPage:true});console.log((await failed.locator("body").innerText()).slice(-2000));console.log(await failed.locator("[role=dialog]").evaluateAll(els=>els.map(e=>({html:e.outerHTML.slice(0,600),parents:[e.parentElement,e.parentElement?.parentElement].map(p=>p?.outerHTML.slice(0,240))}))));}throw error;}finally{await browser.close();await runner.close();await app.close();}

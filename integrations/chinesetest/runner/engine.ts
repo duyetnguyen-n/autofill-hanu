@@ -15,6 +15,7 @@ export class Engine {
   private clients = new Map<string, ChineseTestClient>();
   private identityChecks = new Map<string, Promise<void>>();
   private timers = new Map<string, () => void>();
+  private sessionTimers = new Map<string, () => void>();
   private tasks = new Map<string, Promise<void>>();
   private waits = new Map<string, Set<() => void>>();
   private publicClient: ChineseTestClient;
@@ -53,7 +54,7 @@ export class Engine {
   }
   async identity() { return { id: this.data.id, name: this.data.name, platform: process.platform, publicKey: this.data.keys.publicKey, fingerprint: await fingerprint(this.data.keys.publicKey) }; }
   snapshot(): RunnerState {
-    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, photoFlowVersion:2, deviceId: this.data.id, name: this.data.name, platform: process.platform,
+    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, photoFlowVersion:2, enrollmentChecksVersion:1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
       accounts: this.data.accounts.map(a => ({ ...a.view })), plans: structuredClone(this.data.plans), schedules: this.data.schedules.map(({ personal: _p, identityHash: _h, accountKey: _k, ...s }) => {
         const { orderKey: _secret, ...attempt } = s.attempt; return structuredClone({ ...s, attempt });
       }), loginPending: this.login.pending, now: new Date().toISOString(), eventLoopLagMs: this.lag };
@@ -69,7 +70,28 @@ export class Engine {
   private run(id: string) { const s = this.data.schedules.find(s => s.id === id); if (!s) throw new Error("Không tìm thấy lượt chạy."); return s; }
   private checkpoint(s: Run, version: number) { if (this.closed || s.version !== version || !activeStatus(s.status)) throw new Error("Lượt đã dừng hoặc thay đổi."); }
   private ensureEditable(a: Account) { if (this.data.schedules.some(s => s.accountKey === a.session.key && activeStatus(s.status))) throw new Error("Dừng lịch của tài khoản trước khi sửa hồ sơ/ảnh hoặc đăng nhập lại."); }
-  private stop(s: Run, reason = "Đã dừng theo yêu cầu.") { this.timers.get(s.id)?.(); this.timers.delete(s.id); s.version++; s.status = s.attempt.count > 0 ? "uncertain" : "stopped"; s.message = s.attempt.count > 0 ? reason + " Request đã gửi có thể tiếp tục trên máy chủ; giữ khóa gửi." : reason; s.updatedAt = Date.now(); for (const wake of this.waits.get(s.id) || []) wake(); }
+  private stop(s: Run, reason = "Đã dừng theo yêu cầu.") { this.timers.get(s.id)?.(); this.timers.delete(s.id); this.sessionTimers.get(s.id)?.(); s.version++; s.status = s.attempt.count > 0 ? "uncertain" : "stopped"; s.message = s.attempt.count > 0 ? reason + " Request đã gửi có thể tiếp tục trên máy chủ; giữ khóa gửi." : reason; s.updatedAt = Date.now(); for (const wake of this.waits.get(s.id) || []) wake(); }
+  private maintainSession(s: Run, a: Account) {
+    const version=s.version, session=a.session;
+    let timer: ReturnType<typeof setTimeout>, cancelled=false;
+    const cancel=()=>{cancelled=true;clearTimeout(timer);if(this.sessionTimers.get(s.id)===cancel)this.sessionTimers.delete(s.id);};
+    const current=()=>!cancelled&&!this.closed&&s.version===version&&a.session===session&&s.attempt.count===0&&["armed","waiting_center","checking"].includes(s.status);
+    const schedule=(delay:number)=>{timer=setTimeout(()=>{void tick();},delay);timer.unref?.();};
+    const tick=async()=>{
+      if(!current()){cancel();return;}
+      let delay=5*60000;
+      try{await this.checkIdentity(a);if(!current())return;await this.persist();}
+      catch(e){
+        if(!current())return;
+        if(transientFailure(e)){
+          delay=Math.max(delay,e instanceof ApiError?e.retryAfterMs || 0:0);
+          s.message=`Chưa kiểm tra được phiên do lỗi tạm thời: ${(e as Error).message} Sẽ kiểm tra lại trước khi gửi; chưa gửi đăng ký.`;s.updatedAt=Date.now();
+        }else this.stop(s,`Kiểm tra phiên định kỳ thất bại: ${(e as Error).message} Chưa gửi đăng ký; xử lý nguyên nhân rồi chuẩn bị lại.`);
+        await this.persist().catch(()=>{});
+      }finally{if(current())schedule(delay);else cancel();}
+    };
+    this.sessionTimers.get(s.id)?.();this.sessionTimers.set(s.id,cancel);schedule(5*60000);
+  }
   private async sites(t: Target) {
     const key = JSON.stringify([t.kmId, t.ksType, t.ksDate]);
     const cached = this.discoveries.get(key);
@@ -296,6 +318,7 @@ export class Engine {
         }).catch(() => {});
       }));
       this.timers.set(s.id, () => { cancelDispatch(); for (const cancel of prechecks) cancel(); });
+      this.maintainSession(s,a);
       return this.snapshot();
     }
     if (command === "reconcile") { const s = this.run(String(args.id)); await this.reconcile(s); return this.snapshot(); }
@@ -405,7 +428,7 @@ export class Engine {
         s.message = (e as Error).message; s.updatedAt = Date.now();
         await this.persist().catch(() => { s.message = "Không lưu được trạng thái; dừng và giữ khóa gửi."; this.changed(); });
       }
-    }
+    } finally { this.sessionTimers.get(s.id)?.(); }
   }
   private async reconcile(s: Run) {
     if (s.verifiedAbsent) return;

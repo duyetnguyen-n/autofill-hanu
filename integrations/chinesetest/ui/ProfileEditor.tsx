@@ -6,11 +6,16 @@ import type { SessionView } from "../../../src/protocol";
 import { BusyLine } from "./BusyLine";
 import { profileApi, profilePath, imageBase64 } from "./profile-api";
 import { synchronizeProfile } from "./profile-sync";
+import { useActivateModal } from "@fluentui/react-tabster";
 type Request = (command: Command, args?: Row) => Promise<any>;
 export function ProfileEditor({ accountId, deviceId, name, request, close }: { accountId: string; deviceId: string; name: string; request: Request; close(): void }) {
   const [draft,setDraft] = useState<Personal>(personalFrom({})), [preview,setPreview] = useState<{src:string;id:string}|null>(null), [countries,setCountries] = useState<Row[]>([]), [languages,setLanguages] = useState<Row[]>([]), [years,setYears] = useState<Row>({}), [professions,setProfessions] = useState<Row[][]>([[],[],[]]), [professionIds,setProfessionIds] = useState<string[]>(["","",""]), [profiles,setProfiles] = useState<SessionView[]>([]), [source,setSource] = useState(""), [busy,setBusy] = useState(true), [error,setError] = useState(""), [note,setNote] = useState(""), [progress,setProgress] = useState("Đang tải hồ sơ đã lưu…"), [loaded,setLoaded] = useState(false), [loadAttempt,setLoadAttempt]=useState(0);
   const [catalogLoading,setCatalogLoading]=useState<Record<string,boolean>>({countries:true,languages:true,config:true,professions:true}),[catalogErrors,setCatalogErrors]=useState<Record<string,string>>({}),[imageError,setImageError]=useState(false);
   const surface=useRef<HTMLDivElement>(null);
+  const activateModal=useActivateModal();
+  // The form initially disables every control while loading. Explicitly
+  // activate after Tabster has observed the new surface, including on reopen.
+  useEffect(()=>{activateModal(surface.current || undefined);},[activateModal]);
   const mounted = useRef(true), revision = useRef(0), acting=useRef(false), photoVersion=useRef<string|null>(null);
   const confirmation=useRef<{id:string;resolve():void;reject(e:Error):void;timer:ReturnType<typeof setTimeout>}|null>(null);
   const pendingFile=useRef<Row|null>(null),[canRetryUpload,setCanRetryUpload]=useState(false),[imageVerified,setImageVerified]=useState(false);

@@ -38,6 +38,8 @@ Bộ kiểm tra đầy đủ ban đầu gặp `openssl ENOENT` ở test HCMUE kh
 
 Mã frontend chính thức đã xem dùng `Img_API=/`, ghép đường dẫn upload để hiển thị ảnh. Interceptor phản hồi đã xem chuyển về đăng nhập khi gặp mã ứng dụng 401/403; chưa thấy cơ chế refresh riêng trong phần này. Nguồn: [ChineseTest](https://www.chinesetest.cn/), [bundle frontend được khảo sát](https://www.chinesetest.cn/_nuxt/eb81829.js). Đây là quan sát frontend, không khẳng định toàn bộ backend không có cơ chế gia hạn.
 
+**Bổ sung buổi tối 24/10:** đã dùng một phiên mới để thử API đọc mỗi 5 phút. Phiên hợp lệ tới phút 55, trong đó khoảng 45 phút Chrome đã đóng; sau khi ngừng gọi thêm 35 phút thì trả 401, đối chiếu lại vẫn 401. Xem [báo cáo nghiên cứu phiên](SESSION-RESEARCH-20261024.md). Đây là hướng duy trì khả thi trong cửa sổ đã thử; chưa xác định TTL chính xác hoặc bảo đảm cả đêm. Chưa ghép tác vụ duy trì vào runner.
+
 ## Đo lại trên Mac/mạng khác
 
 Trong workspace đã cập nhật và có dependencies:
