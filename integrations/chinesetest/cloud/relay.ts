@@ -14,6 +14,8 @@ import {
   type Limits,
 } from "../protocol";
 import { fingerprint } from "../crypto";
+import { ChineseTestProfiles } from "./profiles";
+import type { PrivateObjects } from "../../../manager/cloud/postgres-store";
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 interface Peer {
@@ -30,6 +32,7 @@ interface Peer {
   >;
 }
 export class ChineseTestRelay {
+  private profiles: ChineseTestProfiles;
   private wss = new WebSocketServer({
     noServer: true,
     maxPayload: 3 * 1024 * 1024,
@@ -40,7 +43,8 @@ export class ChineseTestRelay {
     private pool: SqlPool,
     private allowed: (owner: string) => Promise<Account>,
     private origin: () => string,
-  ) {}
+    private objects: PrivateObjects,
+  ) { this.profiles = new ChineseTestProfiles(pool,objects); }
   private limit(key: string, max = 60) {
     const now = Date.now(),
       item = this.rate.get(key);
@@ -53,6 +57,7 @@ export class ChineseTestRelay {
   }
   async check() {
     await this.pool.query("SELECT id FROM chinesetest.runners LIMIT 0");
+    await this.profiles.check();
   }
   private view(row: any): Device {
     return {
@@ -73,6 +78,7 @@ export class ChineseTestRelay {
     body: () => Promise<any>,
   ) {
     this.limit("owner:" + account.id, 180);
+    if (path.startsWith("/api/chinesetest/profiles/")) return this.profiles.route(account.id,path,method,body);
     if (path === "/api/chinesetest/devices" && method === "GET")
       return (
         await this.pool.query(
@@ -134,10 +140,12 @@ export class ChineseTestRelay {
       if (peer?.pending.size) throw new CloudError("Máy đang xử lý lệnh.");
       peer?.ws.send(JSON.stringify({ type: "REVOKED" }));
       peer?.ws.close(1008, "Unlinked");
+      const photos = await this.pool.query("SELECT photo_key FROM chinesetest.profiles WHERE owner=$1 AND runner_id=$2 AND photo_key IS NOT NULL",[account.id,id]);
       await this.pool.query(
         "DELETE FROM chinesetest.runners WHERE id=$1 AND owner=$2",
         [id, account.id],
       );
+      await Promise.allSettled(photos.rows.map(photo=>this.objects.remove?.(photo.photo_key)));
       return { ok: true };
     }
     if (method !== "POST" || match[2] !== "command")

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { personalFrom, validatePersonal, validateTarget, type Row, type Target, type Personal } from "../protocol";
+import { feeKey, personalFrom, validatePersonal, validateTarget, type FeeQuote, type Row, type Target, type Personal } from "../protocol";
 import type { ChineseTestClient } from "./client";
 const text = (v: unknown) => String(v ?? "").trim();
 const same = (a: unknown, b: unknown) => text(a) === text(b);
@@ -15,6 +15,23 @@ export function buildPayload(t: Target, p: Personal, center: Row, linkedId: stri
   return { ...personalFrom(p), kmId: t.kmId, ksType: t.ksType, ksDate: t.ksDate, kdId: String(center.kdId), jlKmId: linkedId, willing: 0, remark: "", language: t.language || "", mailInfo: { mid: "", mailSum: 1 } };
 }
 export interface Inspection { ready: boolean; reason: string; center?: Row; fee?: number; currency?: string; linked?: Row; payload?: Row }
+export function checkFee(t: Target, fee: unknown, center: Row) {
+  const currency=text(center.mTypeCode).toUpperCase();
+  if (!["number","string"].includes(typeof fee) || fee === "" || !Number.isFinite(Number(fee)) || Number(fee)<0 || !/^[A-Z]{3}$/.test(currency)) throw new Error("ChineseTest chưa trả lệ phí và đơn vị tiền hợp lệ.");
+  if (t.feeQuote && (t.feeQuote.key !== feeKey(t) || t.feeQuote.amount !== Number(fee) || t.feeQuote.currency !== currency)) throw new Error(`Lệ phí đã thay đổi thành ${fee} ${currency}. Tải lại lệ phí và xác nhận cấu hình trước khi chạy lại.`);
+  if (!t.feeQuote && t.maxFee !== undefined) {
+    if (currency !== t.currency) throw new Error(`Đơn vị lệ phí là ${currency}, khác ${t.currency} đã chọn.`);
+    if (Number(fee)>t.maxFee) throw new Error(`Phí cuối ${fee} ${currency} vượt mức ${t.maxFee} ${t.currency}.`);
+  }
+  return {amount:Number(fee),currency};
+}
+export async function readFeeQuote(client: ChineseTestClient, t: Target, center: Row): Promise<FeeQuote> {
+  const query={kmId:t.kmId,kdId:String(center.kdId),ksType:t.ksType,ksDate:t.ksDate};
+  const [fees,group]=await Promise.all([client.call("/examinee/enroll/getKsFees",query),client.call("/examinee/enroll/getJiLianList",{...query,ksTime:t.ksDate})]);
+  if (!group.data || typeof group.data.jiLian !== "boolean" || group.data.jiLian && !Array.isArray(group.data.jiList)) throw new Error("Chưa xác minh được môn thi đi kèm.");
+  const value=checkFee({...t,feeQuote:undefined,maxFee:undefined},fees.data,center);
+  return {key:feeKey(t),...value,linked:group.data.jiLian?group.data.jiList.map((r:Row)=>String(r.jlKmEName || r.jlKmName || r.jlKmId)):[]};
+}
 export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], checkpoint = () => {}): Promise<Inspection> {
   validateTarget(t); validatePersonal(personal); checkpoint();
   const center = centerFrom(sites, t);
@@ -51,10 +68,7 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
     if (personal.isExamHsk === "1" && (!personal.kmidHis || !personal.fenshuHis || !Number.isFinite(Number(personal.fenshuHis)) || Number(personal.fenshuHis) < 0)) throw new Error("Cần cấp HSK và điểm đã thi trước đây.");
   }
   const fee = fees.data;
-  const currency = text(center.mTypeCode).toUpperCase();
-  if (!["number", "string"].includes(typeof fee) || fee === "" || !Number.isFinite(Number(fee)) || Number(fee) < 0) throw new Error("API không trả lệ phí hợp lệ.");
-  if (currency !== t.currency) throw new Error(`Đơn vị lệ phí là ${currency || "không rõ"}, khác ${t.currency} đã chọn.`);
-  if (Number(fee) > t.maxFee) throw new Error(`Phí cuối ${fee} ${currency} vượt mức ${t.maxFee} ${t.currency}.`);
+  const {currency}=checkFee(t,fee,center);
   return { ready: true, reason: "API kiểm tra đạt; chưa gửi đăng ký.", center, fee: Number(fee), currency, linked: group, payload: buildPayload(t, personal, center, linkedId) };
 }
 export async function existingRegistration(client: ChineseTestClient, t: Target): Promise<Row | undefined> {

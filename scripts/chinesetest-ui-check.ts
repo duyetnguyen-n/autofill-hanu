@@ -23,18 +23,42 @@ try{
  await expect(page.locator(".ct-account")).toHaveCount(3);
  const first=page.locator(".ct-account").first();await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
  await expect(first).toContainText("10 điểm trong danh mục theo hình thức");
- const centerSelect=first.getByRole("combobox",{name:/^Điểm thi cho/}),centerSearch=first.getByRole("searchbox",{name:/^Tìm điểm thi cho/});
+ const centerSelect=first.getByRole("combobox",{name:/^Điểm thi cho/});
  // The selected Dong A value must not filter the other nine schools out.
- await centerSelect.click();await expect(centerSelect.locator("option")).toHaveCount(12);await centerSelect.press("Escape");
- await centerSearch.fill("HANOI");await expect(centerSelect.locator("option")).toHaveCount(4);await centerSearch.fill("");await expect(centerSelect.locator("option")).toHaveCount(12);
- await centerSelect.selectOption("44797750");await expect(first.locator(".ct-account-summary")).toContainText("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY");
+ await centerSelect.click();await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(10);
+ await centerSelect.fill("HANOI");await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(1);await page.getByRole("listbox").getByRole("option",{name:/CONFUCIUS INSTITUTE/}).click();
+ await expect(first.locator(".ct-account-summary")).toContainText("CONFUCIUS INSTITUTE AT HANOI UNIVERSITY");
  await expect(first).toContainText("runner sẽ chờ đúng mã xuất hiện");
- await centerSelect.selectOption("46750135");
+ await centerSelect.click();await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(10);await page.getByRole("listbox").getByRole("option",{name:/Dong A University/}).click();
+ await expect(first.locator(".ct-account-summary")).toContainText("60 USD");
+ await expect(first.getByLabel(/^Phí tối đa/)).toHaveCount(0);await expect(first.getByLabel(/^Đơn vị tiền/)).toHaveCount(0);
+ // Upload is durable in our private storage before Save. No ChineseTest upload.
+ const photoAccount=page.locator(".ct-account").nth(1);await photoAccount.getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();
+ let photoDialog=page.getByRole("dialog");await expect(photoDialog.getByLabel("Họ tên trên giấy tờ",{exact:true})).toHaveValue("Lê Minh Khuê");
+ const png=Buffer.concat([Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==","base64"),Buffer.alloc(20*1024)]);
+ await photoDialog.getByLabel("Họ tên trên giấy tờ",{exact:true}).fill("Hồ sơ giữ ảnh");
+ await photoDialog.locator('input[type="file"]').setInputFiles({name:"portrait.png",mimeType:"image/png",buffer:png});
+ await expect(photoDialog).toContainText("Đã lưu ảnh · Chưa đồng bộ ChineseTest");await expect(photoDialog.getByRole("button",{name:"Đóng",exact:true})).toBeEnabled();
+ expect(runner.shared.uploadCalls).toBe(0);expect(app.blobs.size).toBe(1);
+ await photoDialog.getByRole("button",{name:"Đóng",exact:true}).click();await page.reload();await expect(page.locator(".ct-account")).toHaveCount(3);
+ await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();photoDialog=page.getByRole("dialog");
+ await expect(photoDialog.getByLabel("Họ tên trên giấy tờ",{exact:true})).toHaveValue("Hồ sơ giữ ảnh");await expect(photoDialog.getByRole("img",{name:"Ảnh chân dung đã lưu",exact:true})).toBeVisible();
+ await expect(photoDialog.getByRole("img")).toHaveJSProperty("naturalWidth",1);
+ let releaseUpload!:()=>void;runner.shared.uploadGate=new Promise(r=>releaseUpload=r);runner.shared.uploadError=new Error("Upload ChineseTest bị timeout (giả lập).");
+ await photoDialog.getByRole("button",{name:"Lưu hồ sơ",exact:true}).click();await expect(photoDialog.getByRole("status").filter({hasText:"Đang tải ảnh lên ChineseTest"})).toBeVisible();
+ await page.screenshot({path:"test-results/chinesetest/photo-upload-loading.png",fullPage:true});releaseUpload();runner.shared.uploadGate=undefined;
+ await expect(photoDialog.getByRole("alert")).toContainText("Đã lưu bản nháp");await expect(photoDialog.getByRole("img")).toBeVisible();
+ runner.shared.uploadError=undefined;await photoDialog.getByRole("button",{name:"Lưu hồ sơ",exact:true}).click();await expect(photoDialog).toContainText("Đã lưu hồ sơ và đồng bộ ảnh sang ChineseTest.");expect(runner.shared.uploadCalls).toBe(2);
+ await photoDialog.getByLabel("Điện thoại",{exact:true}).fill("0901234567");await photoDialog.getByRole("button",{name:"Lưu hồ sơ",exact:true}).click();await expect(photoDialog).toContainText("Đã lưu hồ sơ và đồng bộ ảnh sang ChineseTest.");expect(runner.shared.uploadCalls).toBe(2);
+ await page.screenshot({path:"test-results/chinesetest/photo-saved.png",fullPage:true});await photoDialog.getByRole("button",{name:"Đóng",exact:true}).click();
+ await page.reload();await expect(page.locator(".ct-account")).toHaveCount(3);
+ await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();photoDialog=page.getByRole("dialog");await expect(photoDialog).toContainText("Ảnh đã đồng bộ ChineseTest");await photoDialog.getByRole("button",{name:"Đóng",exact:true}).click();
+ await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();await expect(first.locator(".ct-account-summary")).toContainText("60 USD");
  const beforeIdle=requests.length;await page.waitForTimeout(6500);
  expect(requests.slice(beforeIdle).filter(r=>r.path.endsWith("/devices")||r.command==="state")).toEqual([]);
  await first.screenshot({path:"test-results/chinesetest/center-picker.png"});
  await first.getByLabel("Kiểm tra mỗi cho Lê Minh Khuê (giây)",{exact:true}).fill("0");
- const at=Date.now()+20000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
+ const at=Date.now()+30000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
  await first.getByRole("button",{name:"Tải lại danh mục / điểm thi",exact:true}).click();await expect(first.getByRole("combobox",{name:"Cấp thi cho Lê Minh Khuê",exact:true})).toHaveValue("828636");
  await first.getByRole("button",{name:"Kiểm tra API",exact:true}).click();await expect(first).toContainText("Phí cuối 60 USD");
  await first.getByRole("button",{name:"Chuẩn bị",exact:true}).click();await expect(page.locator(".ct-runs")).toContainText("Sẵn sàng");
@@ -43,7 +67,7 @@ try{
  await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/desktop-dark.png",fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:"test-results/chinesetest/mobile-dark.png",fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/mobile-light.png",fullPage:true});
- await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:30000});expect(runner.shared.submits).toHaveLength(0);
+ await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:45000});expect(runner.shared.submits).toHaveLength(0);
  // A synthetic completed run cancelled externally; no real registration is sent.
  Object.assign(runner.data.schedules[0],{status:"confirmed",test:false,attempt:{count:1,bmid:"FIXTURE-CANCELLED"}});await runner.engine.persist();
  await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
@@ -65,5 +89,5 @@ try{
  await expect(page.locator(".ct-runs")).toContainText("Đã xác minh và mở khóa");expect(runner.shared.submits).toHaveLength(0);
  await page.setViewportSize({width:1440,height:1100});await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();await expect(page.getByRole("dialog")).toContainText("Hồ sơ ChineseTest");await expect(page.getByRole("dialog").getByRole("combobox",{name:"Quốc tịch",exact:true})).toHaveValue("180");await page.screenshot({path:"test-results/chinesetest/profile-editor.png",fullPage:true});await page.getByRole("dialog").getByRole("button",{name:"Đóng",exact:true}).click();
  await page.getByRole("link",{name:"Google Forms",exact:true}).click();await expect(page.getByLabel("Link Google Form",{exact:true})).toBeVisible();await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Tài khoản và công cụ",exact:true}).click();await page.getByRole("dialog").getByRole("link",{name:"ChineseTest",exact:true}).click();await expect(page.getByRole("heading",{name:"Chuẩn bị trước giờ mở."})).toBeVisible();expect(errors).toEqual([]);
- console.log("PASS ChineseTest UI: all 10 center options with Dong A selected, search/select unpublished center, zero idle refreshes over 6.5s, verification busy/error/old-runner/success feedback, encrypted relay, scheduled Test, mobile/dark and profile editing. Zero registration POSTs.");
-}finally{await browser.close();await runner.close();await app.close();}
+ console.log("PASS ChineseTest UI: durable cloud photo before Save, reload recovery, upload failure/retry without data loss, no duplicate uploads, read-only actual fees, all 10 center options with Dong A selected, search/select unpublished center, zero idle refreshes over 6.5s, verification busy/error/old-runner/success feedback, encrypted relay, scheduled Test, mobile/dark and profile editing. Zero registration POSTs.");
+}catch(error){const failed=browser.contexts()[0]?.pages()[0];if(failed){await failed.screenshot({path:"test-results/chinesetest/failure.png",fullPage:true});console.log((await failed.locator("body").innerText()).slice(-2000));console.log(await failed.locator("[role=dialog]").evaluateAll(els=>els.map(e=>({html:e.outerHTML.slice(0,600),parents:[e.parentElement,e.parentElement?.parentElement].map(p=>p?.outerHTML.slice(0,240))}))));}throw error;}finally{await browser.close();await runner.close();await app.close();}

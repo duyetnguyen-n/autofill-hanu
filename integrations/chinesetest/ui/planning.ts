@@ -2,7 +2,7 @@ import { DONG_A, type Plan, type Run, type Target, type Personal, type Row } fro
 import type { Profile } from "../../../src/shared";
 export const vnInput = (ms: number) => Number.isFinite(ms) ? new Date(ms + 7 * 3600000).toISOString().slice(0, 19) : "";
 export const vnTime = (value: string) => Date.parse(value + "+07:00");
-export const newPlan = (): Plan => ({ target: { ...DONG_A, targetAt: Math.ceil((Date.now() + 600000) / 60000) * 60000 }, test: true });
+export const newPlan = (): Plan => ({ target: { ...DONG_A, maxFee: undefined, currency: undefined, targetAt: Math.ceil((Date.now() + 600000) / 60000) * 60000 }, test: true });
 export function matchesPlan(s: Pick<Run,"target"|"test">, p: Plan) { return s.test === p.test && JSON.stringify(s.target) === JSON.stringify(p.target); }
 export const centerLabel = (row: Row) => `${row.kdEName || row.kdName} · ${row.kdId}`;
 export function centerChoices(directory: Row[], available: Row[]) {

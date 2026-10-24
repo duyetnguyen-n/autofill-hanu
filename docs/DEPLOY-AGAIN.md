@@ -1,5 +1,21 @@
 # Cập nhật website HANU sau này
 
+**ChineseTest: ảnh gốc, bản nháp và lệ phí chỉ đọc (24/10/2026):** chạy migration
+`supabase/migrations/202610240001_chinesetest_profiles.sql` trên project đã có
+migration ChineseTest runners trước khi deploy backend/UI. Dùng bucket private
+`hanu-private` hiện có, không cần tạo MinIO hoặc cache server. Ảnh gốc lưu ở Storage,
+bản nháp/phiên bản ảnh/trạng thái đồng bộ lưu trong bảng `chinesetest.profiles`.
+Phiên đăng nhập vẫn chỉ ở runner. Hồ sơ gắn với chủ sở hữu, runner và tài khoản thi.
+
+Cần cập nhật cả gói runner: Docker build đã đóng gói Windows x64, Mac ARM64 và Mac
+Intel từ mã mới. Nếu build thủ công, chạy `npm run build:cloud-server`, rồi
+`npm run package:chinesetest -- --all-platforms --output-dir=releases/chinesetest-20261024`
+(dùng thư mục đầu ra mới nếu đã tồn tại). Dừng lịch trước khi thay runner; giữ nguyên
+kho `ChineseTestRunner` và liên kết. Website sẽ nhắc cập nhật nếu runner chưa hỗ trợ.
+Ảnh cũ chỉ có trên ChineseTest chưa có bản gốc ở Storage: chọn lại ảnh một lần để
+lưu và dùng ảnh xem trước. Google Forms/HCMUE không cần cập nhật extension cho đợt này.
+
+
 **v1.7.3 — sửa thoát đăng nhập giả khi mạng lỗi, bàn giao render và chạy ngay khi có link:**
 
 - Reload extension 1.7.3 trong từng Chrome profile để nhận sửa bàn giao trang.

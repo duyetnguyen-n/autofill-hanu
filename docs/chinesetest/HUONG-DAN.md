@@ -1,6 +1,6 @@
 # ChineseTest trên website HANU
 
-ChineseTest được điều khiển tại /chinesetest trên website đang có. Một runner trên máy giữ phiên, hồ sơ và lịch riêng cho tối đa 20 tài khoản, còn tùy giới hạn quyền website. Google Forms và HCMUE giữ luồng riêng.
+ChineseTest được điều khiển tại /chinesetest trên website đang có. Ảnh gốc và bản nháp hồ sơ được lưu riêng tư trên hệ thống; runner trên máy giữ phiên đăng nhập, hồ sơ đã đồng bộ và lịch riêng cho tối đa 20 tài khoản, còn tùy giới hạn quyền website. Google Forms và HCMUE giữ luồng riêng.
 
 ## Mở runner từ website và dùng nhiều máy
 
@@ -53,20 +53,21 @@ Mac và Windows có Google Chrome. Báo cáo ghi đúng hệ điều hành đã 
 ## Chuẩn bị hồ sơ và kỳ thi
 
 - Hồ sơ / ảnh: nhập thông tin ChineseTest hoặc sao chép trường phù hợp từ hồ sơ đang có trên website, rồi kiểm tra lại. Danh mục lấy từ ChineseTest, không suy đoán mã bằng tên gần giống.
-- Ảnh chân dung JPG/PNG phải lớn hơn 15 KB và nhỏ hơn 1 MB theo giao diện đang khảo sát. Upload đưa ảnh lên ChineseTest ngay, chưa tạo đăng ký. Ảnh giấy tờ của Google Forms không tự chuyển thành ảnh chân dung.
+- Ảnh chân dung JPG/PNG phải lớn hơn 15 KB và nhỏ hơn 1 MB theo giao diện đang khảo sát. Chọn ảnh sẽ lưu bản gốc và bản nháp lên Supabase ngay, có ảnh xem trước. Bấm **Lưu hồ sơ** mới đồng bộ ảnh sang ChineseTest; chưa tạo đăng ký. Nếu ChineseTest lỗi, bản nháp và ảnh vẫn còn để thử lại. Tải lại trang, chọn đúng máy/tài khoản và mở **Hồ sơ / ảnh** để khôi phục. Chỉ dùng hồ sơ để đăng ký sau khi trạng thái đã đồng bộ; sửa thông tin mà không đổi ảnh không upload lại ảnh. Ảnh giấy tờ của Google Forms không tự chuyển thành ảnh chân dung.
 - Với Speaking yêu cầu lịch sử HSK, khai báo đã/chưa từng thi và cấp/điểm trước đây theo thông tin thật.
-- Mỗi tài khoản có cấp thi, hình thức, ngày thi, điểm thi, giờ bắt đầu dò theo giờ Việt Nam, giới hạn phí/tiền tệ và chế độ riêng. Có thể áp dụng mẫu cho nhiều tài khoản rồi sửa từng dòng.
+- Mỗi tài khoản có cấp thi, hình thức, ngày thi, điểm thi, giờ bắt đầu dò theo giờ Việt Nam, lệ phí chỉ đọc từ ChineseTest và chế độ riêng. Có thể áp dụng mẫu cho nhiều tài khoản rồi sửa từng dòng.
 - Mẫu: HSK 4, thi máy, ngày 13/12/2026, Dong A University（IBT）, mã 46750135. Mẫu không cung cấp giờ mở đăng ký; nhập đúng giờ theo thông báo của điểm thi.
-- Danh mục điểm thi Việt Nam tự tải theo hình thức, không cần chọn châu lục/quốc gia. Ô tìm kiếm riêng để trống sẽ giữ toàn bộ danh mục trong hộp chọn điểm thi, kể cả khi đang chọn Đông Á. Tìm tên/thành phố/mã rồi chọn trường để lưu mã chính xác; các điểm trùng tên vẫn có mã riêng. Có lựa chọn nhập tên/mã chưa có trong danh mục. Khi đổi cấp/ngày/hình thức, danh sách điểm thi của kỳ đăng ký tự tải lại. Đổi hình thức cần chọn lại điểm thi.
+- Danh mục điểm thi Việt Nam tự tải theo hình thức, không cần chọn châu lục/quốc gia. Bấm ô điểm thi để xem toàn bộ danh mục, kể cả khi đang chọn Đông Á. Gõ trực tiếp trong ô để tìm tên/thành phố/mã, hỗ trợ không dấu, rồi chọn trường để lưu mã chính xác; các điểm trùng tên vẫn có mã riêng. Mục **Điểm thi chưa có trong danh mục?** cho phép nhập tên/mã thủ công. Khi đổi cấp/ngày/hình thức, danh sách điểm thi của kỳ đăng ký tự tải lại. Đổi hình thức cần chọn lại điểm thi.
 - Có thể chọn từ danh mục hoặc nhập tên/mã điểm thi chưa xuất hiện cho ngày thi mong muốn. Danh mục chỉ gồm điểm đã được ChineseTest công bố, không bảo đảm mọi điểm ẩn đều có mặt. Runner chỉ gửi khi API đăng ký trả đúng điểm thi trong đúng ngày/cấp/hình thức và các kiểm tra khác đạt.
 - Lưu cấu hình không bật lịch. Kiểm tra API chỉ đọc, báo phí/môn đi kèm hoặc dữ liệu còn thiếu. Chuẩn bị lưu bản hồ sơ cố định cho lượt. Sửa hồ sơ/cấu hình cần chuẩn bị lại.
 
 ## Test và Live
 
 - Mặc định Diễn tập, không gọi POST đăng ký. Chọn giờ ít nhất 6 giây tới 7 ngày phía trước, chuẩn bị rồi bật lịch. Test đợi điểm thi và kiểm tra điều kiện thật; không chứng minh có slot.
-- Live cần quyền trên website, đồng ý quy định/quyền riêng tư và giới hạn phí cụ thể. Sau chuẩn bị, bấm Bật lịch Live. Chỉ lịch được runner xác nhận mới có hiệu lực. Có thể chọn và bật nhiều lịch đã chuẩn bị.
+- Live cần quyền trên website, đồng ý quy định/quyền riêng tư và xem lệ phí lấy trực tiếp từ ChineseTest sau khi chọn đủ kỳ thi/điểm thi. Không nhập phí tối đa hoặc tự chọn tiền tệ. Sau chuẩn bị, bấm Bật lịch Live. Chỉ lịch được runner xác nhận mới có hiệu lực. Có thể chọn và bật nhiều lịch đã chuẩn bị.
 - Mặc định nghỉ 1 giây sau mỗi lượt dò chưa đạt, chờ 10 phút sau giờ bắt đầu. Có thể đổi khoảng nghỉ 0–60 giây, chờ tối đa 120 phút. 0 giây nghĩa là kiểm tra xong phản hồi thì dò tiếp, không tạo request chồng; vẫn nhường xử lý cho lệnh Dừng và mạng. Các tài khoản cùng runner/cấp/ngày/hình thức chia sẻ request đang lấy điểm thi. Gặp giới hạn truy cập vẫn chờ theo phản hồi máy chủ hoặc báo lỗi, kể cả khi đặt 0.
-- Runner kiểm tra phí cuối và tiền tệ. Khi khảo sát Dong A, danh sách trả 35 USD còn API phí cuối trả 60 USD.
+- Khi đang chờ danh mục, lệ phí hoặc lưu hồ sơ, giao diện hiển thị loading ở đúng phần đang xử lý. Danh mục lỗi có nút thử lại; không cần chọn lại dữ liệu đã nhập.
+- Runner kiểm tra lại phí và tiền tệ trước khi gửi. Nếu khác mức đã hiển thị trong cấu hình, lượt dừng để tải lại và xác nhận phí; không tự chấp nhận mức mới. Khi khảo sát Dong A, danh sách trả 35 USD còn API phí cuối trả 60 USD.
 - Một lượt Live gửi một lần. Timeout/phản hồi không rõ không kích hoạt gửi lại. Lỗi một tài khoản không dừng các tài khoản khác.
 - Theo dõi selectOrder hoặc Test Records. Đã tạo đơn, đang xử lý và đã có mã đăng ký là các trạng thái khác nhau. Chưa thấy mã không có nghĩa đã thất bại.
 - Đối chiếu kết quả không tạo đăng ký. Nếu đã hủy đăng ký cũ trên ChineseTest, chọn **Xác minh đã hủy / đăng ký lại** ngay trên lượt đã thành công. Với lượt chưa rõ kết quả/lỗi, dùng **Xác minh chưa đăng ký**. Chỉ xác nhận khi không còn đăng ký cùng cấp/ngày và không còn request đang xử lý; dừng lượt đang chạy trước. Runner kiểm tra lại phiên và toàn bộ Test Records trước khi ghi nhận. Lỗi API hoặc cấu trúc dữ liệu không rõ vẫn giữ khóa; không đoán mã trạng thái hủy.

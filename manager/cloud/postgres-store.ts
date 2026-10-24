@@ -23,6 +23,7 @@ export interface SqlPool extends SqlConnection {
 export interface PrivateObjects {
   put(path: string, bytes: Buffer): Promise<void>;
   get(path: string): Promise<Buffer>;
+  remove?(path: string): Promise<void>;
 }
 
 export async function transaction<T>(pool: SqlPool, fn: (db: SqlConnection) => Promise<T>): Promise<T> {

@@ -49,6 +49,7 @@ export function useChineseTestCatalog(request: Request, source: string, enabled:
   }, [request, source, enabled, signature, revision, cache]);
   const entries = snapshot.source === source ? snapshot.entries : {};
   return {
+    loading: (target: Target) => enabled && ["projects",...(/^\d+$/.test(target.projectId)?["subjects:"+target.projectId]:[]),...(["1","2","4"].includes(target.ksType)?["directory:"+target.ksType]:[]),...(/^\d+$/.test(target.kmId)&&validDate(target.ksDate)?["sites:"+siteQueryKey(target)]:[])].some(key=>!entries[key]),
     projects: entries.projects?.data || [],
     subjects: (projectId: string) => entries["subjects:" + projectId]?.data || [],
     directory: (ksType: string) => entries["directory:" + ksType]?.data || [],

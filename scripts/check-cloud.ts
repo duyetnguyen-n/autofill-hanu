@@ -14,6 +14,11 @@ async function main() {
       throw new CloudReadinessError('Chưa kiểm tra được PostgreSQL. Kiểm tra DATABASE_URL, mật khẩu, Session pooler 5432, TLS/PGSSLROOTCERT và migration.');
     }
     console.log('OK: PostgreSQL, các bảng HANU, RLS và cấu hình bucket private.');
+    if(config.chinesetestEnabled){
+      try{await pool.query('SELECT revision,photo_key FROM chinesetest.profiles LIMIT 0');}
+      catch{throw new CloudReadinessError('Chưa có hồ sơ ChineseTest. Chạy migration supabase/migrations/202610240001_chinesetest_profiles.sql trước khi deploy.');}
+      console.log('OK: bảng bản nháp và ảnh ChineseTest.');
+    }
     const settings = await fetch(`${config.supabaseUrl}/auth/v1/settings`, {
       headers: { apikey: config.publishableKey }, signal: AbortSignal.timeout(15000)
     });

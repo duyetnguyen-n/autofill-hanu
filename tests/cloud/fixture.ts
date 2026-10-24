@@ -45,6 +45,7 @@ export async function databaseFixture() {
   };
   const blobs = new Map<string, Buffer>();
   const objects: PrivateObjects = {
+    async remove(path) { blobs.delete(path); },
     async put(path, bytes) { blobs.set(path, Buffer.from(bytes)); },
     async get(path) { const result = blobs.get(path); if (!result) throw new Error('Missing test object'); return Buffer.from(result); }
   };
@@ -70,6 +71,7 @@ export async function httpFixture(uiDir?: string, hcmueEnabled = false, chineset
   const fixture = await databaseFixture();
   if (hcmueEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610210001_hcmue_runners.sql','utf8'));
   if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610220001_chinesetest_runners.sql','utf8'));
+  if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610240001_chinesetest_profiles.sql','utf8'));
   const authorized = new Set(['account-a', 'account-b']);
   let loginUser = 0;
   const auth: WebAuth = { request(req, res) {

@@ -5,9 +5,9 @@ import { atDeadline } from "../../hcmue/runner/deadline";
 import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type Row, type Personal, type Target, type AccountView, type Run, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
 import { ChineseTestClient, ApiError, invalidSession, transientFailure, type Session } from "./client";
 import { LoginWindow } from "./login";
-import { candidateKey, inspectTarget, existingRegistration } from "./checks";
+import { candidateKey, inspectTarget, existingRegistration, centerFrom, readFeeQuote } from "./checks";
 
-interface Account { view: AccountView; session: Session; personal: Personal }
+interface Account { view: AccountView; session: Session; personal: Personal; photoVersion?: string; syncedPhotoVersion?: string }
 export interface RunnerData { id: string; name: string; keys: Awaited<ReturnType<typeof identityKeys>>; accounts: Account[]; schedules: Run[]; plans: Record<string,Plan>; seen: string[]; cloud?: { origin: string; token: string; owner?: string } }
 export const freshData = async (name: string): Promise<RunnerData> => ({ id: randomUUID(), name, keys: await identityKeys(), accounts: [], schedules: [], plans: {}, seen: [] });
 type Login = Pick<LoginWindow, "open" | "finish" | "close" | "pending">;
@@ -51,14 +51,15 @@ export class Engine {
   }
   async identity() { return { id: this.data.id, name: this.data.name, platform: process.platform, publicKey: this.data.keys.publicKey, fingerprint: await fingerprint(this.data.keys.publicKey) }; }
   snapshot(): RunnerState {
-    return { protocolVersion: 1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
+    return { protocolVersion: 1, profileSyncVersion: 1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
       accounts: this.data.accounts.map(a => ({ ...a.view })), plans: structuredClone(this.data.plans), schedules: this.data.schedules.map(({ personal: _p, identityHash: _h, accountKey: _k, ...s }) => {
         const { orderKey: _secret, ...attempt } = s.attempt; return structuredClone({ ...s, attempt });
       }), loginPending: this.login.pending, now: new Date().toISOString(), eventLoopLagMs: this.lag };
   }
   private account(id: string) { const a = this.data.accounts.find(a => a.view.id === id); if (!a) throw new Error("Không tìm thấy tài khoản trên máy này."); return a; }
   private client(a: Account) { let c = this.clients.get(a.view.id); if (!c) { c = this.factory(a.session); this.clients.set(a.view.id, c); } return c; }
-  private view(a: Account) { a.view.name = a.personal.ksEName || a.session.email; a.view.maskedId = a.personal.idNo ? "•••• " + a.personal.idNo.slice(-4) : "Chưa có giấy tờ"; a.view.hasPhoto = Boolean(a.personal.photo); }
+  private view(a: Account) { a.view.name = a.personal.ksEName || a.session.email; a.view.maskedId = a.personal.idNo ? "•••• " + a.personal.idNo.slice(-4) : "Chưa có giấy tờ"; a.view.hasPhoto = Boolean(a.personal.photo) && (!a.photoVersion || a.photoVersion === a.syncedPhotoVersion); }
+  private photoReady(a: Account) { if (a.photoVersion && a.photoVersion !== a.syncedPhotoVersion) throw new Error("Ảnh mới chưa đồng bộ sang ChineseTest. Mở Hồ sơ / ảnh và bấm Lưu hồ sơ."); }
   private run(id: string) { const s = this.data.schedules.find(s => s.id === id); if (!s) throw new Error("Không tìm thấy lượt chạy."); return s; }
   private checkpoint(s: Run, version: number) { if (this.closed || s.version !== version || !activeStatus(s.status)) throw new Error("Lượt đã dừng hoặc thay đổi."); }
   private ensureEditable(a: Account) { if (this.data.schedules.some(s => s.accountKey === a.session.key && activeStatus(s.status))) throw new Error("Dừng lịch của tài khoản trước khi sửa hồ sơ/ảnh hoặc đăng nhập lại."); }
@@ -106,7 +107,7 @@ export class Engine {
         a = { session, view: { id: randomUUID(), email: session.email, name: session.email, maskedId: "", hasPhoto: false, loggedIn: true }, personal: personalFrom({}) }; this.data.accounts.push(a);
       }
       const profile = await this.client(a).profile();
-      if (!a.personal.ksEName && profile.data && typeof profile.data === "object") a.personal = personalFrom(profile.data);
+      if (!a.personal.ksEName && profile.data && typeof profile.data === "object") a.personal = personalFrom({...profile.data,...Object.fromEntries(Object.entries(a.personal).filter(([,v])=>v!==""))});
       this.view(a); await this.persist(); await this.login.close(); this.loginAccountId = undefined;
       return { account: a.view, personal: a.personal };
     }
@@ -121,23 +122,62 @@ export class Engine {
       if (!common[kind]) throw new Error("Danh mục không được hỗ trợ.");
       return this.publicClient.call(common[kind], kind === "professions" ? { parentId: String(args.parentId || "") } : undefined);
     }
-    if (["inspect", "save-profile", "upload-photo", "remove", "prepare"].includes(command)) {
+    if (["read-profile", "stage-profile", "quote-fee", "inspect", "save-profile", "upload-photo", "remove", "prepare"].includes(command)) {
       const a = this.account(String(args.accountId)); const client = this.client(a);
+      if (command === "read-profile") return { personal: structuredClone(a.personal), photoVersion: a.photoVersion, syncedPhotoVersion: a.syncedPhotoVersion };
+      if (command === "stage-profile") {
+        this.ensureEditable(a);
+        if (typeof args.photoVersion !== "string" || !/^[a-f0-9-]{36}$/.test(args.photoVersion)) throw new Error("Phiên bản ảnh không hợp lệ.");
+        a.photoVersion=args.photoVersion; this.view(a); await this.persist(); return { staged:true };
+      }
+      if (command === "quote-fee") {
+        const t=args.target as Target;
+        validateTarget({...t,feeQuote:undefined,maxFee:undefined,currency:undefined});
+        await this.checkIdentity(a);
+        const sites=await this.sites(t);
+        const center=centerFrom(sites,t) || centerFrom(await this.publicClient.directory(t.ksType),t);
+        if (!center) throw new Error("Chưa tìm thấy điểm thi để lấy lệ phí. Chọn điểm thi trong danh mục.");
+        return readFeeQuote(client,t,center);
+      }
       if (command === "remove") {
         if (this.data.schedules.some(s => s.accountKey === a.session.key && ["uncertain", "reserved", "sending", "queued"].includes(s.status))) throw new Error("Đối chiếu lượt chưa rõ kết quả trước khi gỡ tài khoản.");
         this.ensureEditable(a); client.close(); this.clients.delete(a.view.id);
         this.data.accounts = this.data.accounts.filter(x => x !== a); await this.persist(); return this.snapshot();
       }
-      if (command === "save-profile") { this.ensureEditable(a); a.personal = personalFrom(args.personal || {}); this.view(a); await this.persist(); return { personal: a.personal }; }
+      if (command === "save-profile") {
+        this.ensureEditable(a);
+        const previousPersonal=structuredClone(a.personal), previousSynced=a.syncedPhotoVersion;
+        const personal=personalFrom(args.personal || {});
+        // Photo paths are owned by the upload, not the caller's possibly stale form.
+        personal.photo=a.personal.photo;
+        const version=args.photoVersion;
+        if (a.photoVersion && version !== a.photoVersion) throw new Error("Ảnh đã thay đổi. Mở lại hồ sơ để lưu phiên bản mới nhất.");
+        if (version && (typeof version !== "string" || !/^[a-f0-9-]{36}$/.test(version))) throw new Error("Phiên bản ảnh không hợp lệ.");
+        validatePersonal({...personal,photo:personal.photo || "/pending/portrait"});
+        if (version && (a.syncedPhotoVersion !== version || !personal.photo)) {
+          a.photoVersion=version; this.view(a); await this.persist();
+          if (typeof args.base64 !== "string" || args.base64.length > 1_400_000) throw new Error("Cần ảnh đã lưu trên Supabase để đồng bộ.");
+          await this.checkIdentity(a);
+          const path=await client.upload(Buffer.from(args.base64,"base64"),String(args.mimeType));
+          a.personal.photo=path; a.syncedPhotoVersion=version; personal.photo=path;
+        }
+        validatePersonal(personal);
+        a.personal=personal; this.view(a);
+        try { await this.persist(); }
+        catch(e) { a.personal=previousPersonal; a.syncedPhotoVersion=previousSynced; this.view(a); throw e; }
+        return { personal:structuredClone(a.personal), photoVersion:a.syncedPhotoVersion || null };
+      }
       if (command === "upload-photo") {
         this.ensureEditable(a); await this.checkIdentity(a);
         if (typeof args.base64 !== "string" || args.base64.length > 1400000) throw new Error("Ảnh quá lớn.");
         a.personal.photo = await client.upload(Buffer.from(args.base64, "base64"), String(args.mimeType)); this.view(a); await this.persist(); return { personal: a.personal };
       }
       await this.checkIdentity(a);
-      if (args.refreshProfile === true) { this.ensureEditable(a); const p = await client.profile(); a.personal = personalFrom(p.data || {}); this.view(a); await this.persist(); }
+      if (args.refreshProfile === true) { this.ensureEditable(a); const p = await client.profile(); a.personal = personalFrom({...p.data,photo:a.personal.photo || p.data?.photo}); this.view(a); await this.persist(); }
       if (command === "inspect" && !args.target) return { personal: a.personal, account: a.view };
+      this.photoReady(a);
       const target = structuredClone(args.target) as Target; validateTarget(target); validatePersonal(a.personal);
+      if (command === "prepare" && !target.feeQuote && target.maxFee === undefined) throw new Error("Chờ lấy lệ phí ChineseTest rồi chuẩn bị lại.");
       const projects = await this.publicClient.options();
       if (!projects.data?.projectList?.some((p: Row) => String(p.KMID) === target.projectId)) throw new Error("Loại thi không còn trong danh mục.");
       const subjects = await this.publicClient.subjects(target.projectId);
@@ -164,7 +204,7 @@ export class Engine {
       if (this.data.schedules.filter(x => activeStatus(x.status)).length >= Math.min(MAX_ACCOUNTS, limits.maxConcurrent)) throw new Error("Đã đạt giới hạn lịch chạy đồng thời.");
       if (!s.test && args.claimKey !== s.identityHash) throw new Error("Thiếu khóa chống trùng từ website.");
       const version = s.version;
-      const a = this.account(s.accountId); await this.checkIdentity(a);
+      const a = this.account(s.accountId); this.photoReady(a); await this.checkIdentity(a);
       if (this.closed || s.version !== version || s.status !== "prepared") throw new Error("Lượt đã dừng hoặc thay đổi trong khi bật lịch.");
       if (createHash("sha256").update(JSON.stringify(a.personal)).digest("hex") !== createHash("sha256").update(JSON.stringify(s.personal)).digest("hex")) throw new Error("Hồ sơ đã đổi. Chuẩn bị lại trước khi bật lịch.");
       s.status = "armed"; s.updatedAt = Date.now(); s.message = "Lịch đã lưu trên máy; chờ giờ mở.";
@@ -208,7 +248,7 @@ export class Engine {
   execute(command: Command, args: Row = {}, limits: Limits): Promise<any> {
     if (command === "state") return Promise.resolve(this.snapshot());
     // Stop can invalidate an in-flight read immediately, rather than wait behind it.
-    if (command === "stop" || command === "stop-all") return this.executeWork(command, args, limits);
+    if (command === "read-profile" || command === "stop" || command === "stop-all") return this.executeWork(command, args, limits);
     const work = this.mutations.then(() => this.executeWork(command, args, limits));
     this.mutations = work.then(() => {}, () => {}); return work;
   }

@@ -5,6 +5,10 @@ import { CloudError } from './postgres-store';
 export function supabaseObjects(url: string, secret: string): PrivateObjects {
   const storage = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }).storage.from('hanu-private');
   return {
+    async remove(path) {
+      const { error } = await storage.remove([path]);
+      if (error) throw new CloudError('Không xóa được ảnh cũ trên Supabase Storage.',503);
+    },
     async put(path, bytes) {
       const { error } = await storage.upload(path, bytes, { contentType: 'application/octet-stream', upsert: true, cacheControl: '0' });
       if (error) throw new CloudError('Không lưu được ảnh lên Supabase Storage. Kiểm tra bucket và dung lượng.', 503);

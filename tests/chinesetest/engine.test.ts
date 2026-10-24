@@ -86,3 +86,43 @@ it("a late rejection of the old session cannot invalidate a newly imported login
  const fresh={...f.data.accounts[0].session,token:"fresh-fixture-token"};f.login.finish=async()=>fresh;await f.engine.execute("finish-login",{},limits);f.shared.identityError=new ApiError("Old session rejected",401);release();await vi.advanceTimersByTimeAsync(100);
  expect(f.engine.snapshot().accounts[0].loggedIn).toBe(true);f.shared.identityError=undefined;f.shared.identityGate=undefined;expect((await f.prepare()).schedule.status).toBe("prepared");expect(f.shared.submits).toHaveLength(0);
 });
+
+it("reads saved profiles without identity HTTP requests and never lets a stale form erase the uploaded path",async()=>{
+ const f=await setup();const before=f.shared.identityCalls;
+ await f.engine.execute("read-profile",{accountId:"account-0"},limits);expect(f.shared.identityCalls).toBe(before);
+ const stale={...f.data.accounts[0].personal,photo:""};
+ await f.engine.execute("upload-photo",{accountId:"account-0",base64:"fixture",mimeType:"image/png"},limits);
+ await f.engine.execute("save-profile",{accountId:"account-0",personal:stale},limits);
+ expect(f.data.accounts[0].personal.photo).toBe("/fixture/new-portrait.jpg");
+ await f.engine.execute("inspect",{accountId:"account-0",refreshProfile:true},limits);expect(f.data.accounts[0].personal.photo).toBe("/fixture/new-portrait.jpg");
+});
+it("persists an unsynced image, blocks old prepared schedules, retries failed uploads and skips duplicate uploads",async()=>{
+ const f=await setup(),p=await f.prepare(),version=crypto.randomUUID(),a=f.data.accounts[0];
+ const upload=vi.spyOn(FakeClient.prototype,"upload").mockRejectedValueOnce(new Error("synthetic upload failure"));
+ await f.engine.execute("stage-profile",{accountId:a.view.id,photoVersion:version},limits);
+ expect(upload).not.toHaveBeenCalled();expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(false);
+ await expect(f.arm(p)).rejects.toThrow("chưa đồng bộ");await expect(f.prepare()).rejects.toThrow("chưa đồng bộ");
+ const args={accountId:a.view.id,personal:a.personal,photoVersion:version,base64:"fixture",mimeType:"image/png"};
+ await expect(f.engine.execute("save-profile",args,limits)).rejects.toThrow("synthetic upload failure");expect(a.syncedPhotoVersion).not.toBe(version);
+ await f.engine.execute("save-profile",args,limits);expect(a.syncedPhotoVersion).toBe(version);expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(true);
+ await f.engine.execute("save-profile",{...args,personal:{...a.personal,phone:"updated"}},limits);expect(upload).toHaveBeenCalledTimes(2);
+ const restored=new Engine(structuredClone(f.data),{async write(){}},s=>new FakeClient(f.shared,s) as unknown as ChineseTestClient);engines.push(restored);
+ expect((await restored.execute("read-profile",{accountId:a.view.id},limits)).personal.photo).toBe("/fixture/new-portrait.jpg");
+ const next=crypto.randomUUID();await f.engine.execute("stage-profile",{accountId:a.view.id,photoVersion:next},limits);
+ await expect(f.engine.execute("save-profile",args,limits)).rejects.toThrow("Ảnh đã thay đổi");
+});
+it("quotes the actual read-only fee without requiring a portrait and stops if the confirmed fee changes",async()=>{
+ const f=await setup(),target={...DONG_A,maxFee:undefined,currency:undefined,targetAt:Date.now()+7000};
+ f.data.accounts[0].personal.photo="";f.shared.sites=[];
+ const feeQuote=await f.engine.execute("quote-fee",{accountId:"account-0",target},limits);expect(feeQuote).toMatchObject({amount:60,currency:"USD",linked:["HSK (Level 4) Speaking"]});expect(f.shared.submits).toHaveLength(0);
+ f.data.accounts[0].personal.photo="/fixture/portrait.jpg";f.shared.sites=[(await import('./support')).center];
+ const result=await f.engine.execute("prepare",{accountId:"account-0",target:{...target,feeQuote},test:false,agreeRules:true,agreePrivacy:true},limits);await f.arm(result);
+ f.shared.fee=55;await vi.advanceTimersByTimeAsync(9000);expect(f.engine.snapshot().schedules[0]).toMatchObject({status:"failed"});expect(f.engine.snapshot().schedules[0].message).toContain("Lệ phí đã thay đổi");expect(f.shared.submits).toHaveLength(0);
+});
+it("never marks the new portrait ready if the vault cannot persist the synchronized profile",async()=>{
+ let fail=false;const f=await setup(1,async()=>{if(fail)throw new Error("synthetic vault full");});const version=crypto.randomUUID(),a=f.data.accounts[0],before=a.personal.photo;
+ await f.engine.execute("stage-profile",{accountId:a.view.id,photoVersion:version},limits);fail=true;
+ await expect(f.engine.execute("save-profile",{accountId:a.view.id,personal:a.personal,photoVersion:version,base64:"fixture",mimeType:"image/png"},limits)).rejects.toThrow("vault full");
+ expect(a.personal.photo).toBe(before);expect(a.syncedPhotoVersion).not.toBe(version);expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(false);
+ fail=false;await expect(f.prepare()).rejects.toThrow("chưa đồng bộ");
+});

@@ -76,7 +76,7 @@ export async function serveCloud(options: {
   }
   const hcmue=config.hcmueEnabled?new HcmueRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
   if(hcmue)await hcmue.check();
-  const chinesetest=config.chinesetestEnabled?new ChineseTestRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin):undefined;
+  const chinesetest=config.chinesetestEnabled?new ChineseTestRelay(repository.pool,owner=>allowed(owner,true),()=>config.origin,repository.objects):undefined;
   if(chinesetest)await chinesetest.check();
   const uiDir = options.uiDir ?? resolve(fileURLToPath(new URL('.', import.meta.url)), '../cloud-ui');
   let extensionDownload: Promise<Buffer> | undefined;
@@ -325,7 +325,12 @@ export async function serveCloud(options: {
         // identify() just read the account from PostgreSQL for this verified
         // HTTP identity. Do not issue a second permission read for the same API.
         if(path.startsWith('/api/hcmue/')){if(!hcmue)throw new CloudError('HCMUE chưa được bật trên server.',404);return json(res,await hcmue.route(account,path,req.method??'GET',()=>body(req,3*1024*1024)));}
-        if(path.startsWith('/api/chinesetest/')){if(!chinesetest)throw new CloudError('ChineseTest chưa được bật trên server.',404);return json(res,await chinesetest.route(account,path,req.method??'GET',()=>body(req,3*1024*1024)));}
+        if(path.startsWith('/api/chinesetest/')){
+          if(!chinesetest)throw new CloudError('ChineseTest chưa được bật trên server.',404);
+          const result:any=await chinesetest.route(account,path,req.method??'GET',()=>body(req,3*1024*1024));
+          if(Buffer.isBuffer(result?.photoBytes)){res.setHeader('Content-Type',result.contentType);res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');res.end(result.photoBytes);return;}
+          return json(res,result);
+        }
         const current = runtime(user.id), { store, coordinator } = current;
         if(path==='/api/import'&&req.method==='POST'){
           rate.check(`import:${user.id}`,3,3600000);
