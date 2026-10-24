@@ -27,7 +27,8 @@ chromium.launchPersistentContext = async (directory, options) => {
       else await route.fulfill({ contentType: 'text/html', body: body + '<script src="/pending-script.js"></script></body></html>' });
     } else if (url === ORIGIN + '/personal-test') {
       await route.fulfill({ contentType: 'text/html', body: body + '</body></html>' });
-    } else await route.abort();
+    } else if(url.startsWith(fixtureOrigin+'/'))await route.continue();
+    else await route.abort();
   });
   return context;
 };
@@ -47,7 +48,12 @@ try {
   await expect(login.open()).rejects.toThrow('Chrome vẫn mở');
   expect(login.pending).toBe(true);
   const recovery = context!.pages()[0];
-  await recovery.goto(ORIGIN + '/personal-test');
+  // Chrome can commit its internal error document after goto() has rejected.
+  // Retry the user's recovery navigation if that commit interrupts the first try.
+  await expect(async()=>{
+    await recovery.goto(ORIGIN + '/personal-test',{waitUntil:'domcontentloaded',timeout:5000});
+    await expect(recovery.getByLabel('Fixture account')).toBeVisible();
+  }).toPass({timeout:15000,intervals:[100,300,1000]});
   await recovery.getByLabel('Fixture account').fill('recoverable-navigation');
   await expect(recovery.getByLabel('Fixture account')).toHaveValue('recoverable-navigation');
   await context!.close();

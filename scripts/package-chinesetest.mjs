@@ -10,7 +10,7 @@ if(!response.ok)throw new Error("Không tải được checksum Node.js.");
 const sums=await response.text();
 const all=process.argv.includes("--all-platforms");
 const releaseDirectory=resolve(process.argv.find(arg=>arg.startsWith("--output-dir="))?.slice("--output-dir=".length)||"releases");
-if(all&&process.platform==="win32")throw new Error("Đóng gói Mac trên Linux/macOS để giữ quyền thực thi trong ZIP. Windows dùng gói Windows mặc định.");
+if(all&&process.platform==="win32")execFileSync("python",["--version"],{stdio:"ignore",windowsHide:true});
 const targets=[["windows-x64","win-x64","zip"],["mac-arm64","darwin-arm64","tar.gz"],["mac-x64","darwin-x64","tar.gz"]].filter(([,platform])=>all||platform===(process.platform==="win32"?"win-x64":"darwin-"+process.arch));
 if(!targets.length)throw new Error("Dùng --all-platforms khi đóng gói trên Linux.");
 await mkdir(".runtime",{recursive:true});await mkdir(releaseDirectory,{recursive:true});
@@ -45,7 +45,8 @@ for(const [name,platform,extension] of targets){
  if(mac)await chmod(join(root,"runtime/node"),0o755);
   await writeRunnerLauncher(root, "chinesetest", mac);
  const zip=root+".zip";await rm(zip,{force:true});
- if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Compress-Archive -LiteralPath $env:CHINESETEST_PACKAGE_ROOT -DestinationPath $env:CHINESETEST_PACKAGE_ZIP -Force"],{env:{...process.env,CHINESETEST_PACKAGE_ROOT:root,CHINESETEST_PACKAGE_ZIP:zip},windowsHide:true});
+ if(process.platform==="win32"&&mac)execFileSync("python",["scripts/package-mac-runner-zip.py",root,zip],{stdio:"inherit",windowsHide:true});
+ else if(process.platform==="win32")execFileSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","Compress-Archive -LiteralPath $env:CHINESETEST_PACKAGE_ROOT -DestinationPath $env:CHINESETEST_PACKAGE_ZIP -Force"],{env:{...process.env,CHINESETEST_PACKAGE_ROOT:root,CHINESETEST_PACKAGE_ZIP:zip},windowsHide:true});
  else if(process.platform==="darwin")execFileSync("ditto",["-c","-k","--keepParent",root,zip]);
  else execFileSync("zip",["-q","-r",zip,"."],{cwd:root});
  const out="ChineseTest-"+name+".zip";await cp(zip,join(downloads,out));checksums.push(createHash("sha256").update(await readFile(zip)).digest("hex")+"  "+out);

@@ -91,8 +91,8 @@ it("reads saved profiles without identity HTTP requests and never lets a stale f
  const f=await setup();const before=f.shared.identityCalls;
  await f.engine.execute("read-profile",{accountId:"account-0"},limits);expect(f.shared.identityCalls).toBe(before);
  const stale={...f.data.accounts[0].personal,photo:""};
- await f.engine.execute("upload-photo",{accountId:"account-0",base64:"fixture",mimeType:"image/png"},limits);
- await f.engine.execute("save-profile",{accountId:"account-0",personal:stale},limits);
+ await f.engine.execute("upload-photo",{accountId:"account-0",photoVersion:crypto.randomUUID(),base64:"fixture",mimeType:"image/png"},limits);
+ await f.engine.execute("save-profile",{accountId:"account-0",personal:stale,photoVersion:f.data.accounts[0].syncedPhotoVersion},limits);
  expect(f.data.accounts[0].personal.photo).toBe("/fixture/new-portrait.jpg");
  await f.engine.execute("inspect",{accountId:"account-0",refreshProfile:true},limits);expect(f.data.accounts[0].personal.photo).toBe("/fixture/new-portrait.jpg");
 });
@@ -101,7 +101,7 @@ it("persists an unsynced image, blocks old prepared schedules, retries failed up
  const upload=vi.spyOn(FakeClient.prototype,"upload").mockRejectedValueOnce(new Error("synthetic upload failure"));
  await f.engine.execute("stage-profile",{accountId:a.view.id,photoVersion:version},limits);
  expect(upload).not.toHaveBeenCalled();expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(false);
- await expect(f.arm(p)).rejects.toThrow("chưa đồng bộ");await expect(f.prepare()).rejects.toThrow("chưa đồng bộ");
+ await expect(f.arm(p)).rejects.toThrow("chưa được đọc lại");await expect(f.prepare()).rejects.toThrow("chưa được đọc lại");
  const args={accountId:a.view.id,personal:a.personal,photoVersion:version,base64:"fixture",mimeType:"image/png"};
  await expect(f.engine.execute("save-profile",args,limits)).rejects.toThrow("synthetic upload failure");expect(a.syncedPhotoVersion).not.toBe(version);
  await f.engine.execute("save-profile",args,limits);expect(a.syncedPhotoVersion).toBe(version);expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(true);
@@ -124,5 +124,5 @@ it("never marks the new portrait ready if the vault cannot persist the synchroni
  await f.engine.execute("stage-profile",{accountId:a.view.id,photoVersion:version},limits);fail=true;
  await expect(f.engine.execute("save-profile",{accountId:a.view.id,personal:a.personal,photoVersion:version,base64:"fixture",mimeType:"image/png"},limits)).rejects.toThrow("vault full");
  expect(a.personal.photo).toBe(before);expect(a.syncedPhotoVersion).not.toBe(version);expect(f.engine.snapshot().accounts[0].hasPhoto).toBe(false);
- fail=false;await expect(f.prepare()).rejects.toThrow("chưa đồng bộ");
+ fail=false;await expect(f.prepare()).rejects.toThrow("chưa được đọc lại");
 });

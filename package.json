@@ -57,6 +57,7 @@
     "build:chinesetest": "node scripts/run-node24.mjs scripts/build-chinesetest.mjs",
     "chinesetest:runner": "node scripts/run-node24.mjs build/chinesetest/runner/main.mjs",
     "test:chinesetest": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/chinesetest",
+    "diagnose:chinesetest-network": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-network-check.ts",
     "test:chinesetest-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-ui-check.ts",
     "test:chinesetest-login-window": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-login-window-check.ts",
     "test:chinesetest-native": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/chinesetest-runner-smoke.ts",

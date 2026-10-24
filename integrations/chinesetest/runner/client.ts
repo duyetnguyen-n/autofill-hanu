@@ -1,7 +1,7 @@
 import { Agent, request } from "node:https";
 import { createHash, randomUUID } from "node:crypto";
 import { CookieJar } from "tough-cookie";
-import { ORIGIN, type Row } from "../protocol";
+import { ORIGIN, type Row, type Portrait } from "../protocol";
 
 export interface Session { token: string; cookies: string; email: string; key: string }
 export type ApiFailure = "auth" | "identity" | "transient" | "protocol" | "api";
@@ -16,7 +16,7 @@ const transportMessage = (path:string, timeout=false) => {
   if(stage==="registration")return `Gửi đăng ký ${reason}. Cần đối chiếu kết quả; không gửi lại đơn tự động.`;
   if(stage==="clock")return `Chưa lấy được giờ máy chủ ChineseTest (${reason}). Chưa thực hiện bước tiếp theo.`;
   if(stage==="identity")return `Chưa kiểm tra được phiên đăng nhập ChineseTest (${reason}). Thử lại khi kết nối ổn định.`;
-  if(stage==="upload")return `ChineseTest chưa xác nhận tải ảnh (${reason}). Ảnh gốc vẫn được giữ; có thể thử đồng bộ lại.`;
+  if(stage==="upload")return `ChineseTest chưa xác nhận tải ảnh (${reason}). Chưa báo tải ảnh thành công; bạn có thể thử lại.`;
   return `Chưa đọc được dữ liệu ChineseTest (${reason}). Thử lại khi kết nối ổn định.`;
 };
 export interface ClientTiming { readTimeoutMs:number; uploadTimeoutMs:number; retryDelayMs:number }
@@ -44,7 +44,7 @@ export class ChineseTestClient {
     const safe = /token|password|authorization|cookie|bearer|eyJ/i.test(message) ? "Request bị từ chối; kiểm tra trong ChineseTest" : message;
     // This upload error can occur while getInfo still verifies the same session.
     // Keep it scoped to the upload; do not invalidate the account or retry a POST.
-    if (path === "/common/upload" && Number(result.code) === 500 && message.includes("认证失败")) throw new ApiError("ChineseTest từ chối xác thực yêu cầu tải ảnh (mã 500). Ảnh gốc vẫn được giữ; thử Lưu hồ sơ lại. Nếu lỗi tiếp diễn, đăng nhập lại tài khoản trên runner.", 500, undefined, "api", "upload");
+    if (path === "/common/upload" && Number(result.code) === 500 && message.includes("认证失败")) throw new ApiError("ChineseTest từ chối xác thực yêu cầu tải ảnh (mã 500). Chưa xác nhận tải ảnh thành công. Thử lại; nếu lỗi tiếp diễn, đăng nhập lại tài khoản trên runner.", 500, undefined, "api", "upload");
     if (Number(result.code) !== 200) throw new ApiError([401, 403].includes(Number(result.code)) ? `ChineseTest từ chối phiên đăng nhập (mã ${result.code}). Đăng nhập lại trước khi chạy.` : `ChineseTest: ${safe} (${result.code ?? "không có mã"}).`, Number(result.code), undefined, [401,403].includes(Number(result.code)) ? "auth" : undefined, requestStage(path));
     return result;
   }
@@ -105,6 +105,31 @@ export class ChineseTestClient {
     return { email, key: createHash("sha256").update(email).digest("hex") };
   }
   profile() { return this.call("/examinee/enroll/getLastBm"); }
+  /** Read only an official portrait, into memory. Never follow redirects or store bytes. */
+  async photo(path: string): Promise<Portrait> {
+    if (typeof path !== "string" || path.length > 2048 || !/^\/?[a-zA-Z0-9_.\-/]+\.(?:jpe?g|png)$/i.test(path) || path.includes("..") || path.startsWith("//")) throw new ApiError("Đường dẫn ảnh ChineseTest không hợp lệ.", undefined, undefined, "protocol", "read");
+    const url = new URL("/" + path.replace(/^\/+/, ""), this.origin);
+    const headers:Record<string,string>={Accept:"image/jpeg,image/png",Referer:ORIGIN+"/", "Cache-Control":"no-cache"};
+    const cookie=await this.jar.getCookieString(url.href);if(cookie)headers.Cookie=cookie;
+    if(this.session)headers.Authorization=`Bearer ${this.session.token}`;
+    return new Promise((resolve,reject)=>{
+      let settled=false;let deadline:ReturnType<typeof setTimeout>;
+      const fail=(message:string,kind:ApiFailure="protocol",code?:number)=>{if(settled)return;settled=true;clearTimeout(deadline);reject(new ApiError(message,code,undefined,kind,"read"));};
+      const req=request(url,{agent:this.agent,headers},res=>{
+        // 401/403 for one image is not proof that the session itself expired.
+        if(res.statusCode!==200){fail(`Chưa đọc được ảnh từ ChineseTest (HTTP ${res.statusCode}).`,(res.statusCode || 500)>=500?"transient":"api",res.statusCode);res.destroy();return;}
+        const mime=String(res.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        if(!["image/jpeg","image/png"].includes(mime)){fail("ChineseTest chưa trả về nội dung ảnh JPG/PNG.");res.destroy();return;}
+        const chunks:Buffer[]=[];let size=0;
+        res.on("data",chunk=>{size+=chunk.length;if(size>=1024*1024){fail("Ảnh từ ChineseTest vượt giới hạn 1 MB.");req.destroy();}else chunks.push(Buffer.from(chunk));});
+        res.on("aborted",()=>fail("Kết nối đọc ảnh ChineseTest bị gián đoạn.","transient"));
+        res.on("error",()=>fail("Kết nối đọc ảnh ChineseTest bị gián đoạn.","transient"));
+        res.on("end",()=>{if(settled)return;const bytes=Buffer.concat(chunks);const valid=mime==="image/jpeg"?bytes[0]===255&&bytes[1]===216:bytes.subarray(0,8).equals(Buffer.from("89504e470d0a1a0a","hex"));if(!valid){fail("Nội dung trả về không phải ảnh JPG/PNG hợp lệ.");return;}settled=true;clearTimeout(deadline);resolve({path,mimeType:mime as Portrait["mimeType"],base64:bytes.toString("base64")});});
+      });
+      deadline=setTimeout(()=>{fail("Đọc ảnh ChineseTest quá thời gian chờ. Thử lại khi kết nối ổn định.","transient");req.destroy();},this.timing.readTimeoutMs);
+      req.on("error",()=>fail("Kết nối đọc ảnh ChineseTest bị gián đoạn.","transient"));req.end();
+    });
+  }
   options() { return this.call("/portal/index/getOptionList"); }
   subjects(projectId: string) { return this.call("/portal/index/getSubjectList", { projectId }); }
   dates(kmId: string, ksType: string) { return this.call("/examinee/enroll/getExamTimeList", { kmId, ksType }); }

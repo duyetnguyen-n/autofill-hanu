@@ -1,6 +1,6 @@
 # ChineseTest trên website HANU
 
-ChineseTest được điều khiển tại /chinesetest trên website đang có. Ảnh gốc và bản nháp hồ sơ được lưu riêng tư trên hệ thống; runner trên máy giữ phiên đăng nhập, hồ sơ đã đồng bộ và lịch riêng cho tối đa 20 tài khoản, còn tùy giới hạn quyền website. Google Forms và HCMUE giữ luồng riêng.
+ChineseTest được điều khiển tại /chinesetest trên website đang có. Ảnh chân dung lưu trên ChineseTest; hệ thống chỉ giữ đường dẫn và metadata ảnh. Runner trên máy giữ phiên đăng nhập, hồ sơ đã lưu và lịch riêng cho tối đa 20 tài khoản, còn tùy giới hạn quyền website. Google Forms và HCMUE giữ luồng riêng.
 
 ## Mở runner từ website và dùng nhiều máy
 
@@ -53,7 +53,7 @@ Mac và Windows có Google Chrome. Báo cáo ghi đúng hệ điều hành đã 
 ## Chuẩn bị hồ sơ và kỳ thi
 
 - Hồ sơ / ảnh: nhập thông tin ChineseTest hoặc sao chép trường phù hợp từ hồ sơ đang có trên website, rồi kiểm tra lại. Danh mục lấy từ ChineseTest, không suy đoán mã bằng tên gần giống.
-- Ảnh chân dung JPG/PNG phải lớn hơn 15 KB và nhỏ hơn 1 MB theo giao diện đang khảo sát. Chọn ảnh sẽ lưu bản gốc và bản nháp lên Supabase ngay, có ảnh xem trước. Bấm **Lưu hồ sơ** mới đồng bộ ảnh sang ChineseTest; chưa tạo đăng ký. Nếu ChineseTest lỗi, bản nháp và ảnh vẫn còn để thử lại. Tải lại trang, chọn đúng máy/tài khoản và mở **Hồ sơ / ảnh** để khôi phục. Chỉ dùng hồ sơ để đăng ký sau khi trạng thái đã đồng bộ; sửa thông tin mà không đổi ảnh không upload lại ảnh. Ảnh giấy tờ của Google Forms không tự chuyển thành ảnh chân dung.
+- Ảnh chân dung JPG/PNG phải lớn hơn 15 KB và nhỏ hơn 1 MB. Chọn ảnh sẽ tải ngay lên ChineseTest qua runner. Chỉ báo **Đã tải ảnh thành công** khi ChineseTest đã trả đường dẫn, runner đã đọc lại ảnh và giao diện đã hiển thị được ảnh đó. Ảnh gốc/bản nháp không được lưu trên Supabase Storage. **Lưu hồ sơ** lưu thông tin trên máy chạy; thông tin chưa lưu chỉ giữ trong màn hình đang mở. Những lần sau runner đọc ảnh từ ChineseTest, không dùng file ảnh lưu lâu dài bên mình. Ảnh giấy tờ của Google Forms không tự chuyển thành ảnh chân dung.
 - Với Speaking yêu cầu lịch sử HSK, khai báo đã/chưa từng thi và cấp/điểm trước đây theo thông tin thật.
 - Mỗi tài khoản có cấp thi, hình thức, ngày thi, điểm thi, giờ bắt đầu dò theo giờ Việt Nam, lệ phí chỉ đọc từ ChineseTest và chế độ riêng. Có thể áp dụng mẫu cho nhiều tài khoản rồi sửa từng dòng.
 - Mẫu: HSK 4, thi máy, ngày 13/12/2026, Dong A University（IBT）, mã 46750135. Mẫu không cung cấp giờ mở đăng ký; nhập đúng giờ theo thông báo của điểm thi.
@@ -63,20 +63,13 @@ Mac và Windows có Google Chrome. Báo cáo ghi đúng hệ điều hành đã 
 
 ## Khi đồng bộ ảnh phản hồi chậm
 
-Bấm **Lưu hồ sơ** một lần, chờ dòng tiến trình: chờ lượt → kiểm tra phiên → tải ảnh
-→ lưu kết quả → xác nhận. Website theo dõi từng bước; không giữ một yêu cầu dài
-trong suốt thời gian tải ảnh. Giữ runner, máy và mạng hoạt động đến khi có kết quả.
+Chọn ảnh một lần, chờ tiến trình: chờ lượt → kiểm tra phiên → tải ảnh → đọc lại ảnh → hiển thị ảnh. Website theo dõi từng bước bằng job; giữ runner, máy và mạng hoạt động đến khi có kết quả.
 
-Nếu ChineseTest chưa xác nhận tải ảnh, ảnh gốc và bản nháp trên Supabase vẫn còn.
-Mở lại website → chọn đúng máy/tài khoản → **Hồ sơ / ảnh** → **Lưu hồ sơ**;
-không cần chọn lại ảnh. Nếu lượt cũ còn chạy, runner tiếp tục theo dõi lượt đó;
-nếu đã lưu thành công cùng phiên bản ảnh, runner không upload lại. Lỗi tải ảnh
-không có nghĩa là đã gửi đơn đăng ký thi.
+Nếu upload trả đường dẫn nhưng đọc ảnh lỗi, runner giữ đường dẫn để **Đọc lại ảnh**, kể cả sau khi khởi động lại. **Thử tải ảnh lại** trong màn đang mở dùng cùng phiên bản ảnh và không upload lại nếu runner đã nhận đường dẫn. Nếu chưa có đường dẫn và đã đóng màn hình, cần chọn lại file ảnh. Không báo tải thành công chỉ vì request đã gửi. Timeout hoặc lỗi upload mã 500 không tự chứng minh phiên hết hạn; chỉ yêu cầu đăng nhập lại khi kiểm tra phiên thực sự bị từ chối.
 
-Bản sửa phản hồi chậm cần **deploy website và tải gói runner mới trên cả Mac/Windows**.
-Dừng runner cũ khi không có lịch hoạt động, giải nén gói mới vào thư mục cố định
-và mở Start ChineseTest trong gói mới. Giữ nguyên kho ChineseTestRunner để giữ
-tài khoản/liên kết. Không cần chạy SQL hoặc thay biến môi trường cho riêng bản sửa này.
+Bản mới cần **deploy website và tải gói runner mới trên cả Mac/Windows**. Dừng runner cũ khi không có lịch hoạt động, giải nén gói mới vào thư mục cố định và mở Start ChineseTest trong gói mới. Giữ nguyên kho ChineseTestRunner để giữ tài khoản/liên kết. Không cần SQL mới nếu đã có bảng `chinesetest.profiles`. Các endpoint lưu ảnh/bản nháp cũ trả lỗi yêu cầu cập nhật; bản nháp cloud cũ không tự khôi phục. Ảnh gốc và dữ liệu nháp cũ được dọn khi đã đọc/hiển thị thành công ảnh ChineseTest thay thế và lưu metadata. Nếu chưa có ảnh thay thế, cần chọn lại ảnh; không tự xóa hàng loạt dữ liệu cũ.
+
+Chưa xác định tuổi thọ phiên hoặc API refresh riêng. Token không có `exp` không chứng minh phiên tồn tại vô hạn. Kiểm tra phiên trước giờ mở vẫn được giữ; không thêm gọi định kỳ với lời hứa gia hạn khi chưa có bằng chứng.
 
 ## Test và Live
 

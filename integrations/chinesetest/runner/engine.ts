@@ -7,7 +7,7 @@ import { ChineseTestClient, ApiError, invalidSession, transientFailure, type Ses
 import { LoginWindow } from "./login";
 import { candidateKey, inspectTarget, existingRegistration, centerFrom, readFeeQuote } from "./checks";
 
-interface Account { view: AccountView; session: Session; personal: Personal; photoVersion?: string; syncedPhotoVersion?: string }
+interface Account { view: AccountView; session: Session; personal: Personal; photoVersion?: string; syncedPhotoVersion?: string; pendingPortrait?: {path:string;version:string} }
 export interface RunnerData { id: string; name: string; keys: Awaited<ReturnType<typeof identityKeys>>; accounts: Account[]; schedules: Run[]; plans: Record<string,Plan>; seen: string[]; cloud?: { origin: string; token: string; owner?: string } }
 export const freshData = async (name: string): Promise<RunnerData> => ({ id: randomUUID(), name, keys: await identityKeys(), accounts: [], schedules: [], plans: {}, seen: [] });
 type Login = Pick<LoginWindow, "open" | "finish" | "close" | "pending">;
@@ -53,15 +53,19 @@ export class Engine {
   }
   async identity() { return { id: this.data.id, name: this.data.name, platform: process.platform, publicKey: this.data.keys.publicKey, fingerprint: await fingerprint(this.data.keys.publicKey) }; }
   snapshot(): RunnerState {
-    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
+    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, photoFlowVersion:2, deviceId: this.data.id, name: this.data.name, platform: process.platform,
       accounts: this.data.accounts.map(a => ({ ...a.view })), plans: structuredClone(this.data.plans), schedules: this.data.schedules.map(({ personal: _p, identityHash: _h, accountKey: _k, ...s }) => {
         const { orderKey: _secret, ...attempt } = s.attempt; return structuredClone({ ...s, attempt });
       }), loginPending: this.login.pending, now: new Date().toISOString(), eventLoopLagMs: this.lag };
   }
   private account(id: string) { const a = this.data.accounts.find(a => a.view.id === id); if (!a) throw new Error("Không tìm thấy tài khoản trên máy này."); return a; }
   private client(a: Account) { let c = this.clients.get(a.view.id); if (!c) { c = this.factory(a.session); this.clients.set(a.view.id, c); } return c; }
-  private view(a: Account) { a.view.name = a.personal.ksEName || a.session.email; a.view.maskedId = a.personal.idNo ? "•••• " + a.personal.idNo.slice(-4) : "Chưa có giấy tờ"; a.view.hasPhoto = Boolean(a.personal.photo) && (!a.photoVersion || a.photoVersion === a.syncedPhotoVersion); }
-  private photoReady(a: Account) { if (a.photoVersion && a.photoVersion !== a.syncedPhotoVersion) throw new Error("Ảnh mới chưa đồng bộ sang ChineseTest. Mở Hồ sơ / ảnh và bấm Lưu hồ sơ."); }
+  private view(a: Account) { a.view.name = a.personal.ksEName || a.session.email; a.view.maskedId = a.personal.idNo ? "•••• " + a.personal.idNo.slice(-4) : "Chưa có giấy tờ"; a.view.hasPhoto = Boolean(a.personal.photo) && !a.pendingPortrait && (!a.photoVersion || a.photoVersion === a.syncedPhotoVersion); }
+  private photoReady(a: Account) { if (a.pendingPortrait || a.photoVersion && a.photoVersion !== a.syncedPhotoVersion) throw new Error("Ảnh mới chưa được đọc lại từ ChineseTest. Mở Hồ sơ / ảnh để kiểm tra ảnh trước khi tiếp tục."); }
+  private async readPortrait(a: Account, path: string) {
+    try { return await this.client(a).photo(path); }
+    catch(e) { if(e instanceof ApiError && [401,403].includes(e.code || 0))await this.checkIdentity(a); throw e; }
+  }
   private run(id: string) { const s = this.data.schedules.find(s => s.id === id); if (!s) throw new Error("Không tìm thấy lượt chạy."); return s; }
   private checkpoint(s: Run, version: number) { if (this.closed || s.version !== version || !activeStatus(s.status)) throw new Error("Lượt đã dừng hoặc thay đổi."); }
   private ensureEditable(a: Account) { if (this.data.schedules.some(s => s.accountKey === a.session.key && activeStatus(s.status))) throw new Error("Dừng lịch của tài khoản trước khi sửa hồ sơ/ảnh hoặc đăng nhập lại."); }
@@ -91,19 +95,22 @@ export class Engine {
       if(!job || job.accountId!==args.accountId)throw new Error("Runner đã khởi động lại hoặc không còn lượt đồng bộ này. Mở lại hồ sơ và bấm Lưu hồ sơ để tiếp tục.");
       const {signature:_signature,createdAt:_created,...status}=job;return structuredClone(status);
     }
-    if(command==="start-profile-sync"){
+    if(command==="start-profile-sync" || command==="start-photo-upload" || command==="start-photo-read"){
       const a=this.account(String(args.accountId));this.ensureEditable(a);
       for(const [id,job] of this.syncJobs)if(["done","failed"].includes(job.phase)&&Date.now()-job.createdAt>10*60000)this.syncJobs.delete(id);
       const personal=personalFrom(args.personal || {});
-      const signature=createHash("sha256").update(JSON.stringify({...personal,photo:"",photoVersion:args.photoVersion || null})).digest("hex");
+      const signature=createHash("sha256").update(JSON.stringify({command,...personal,photo:"",photoVersion:args.photoVersion || null,bytes:command==="start-photo-upload"?createHash("sha256").update(String(args.base64 || "")).digest("hex"):undefined})).digest("hex");
       const pending=[...this.syncJobs.values()].find(j=>j.accountId===a.view.id&&!["done","failed"].includes(j.phase));
-      if(pending){if(pending.signature!==signature)throw new Error("Máy đang đồng bộ một bản hồ sơ khác của tài khoản này. Chờ hoàn tất rồi lưu bản mới.");return {id:pending.id};}
+      if(pending){if(pending.signature!==signature && command!=="start-photo-read")throw new Error("Máy đang đồng bộ một bản hồ sơ khác của tài khoản này. Chờ hoàn tất rồi lưu bản mới.");return {id:pending.id};}
       for(const [id,job] of this.syncJobs)if(job.accountId===a.view.id)this.syncJobs.delete(id);
       if(this.syncJobs.size>=MAX_ACCOUNTS)throw new Error("Máy đang đồng bộ nhiều hồ sơ. Chờ hoàn tất rồi thử lại.");
       if(typeof args.base64==="string"&&args.base64.length>1_400_000)throw new Error("Ảnh quá lớn.");
       const job:ProfileSyncStatus & {signature:string;createdAt:number}={id:randomUUID(),accountId:a.view.id,phase:"queued",signature,createdAt:Date.now()};
       this.syncJobs.set(job.id,job);
-      void this.execute("save-profile",{...args,personal,syncJobId:job.id},limits).then(result=>{job.result=result;job.phase="done";},error=>{job.error=(error as Error).message;job.phase="failed";});
+      void this.execute(command==="start-photo-read"?"read-photo":command==="start-photo-upload"?"upload-photo":"save-profile",{...args,personal,syncJobId:job.id},limits).then(result=>{job.result=result;job.phase="done";},error=>{job.error=(error as Error).message;job.phase="failed";}).finally(()=>{
+        // Read-back bytes are for the active UI only, never durable photo storage.
+        const timer=setTimeout(()=>{if(this.syncJobs.get(job.id)===job)this.syncJobs.delete(job.id);},10*60000);timer.unref?.();
+      });
       return {id:job.id};
     }
     if (command === "stop-all") { for (const s of this.data.schedules) if (activeStatus(s.status) || s.status === "prepared") this.stop(s); await this.persist(); return this.snapshot(); }
@@ -144,9 +151,23 @@ export class Engine {
       if (!common[kind]) throw new Error("Danh mục không được hỗ trợ.");
       return this.publicClient.call(common[kind], kind === "professions" ? { parentId: String(args.parentId || "") } : undefined);
     }
-    if (["read-profile", "stage-profile", "quote-fee", "inspect", "save-profile", "upload-photo", "remove", "prepare"].includes(command)) {
+    if (["read-profile", "read-photo", "stage-profile", "quote-fee", "inspect", "save-profile", "upload-photo", "remove", "prepare"].includes(command)) {
       const a = this.account(String(args.accountId)); const client = this.client(a);
-      if (command === "read-profile") return { personal: structuredClone(a.personal), photoVersion: a.photoVersion, syncedPhotoVersion: a.syncedPhotoVersion,profileSyncJobsVersion:1 };
+      if (command === "read-profile") return { personal: structuredClone(a.personal), photoVersion: a.photoVersion, syncedPhotoVersion: a.syncedPhotoVersion, pendingPhoto:Boolean(a.pendingPortrait),profileSyncJobsVersion:1,photoFlowVersion:2 };
+      if (command === "read-photo") {
+        const job=this.syncJobs.get(String(args.syncJobId));if(job)job.phase="checking-session";
+        await this.checkIdentity(a);
+        const pending=a.pendingPortrait;
+        if(pending || !a.syncedPhotoVersion || a.photoVersion!==a.syncedPhotoVersion)this.ensureEditable(a);
+        if(job)job.phase="reading-photo";
+        const image=await this.readPortrait(a,pending?.path || a.personal.photo);
+        if(pending || !a.syncedPhotoVersion || a.photoVersion!==a.syncedPhotoVersion){
+          const previous=structuredClone(a);
+          a.personal.photo=image.path;a.photoVersion=a.syncedPhotoVersion=pending?.version || a.syncedPhotoVersion || randomUUID();delete a.pendingPortrait;this.view(a);
+          try{await this.persist();}catch(e){Object.assign(a,previous);throw e;}
+        }
+        return {personal:structuredClone(a.personal),photoVersion:a.syncedPhotoVersion || null,image};
+      }
       if (command === "stage-profile") {
         this.ensureEditable(a);
         if (typeof args.photoVersion !== "string" || !/^[a-f0-9-]{36}$/.test(args.photoVersion)) throw new Error("Phiên bản ảnh không hợp lệ.");
@@ -174,16 +195,19 @@ export class Engine {
         // Photo paths are owned by the upload, not the caller's possibly stale form.
         personal.photo=a.personal.photo;
         const version=args.photoVersion;
+        if(args.photoFlowVersion===2)this.photoReady(a);
         if (a.photoVersion && version !== a.photoVersion) throw new Error("Ảnh đã thay đổi. Mở lại hồ sơ để lưu phiên bản mới nhất.");
         if (version && (typeof version !== "string" || !/^[a-f0-9-]{36}$/.test(version))) throw new Error("Phiên bản ảnh không hợp lệ.");
         validatePersonal({...personal,photo:personal.photo || "/pending/portrait"});
         if (version && (a.syncedPhotoVersion !== version || !personal.photo)) {
           a.photoVersion=version; this.view(a); await this.persist();
-          if (typeof args.base64 !== "string" || args.base64.length > 1_400_000) throw new Error("Cần ảnh đã lưu trên Supabase để đồng bộ.");
+          if (typeof args.base64 !== "string" || args.base64.length > 1_400_000) throw new Error("Cần chọn lại ảnh để tải lên ChineseTest.");
           if(job)job.phase="checking-session";
           await this.checkIdentity(a);
           if(job)job.phase="uploading";
           const path=await client.upload(Buffer.from(args.base64,"base64"),String(args.mimeType));
+          if(job)job.phase="reading-photo";
+          await this.readPortrait(a,path);
           a.personal.photo=path; a.syncedPhotoVersion=version; personal.photo=path;
         }
         validatePersonal(personal);
@@ -194,9 +218,26 @@ export class Engine {
         return { personal:structuredClone(a.personal), photoVersion:a.syncedPhotoVersion || null };
       }
       if (command === "upload-photo") {
-        this.ensureEditable(a); await this.checkIdentity(a);
+        this.ensureEditable(a);
+        const job=this.syncJobs.get(String(args.syncJobId));
+        if(job)job.phase="checking-session";
+        await this.checkIdentity(a);
         if (typeof args.base64 !== "string" || args.base64.length > 1400000) throw new Error("Ảnh quá lớn.");
-        a.personal.photo = await client.upload(Buffer.from(args.base64, "base64"), String(args.mimeType)); this.view(a); await this.persist(); return { personal: a.personal };
+        const version=String(args.photoVersion || "");
+        if(!/^[a-f0-9-]{36}$/.test(version))throw new Error("Phiên bản ảnh không hợp lệ.");
+        if(a.syncedPhotoVersion===version&&!a.pendingPortrait){const image=await this.readPortrait(a,a.personal.photo);return {personal:structuredClone(a.personal),photoVersion:version,image};}
+        if(a.pendingPortrait?.version!==version){
+          if(job)job.phase="uploading";
+          const path=await client.upload(Buffer.from(args.base64, "base64"), String(args.mimeType));
+          a.pendingPortrait={path,version};this.view(a);await this.persist();
+        }
+        if(job)job.phase="reading-photo";
+        const image=await this.readPortrait(a,a.pendingPortrait!.path);
+        const previous={personal:structuredClone(a.personal),version:a.photoVersion,synced:a.syncedPhotoVersion,pending:a.pendingPortrait};
+        a.personal.photo=a.pendingPortrait!.path;a.photoVersion=a.syncedPhotoVersion=version;delete a.pendingPortrait;
+        this.view(a);
+        try{await this.persist();}catch(e){a.personal=previous.personal;a.photoVersion=previous.version;a.syncedPhotoVersion=previous.synced;a.pendingPortrait=previous.pending;this.view(a);throw e;}
+        return { personal: structuredClone(a.personal), photoVersion:version,image };
       }
       await this.checkIdentity(a);
       if (args.refreshProfile === true) { this.ensureEditable(a); const p = await client.profile(); a.personal = personalFrom({...p.data,photo:a.personal.photo || p.data?.photo}); this.view(a); await this.persist(); }
@@ -276,7 +317,7 @@ export class Engine {
   execute(command: Command, args: Row = {}, limits: Limits): Promise<any> {
     if (command === "state") return Promise.resolve(this.snapshot());
     // Stop can invalidate an in-flight read immediately, rather than wait behind it.
-    if (["read-profile","stage-profile","start-profile-sync","profile-sync-status","stop","stop-all"].includes(command)) return this.executeWork(command,args,limits);
+    if (["read-profile","stage-profile","start-profile-sync","start-photo-upload","start-photo-read","profile-sync-status","stop","stop-all"].includes(command)) return this.executeWork(command,args,limits);
     return new Promise((resolve,reject)=>{
       this.commands.push({command,args,limits,resolve,reject});
       void this.drainCommands();

@@ -1,6 +1,6 @@
 export const ORIGIN = "https://www.chinesetest.cn";
 export const MAX_ACCOUNTS = 20;
-export const COMMANDS = ["state", "login", "finish-login", "cancel-login", "remove", "catalog", "read-profile", "stage-profile", "start-profile-sync", "profile-sync-status", "quote-fee", "inspect", "save-profile", "save-plan", "upload-photo", "prepare", "arm", "stop", "stop-all", "reconcile", "verify-absent"] as const;
+export const COMMANDS = ["state", "login", "finish-login", "cancel-login", "remove", "catalog", "read-profile", "read-photo", "stage-profile", "start-photo-read", "start-photo-upload", "start-profile-sync", "profile-sync-status", "quote-fee", "inspect", "save-profile", "save-plan", "upload-photo", "prepare", "arm", "stop", "stop-all", "reconcile", "verify-absent"] as const;
 export type Command = typeof COMMANDS[number];
 export type Row = Record<string, any>;
 export type { Device, Limits, EncryptedBox, CommandReply } from "../hcmue/protocol";
@@ -13,13 +13,10 @@ export interface Target {
 }
 export interface FeeQuote { key: string; amount: number; currency: string; linked: string[] }
 export const feeKey = (t: Pick<Target,"projectId"|"kmId"|"ksType"|"ksDate"|"center">) => JSON.stringify([t.projectId,t.kmId,t.ksType,t.ksDate,t.center]);
-export interface CloudProfile {
-  personal: Personal; revision: number; photoKey: string | null; photoVersion: string | null;
-  photoMime: string | null; syncedPhotoVersion: string | null; chineseTestPhoto: string;
-  status: "draft" | "synced"; updatedAt: string;
-}
-export type ProfileSyncPhase="queued"|"checking-session"|"uploading"|"saving"|"done"|"failed";
-export interface ProfileSyncStatus { id:string; accountId:string; phase:ProfileSyncPhase; error?:string; result?:{personal:Personal;photoVersion:string|null} }
+export interface CloudPhoto { revision:number; photoVersion:string|null; photoMime:string|null; chineseTestPhoto:string; needsMigration:boolean; updatedAt:string }
+export interface Portrait { path:string; base64:string; mimeType:"image/jpeg"|"image/png" }
+export type ProfileSyncPhase="queued"|"checking-session"|"uploading"|"reading-photo"|"saving"|"done"|"failed";
+export interface ProfileSyncStatus { id:string; accountId:string; phase:ProfileSyncPhase; error?:string; result?:{personal:Personal;photoVersion:string|null;image?:Portrait} }
 export interface Personal {
   ksEName: string; ksName: string; birthday: string; ksSex: string; gjId: string;
   ksCountry: string; ksNation: string; idType: string; idNo: string; phone: string;
@@ -35,7 +32,7 @@ export interface Run {
   identityHash: string; verifiedAbsent?: boolean; verifiedAbsentAt?: number;
 }
 export interface Plan { target: Target; test: boolean }
-export interface RunnerState { protocolVersion: number; profileSyncVersion?: number; profileSyncJobsVersion?:number; deviceId: string; name: string; platform: string; accounts: AccountView[]; schedules: Omit<Run, "personal" | "identityHash" | "accountKey">[]; plans: Record<string,Plan>; loginPending: boolean; now: string; eventLoopLagMs: number }
+export interface RunnerState { protocolVersion: number; profileSyncVersion?: number; profileSyncJobsVersion?:number; photoFlowVersion?:number; deviceId: string; name: string; platform: string; accounts: AccountView[]; schedules: Omit<Run, "personal" | "identityHash" | "accountKey">[]; plans: Record<string,Plan>; loginPending: boolean; now: string; eventLoopLagMs: number }
 export const activeStatus = (s: Status) => ["armed", "waiting_center", "checking", "reserved", "sending", "queued"].includes(s);
 export const statusLabel: Record<Status, string> = { prepared: "Sẵn sàng", armed: "Đã bật lịch", waiting_center: "Chờ điểm thi mở", checking: "Đang kiểm tra", reserved: "Đã khóa gửi", sending: "Đang gửi", queued: "Máy chủ đang xử lý", accepted: "Đã tạo đơn", confirmed: "Đã có mã đăng ký", uncertain: "Chưa rõ kết quả", failed: "Cần xử lý", stopped: "Đã dừng", test_passed: "Test đạt, không gửi đơn", released: "Đã xác minh và mở khóa" };
 export const personalFields = ["ksEName", "ksName", "birthday", "ksSex", "gjId", "ksCountry", "ksNation", "idType", "idNo", "phone", "photo", "fid", "firstLanguage", "studyYear", "pfId", "address", "isExamHsk", "kmidHis", "fenshuHis"] as const;

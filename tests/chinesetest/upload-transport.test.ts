@@ -39,7 +39,7 @@ it('sends real multipart bytes over HTTPS, retries failed clock GETs, allows slo
   await client.identity();expect(clocks).toBe(2);
   const start=Date.now();expect(await client.upload(photo,'image/png')).toBe('/portraits/fixture.png');expect(Date.now()-start).toBeGreaterThan(1000);expect(uploads).toBe(1);
   mode='abort';await expect(client.upload(photo,'image/png')).rejects.toMatchObject({kind:'transient',stage:'upload'});expect(uploads).toBe(2);
-  mode='timeout';await expect(client.upload(photo,'image/png')).rejects.toMatchObject({kind:'transient',stage:'upload',message:expect.stringContaining('Ảnh gốc vẫn được giữ')});expect(uploads).toBe(3);
+  mode='timeout';await expect(client.upload(photo,'image/png')).rejects.toMatchObject({kind:'transient',stage:'upload',message:expect.stringContaining('Chưa báo tải ảnh thành công')});expect(uploads).toBe(3);
   mode='upload-auth';await expect(client.upload(photo,'image/png')).rejects.toMatchObject({code:500,kind:'api',stage:'upload',message:expect.stringContaining('yêu cầu tải ảnh')});expect(uploads).toBe(4);await client.identity();
   mode='clock-down';const before=clocks;await expect(client.upload(photo,'image/png')).rejects.toMatchObject({kind:'transient',stage:'clock',message:expect.not.stringContaining('gửi đơn')});expect(clocks-before).toBe(2);expect(uploads).toBe(4);
   expect(failures).toEqual([]);

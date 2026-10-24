@@ -1,19 +1,50 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button, Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
-import { personalFrom, type Personal, type Command, type Row, type CloudProfile } from "../protocol";
+import { personalFrom, type Personal, type Command, type Row, type CloudPhoto, type Portrait } from "../protocol";
 import { profileFromWebsite } from "./planning";
 import type { SessionView } from "../../../src/protocol";
 import { BusyLine } from "./BusyLine";
-import { profileApi, profilePath, saveDraft, savedPhoto, imageBase64 } from "./profile-api";
+import { profileApi, profilePath, imageBase64 } from "./profile-api";
 import { synchronizeProfile } from "./profile-sync";
 type Request = (command: Command, args?: Row) => Promise<any>;
 export function ProfileEditor({ accountId, deviceId, name, request, close }: { accountId: string; deviceId: string; name: string; request: Request; close(): void }) {
-  const [draft,setDraft] = useState<Personal>(personalFrom({})), [cloud,setCloud] = useState<CloudProfile | null>(null), [countries,setCountries] = useState<Row[]>([]), [languages,setLanguages] = useState<Row[]>([]), [years,setYears] = useState<Row>({}), [professions,setProfessions] = useState<Row[][]>([[],[],[]]), [professionIds,setProfessionIds] = useState<string[]>(["","",""]), [profiles,setProfiles] = useState<SessionView[]>([]), [source,setSource] = useState(""), [busy,setBusy] = useState(true), [error,setError] = useState(""), [note,setNote] = useState(""), [progress,setProgress] = useState("Đang tải hồ sơ đã lưu…"), [loaded,setLoaded] = useState(false), [loadAttempt,setLoadAttempt]=useState(0);
+  const [draft,setDraft] = useState<Personal>(personalFrom({})), [preview,setPreview] = useState<{src:string;id:string}|null>(null), [countries,setCountries] = useState<Row[]>([]), [languages,setLanguages] = useState<Row[]>([]), [years,setYears] = useState<Row>({}), [professions,setProfessions] = useState<Row[][]>([[],[],[]]), [professionIds,setProfessionIds] = useState<string[]>(["","",""]), [profiles,setProfiles] = useState<SessionView[]>([]), [source,setSource] = useState(""), [busy,setBusy] = useState(true), [error,setError] = useState(""), [note,setNote] = useState(""), [progress,setProgress] = useState("Đang tải hồ sơ đã lưu…"), [loaded,setLoaded] = useState(false), [loadAttempt,setLoadAttempt]=useState(0);
   const [catalogLoading,setCatalogLoading]=useState<Record<string,boolean>>({countries:true,languages:true,config:true,professions:true}),[catalogErrors,setCatalogErrors]=useState<Record<string,string>>({}),[imageError,setImageError]=useState(false);
   const surface=useRef<HTMLDivElement>(null);
-  const mounted = useRef(true), revision = useRef(0), acting=useRef(false), cloudRef=useRef<CloudProfile | null>(null);
+  const mounted = useRef(true), revision = useRef(0), acting=useRef(false), photoVersion=useRef<string|null>(null);
+  const confirmation=useRef<{id:string;resolve():void;reject(e:Error):void;timer:ReturnType<typeof setTimeout>}|null>(null);
+  const pendingFile=useRef<Row|null>(null),[canRetryUpload,setCanRetryUpload]=useState(false),[imageVerified,setImageVerified]=useState(false);
   const path=profilePath(deviceId,accountId);
-  const keepCloud=(p:CloudProfile)=>{cloudRef.current=p;if(mounted.current){setCloud(p);setImageError(false);}};
+  async function displayImage(image:Portrait) {
+    if(!image || !["image/jpeg","image/png"].includes(image.mimeType)||typeof image.base64!=="string"||image.base64.length>1_400_000)throw new Error("Runner chưa trả về ảnh hợp lệ. Bấm Đọc lại ảnh để kiểm tra.");
+    setProgress("Đang hiển thị ảnh đã đọc từ ChineseTest…");setImageError(false);setImageVerified(false);
+    await new Promise<void>((resolve,reject)=>{
+      const id=crypto.randomUUID(),timer=setTimeout(()=>{confirmation.current=null;reject(new Error("Giao diện chưa hiển thị được ảnh ChineseTest. Bấm Đọc lại ảnh để thử lại."));},15000);
+      confirmation.current={id,resolve,reject,timer};
+      setPreview({id,src:`data:${image.mimeType};base64,${image.base64}`});
+    });
+    if(mounted.current)setImageVerified(true);
+  }
+  function imageLoaded(id:string,ok:boolean) {
+    const pending=confirmation.current;if(!pending||pending.id!==id)return;
+    clearTimeout(pending.timer);confirmation.current=null;
+    if(ok)pending.resolve();else{setImageError(true);pending.reject(new Error("Giao diện không giải mã được ảnh từ ChineseTest. Chưa xác nhận tải ảnh thành công."));}
+  }
+  async function recordImage(image:Portrait,version:string|null) {
+    if(!version)return;
+    const saved=await profileApi<CloudPhoto|null>(path);
+    if(saved?.photoVersion===version&&saved.chineseTestPhoto===image.path&&saved.photoMime===image.mimeType&&!saved.needsMigration)return;
+    await profileApi<CloudPhoto>(path+"/photo-metadata",{revision:saved?.revision || 0,photoVersion:version,chineseTestPhoto:image.path,mimeType:image.mimeType});
+  }
+  async function readImage() {
+    setProgress("Đang đọc ảnh từ ChineseTest qua máy chạy…");
+    const result=await synchronizeProfile(request,{accountId},message=>{if(mounted.current)setProgress(message);},()=>mounted.current,"start-photo-read");
+    if(!mounted.current)return;
+    photoVersion.current=result.photoVersion;setDraft(p=>({...p,photo:result.personal.photo}));
+    if(!result.image)throw new Error("Chưa đọc lại được ảnh ChineseTest. Bấm Đọc lại ảnh để kiểm tra.");
+    await displayImage(result.image);
+    await recordImage(result.image,result.photoVersion);
+  }
   const change = (key: keyof Personal, value: string) => setDraft(p => ({...p,[key]:value}));
   async function loadCatalog(kind:string) {
     setCatalogLoading(p=>({...p,[kind]:true}));setCatalogErrors(p=>({...p,[kind]:""}));
@@ -24,16 +55,16 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
   }
   useEffect(() => { mounted.current = true; void (async()=>{
     try {
-      const [saved,local]=await Promise.all([profileApi<CloudProfile | null>(path),request("read-profile",{accountId})]);
+      const local=await request("read-profile",{accountId});
       if(!mounted.current)return;
-      if(local.profileSyncJobsVersion!==1)throw new Error("Cập nhật ChineseTest Runner để nhận bản sửa timeout đồng bộ ảnh, rồi mở lại hồ sơ.");
-      if(saved)keepCloud(saved);setDraft(saved?.personal || local.personal);setLoaded(true);
-      if(saved?.status==="draft")setNote("Đã khôi phục bản nháp. Bấm Lưu hồ sơ để đồng bộ sang ChineseTest.");
+      if(local.photoFlowVersion!==2)throw new Error("Cập nhật ChineseTest Runner để tải và đọc ảnh trực tiếp từ ChineseTest, rồi mở lại hồ sơ.");
+      setDraft(local.personal);photoVersion.current=local.syncedPhotoVersion || null;setLoaded(true);
+      if(local.personal.photo || local.pendingPhoto)await readImage();
     } catch(e){if(mounted.current)setError((e as Error).message);} finally{if(mounted.current){setBusy(false);setProgress("");}}
   })();
     for(const kind of ["countries","languages","config","professions"])void loadCatalog(kind);
     void fetch("/api/state",{cache:"no-store"}).then(r=>r.ok?r.json():undefined).then(data=>{if(mounted.current&&data)setProfiles((data.sessions || []).filter((s:SessionView)=>s.profile));}).catch(()=>{});
-    return()=>{mounted.current=false;}; },[accountId,deviceId,request,loadAttempt]);
+    return()=>{mounted.current=false;const pending=confirmation.current;if(pending){clearTimeout(pending.timer);confirmation.current=null;pending.reject(new Error("Đã đóng màn hồ sơ."));}pendingFile.current=null;}; },[accountId,deviceId,request,loadAttempt]);
   const act = async (work:()=>Promise<void>) => {if(acting.current)return;surface.current?.focus();acting.current=true;setBusy(true);setError("");setNote("");try{await work();}catch(e){if(mounted.current)setError((e as Error).message);}finally{acting.current=false;if(mounted.current){setBusy(false);setProgress("");}}};
   async function profession(level:number,value:string){
     const id=++revision.current, ids=[...professionIds];ids[level]=value;for(let i=level+1;i<3;i++)ids[i]="";setProfessionIds(ids);change("pfId",value);
@@ -42,31 +73,27 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
   }
   async function upload(file:File){
     if(!["image/jpeg","image/png"].includes(file.type)||file.size<=15*1024||file.size>=1024*1024)throw new Error("Chọn ảnh chân dung JPG/PNG lớn hơn 15 KB và nhỏ hơn 1 MB.");
-    setProgress("Đang lưu ảnh và bản nháp lên Supabase…");
-    const p=await profileApi<CloudProfile>(path+"/photo",{revision:cloudRef.current?.revision || 0,personal:draft,base64:await imageBase64(await file.arrayBuffer()),mimeType:file.type});
-    keepCloud(p);
-    setNote("Đã lưu ảnh và bản nháp trên hệ thống. Bấm Lưu hồ sơ để đồng bộ sang ChineseTest.");
-    setProgress("Đang cập nhật trạng thái ảnh trên máy chạy…");
-    try{await request("stage-profile",{accountId,photoVersion:p.photoVersion});}
-    catch(e){throw new Error("Ảnh và bản nháp đã được lưu trên Supabase. Máy chạy chưa nhận trạng thái mới: "+(e as Error).message+" Bấm Lưu hồ sơ để thử lại.");}
+    pendingFile.current={accountId,photoVersion:crypto.randomUUID(),base64:await imageBase64(await file.arrayBuffer()),mimeType:file.type};setCanRetryUpload(true);
+    await sendPhoto();
+  }
+  async function sendPhoto(){
+    if(!pendingFile.current)throw new Error("Chọn lại ảnh để tải lên ChineseTest.");
+    setImageVerified(false);
+    const result=await synchronizeProfile(request,pendingFile.current,message=>{if(mounted.current)setProgress(message);},()=>mounted.current,"start-photo-upload");
+    if(!mounted.current)return;
+    photoVersion.current=result.photoVersion;setDraft(p=>({...p,photo:result.personal.photo}));
+    if(!result.image)throw new Error("Chưa đọc lại được ảnh ChineseTest. Bấm Đọc lại ảnh để kiểm tra.");
+    await displayImage(result.image);
+    // The UI has decoded the actual read-back image before success is announced.
+    await recordImage(result.image,result.photoVersion);
+    pendingFile.current=null;setCanRetryUpload(false);setNote("Đã tải ảnh thành công");
   }
   async function save(){
     for(let i=1;i<3;i++)if(professions[i].length&&!professionIds[i])throw new Error("Chọn đủ nhóm nghề nghiệp.");
-    setProgress("Đang lưu bản nháp hồ sơ…");
-    let p=await saveDraft(path,cloudRef.current,draft);keepCloud(p);
-    try{
-      let base64:string | undefined;
-      if(p.photoVersion){
-        setProgress("Đang ghi nhận ảnh mới trên máy chạy…");
-        await request("stage-profile",{accountId,photoVersion:p.photoVersion});
-        setProgress("Đang đọc ảnh đã lưu…");base64=await savedPhoto(path,p.photoVersion);
-      }
-      setProgress(p.photoVersion!==p.syncedPhotoVersion?"Đang tải ảnh lên ChineseTest…":"Đang đồng bộ hồ sơ với máy chạy…");
-      const result=await synchronizeProfile(request,{accountId,personal:draft,photoVersion:p.photoVersion,base64,mimeType:p.photoMime},message=>{if(mounted.current)setProgress(message);},()=>mounted.current);
-      setProgress("Đang xác nhận hồ sơ đã đồng bộ…");
-      p=await profileApi<CloudProfile>(path+"/synced",{revision:p.revision,photoVersion:p.photoVersion,chineseTestPhoto:result.personal.photo});
-      keepCloud(p);setDraft(result.personal);setNote("Đã lưu hồ sơ và đồng bộ ảnh sang ChineseTest.");
-    }catch(e){throw new Error("Đã lưu bản nháp, chưa xác nhận đồng bộ ChineseTest. Ảnh và thông tin vẫn được giữ. "+(e as Error).message);}
+    if(!imageVerified)throw new Error("Đọc lại và kiểm tra ảnh ChineseTest trước khi lưu hồ sơ.");
+    setProgress("Đang lưu hồ sơ trên máy chạy…");
+    const result=await synchronizeProfile(request,{accountId,personal:draft,photoVersion:photoVersion.current,photoFlowVersion:2},message=>{if(mounted.current)setProgress(message);},()=>mounted.current);
+    setDraft(result.personal);setNote("Đã lưu hồ sơ trên máy chạy.");
   }
   return <Dialog surfaceMotion={null} inertTrapFocus open modalType="modal"><DialogSurface ref={surface} className="ct-dialog"><DialogBody><DialogTitle>Hồ sơ ChineseTest · {name}</DialogTitle><DialogContent>
     {busy&&<BusyLine>{progress || "Đang xử lý hồ sơ…"}</BusyLine>}
@@ -95,11 +122,11 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
         {draft.isExamHsk==="1"&&<><label>Cấp HSK đã thi<select value={draft.kmidHis} onChange={e=>change("kmidHis",e.target.value)}><option value="">Chọn</option>{["826485","826486","828635","828636","828637","828638","828639"].map((id,i)=><option key={id} value={id}>HSK {i===6?"7–9":i+1}</option>)}</select></label><label>Điểm đã thi<input type="number" min="0" value={draft.fenshuHis} onChange={e=>change("fenshuHis",e.target.value)}/></label></>}
       </div>
       <div className="ct-photo-block">
-        <div className="ct-photo-preview">{cloud?.photoKey&&!imageError?<img src={path+"/photo/"+cloud.photoVersion} alt="Ảnh chân dung đã lưu" onError={()=>setImageError(true)}/>:<span>{imageError?"Chưa tải được ảnh xem trước":draft.photo?"Ảnh cũ trên ChineseTest":"Chưa có ảnh chân dung"}</span>}</div>
+        <div className="ct-photo-preview">{preview&&!imageError?<img key={preview.id} src={preview.src} alt="Ảnh chân dung trên ChineseTest" onLoad={()=>imageLoaded(preview.id,true)} onError={()=>imageLoaded(preview.id,false)}/>:<span>{imageError?"Chưa hiển thị được ảnh ChineseTest":"Chưa đọc được ảnh chân dung"}</span>}</div>
         <div><label className="ct-photo">Ảnh chân dung (không dùng ảnh giấy tờ)<input type="file" accept="image/jpeg,image/png" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)void act(()=>upload(f));}}/></label>
-        <p className="ct-muted">JPG/PNG, lớn hơn 15 KB và nhỏ hơn 1 MB. Ảnh được lưu trên Supabase; bấm Lưu hồ sơ mới đồng bộ sang ChineseTest.</p>
-        <p className="ct-photo-status" role="status">{cloud?.photoKey?(cloud.photoVersion===cloud.syncedPhotoVersion?"Ảnh đã đồng bộ ChineseTest":"Đã lưu ảnh · Chưa đồng bộ ChineseTest"):draft.photo?"Đang dùng ảnh cũ trên ChineseTest. Chọn lại ảnh để lưu bản gốc trên hệ thống.":"Chưa có ảnh đã lưu."}</p>
-        {imageError&&<Button onClick={()=>{setImageError(false);setCloud(p=>p?{...p}:p);}}>Tải lại ảnh xem trước</Button>}</div>
+        <p className="ct-muted">JPG/PNG, lớn hơn 15 KB và nhỏ hơn 1 MB. Chọn ảnh sẽ tải ngay lên ChineseTest qua máy chạy. Thông tin chưa bấm Lưu chỉ giữ trong màn hình này.</p>
+        <p className="ct-photo-status" role="status">{imageVerified?"Đã đọc và hiển thị ảnh từ ChineseTest":"Chưa xác nhận ảnh ChineseTest hiển thị được."}</p>
+        <Button onClick={()=>void act(readImage)}>Đọc lại ảnh</Button>{canRetryUpload&&<Button onClick={()=>void act(sendPhoto)}>Thử tải ảnh lại</Button>}</div>
       </div>
     </fieldset>
   </DialogContent><DialogActions><Button disabled={busy} onClick={close}>Đóng</Button><Button appearance="primary" disabled={busy || !loaded} onClick={()=>void act(save)}>{busy?"Đang xử lý…":"Lưu hồ sơ"}</Button></DialogActions></DialogBody></DialogSurface></Dialog>;

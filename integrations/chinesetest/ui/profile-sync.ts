@@ -1,14 +1,15 @@
-import type {Command,Personal,ProfileSyncPhase,ProfileSyncStatus,Row} from "../protocol";
+import type {Command,Personal,Portrait,ProfileSyncPhase,ProfileSyncStatus,Row} from "../protocol";
 const progress:Record<ProfileSyncPhase,string>={
   queued:"Máy đã nhận hồ sơ, đang chờ lượt đồng bộ…",
   "checking-session":"Đang kiểm tra kết nối và phiên đăng nhập ChineseTest…",
   uploading:"Đang tải ảnh lên ChineseTest, vui lòng chờ phản hồi…",
+  "reading-photo":"Đang đọc lại ảnh từ ChineseTest để kiểm tra…",
   saving:"Đang lưu hồ sơ đã đồng bộ trên máy chạy…",
   done:"Đang xác nhận hồ sơ đã đồng bộ…",
   failed:"Đồng bộ chưa hoàn tất.",
 };
-export async function synchronizeProfile(request:(command:Command,args?:Row)=>Promise<any>,args:Row,update:(message:string)=>void,alive=()=>true):Promise<{personal:Personal;photoVersion:string|null}>{
-  const job=await request("start-profile-sync",args);
+export async function synchronizeProfile(request:(command:Command,args?:Row)=>Promise<any>,args:Row,update:(message:string)=>void,alive=()=>true,start: "start-profile-sync"|"start-photo-upload"|"start-photo-read"="start-profile-sync"):Promise<{personal:Personal;photoVersion:string|null;image?:Portrait}>{
+  const job=await request(start,args);
   if(typeof job?.id!=="string")throw new Error("Runner chưa hỗ trợ theo dõi đồng bộ ảnh. Cập nhật ChineseTest Runner rồi mở lại hồ sơ.");
   const deadline=Date.now()+5*60000;
   while(alive()){
@@ -19,7 +20,7 @@ export async function synchronizeProfile(request:(command:Command,args?:Row)=>Pr
       if(!status.result?.personal)throw new Error("Chưa nhận được hồ sơ đã đồng bộ từ runner.");
       return status.result;
     }
-    if(Date.now()>=deadline)throw new Error("Máy vẫn đang xử lý đồng bộ. Mở lại hồ sơ và bấm Lưu hồ sơ để tiếp tục theo dõi; không cần chọn lại ảnh.");
+    if(Date.now()>=deadline)throw new Error("Máy vẫn đang xử lý. Mở lại hồ sơ để đọc lại ảnh và xem kết quả trước khi thử tải ảnh lần nữa.");
     await new Promise(resolve=>setTimeout(resolve,1500));
   }
   throw new Error("Đã rời màn hồ sơ. Máy tiếp tục xử lý; mở lại hồ sơ để xem kết quả.");
