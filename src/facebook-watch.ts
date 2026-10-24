@@ -69,7 +69,7 @@ export class FacebookWatcher {
     const fast=now>=Date.parse(w.watchAt),interval=fast?1500:10000;
     // Entering the fast phase must not wait for the preceding slow deadline.
     this.nextReload=Math.min(this.nextReload,now+interval);
-    if(now<this.nextReload||this.loadingSince&&now-this.loadingSince<8000)return;
+    if(now<this.nextReload||this.loadingSince&&now-this.loadingSince<20000)return;
     this.busy=true;this.nextReload=now+interval;
     try{
       const tab=await chrome.tabs.get(w.tabId);

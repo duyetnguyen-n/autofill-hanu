@@ -7,7 +7,7 @@ beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(90000);data={};connected=tru
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
 it('starts the short polling phase before the hour, never overlaps a loading request',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>{}));await watcher.command(config);updated(17,{status:'complete'});
-  await vi.advanceTimersByTimeAsync(10000);expect(api.tabs.reload).toHaveBeenCalledTimes(1);updated(17,{status:'complete'});
+  await vi.advanceTimersByTimeAsync(20000);expect(api.tabs.reload).toHaveBeenCalledTimes(1);updated(17,{status:'complete'});
   await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
   await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(2000);expect(api.tabs.reload).toHaveBeenCalledTimes(2);watcher.stop();
@@ -64,10 +64,17 @@ it('does not mistake HTTP complete for readable SPA content and starve it with r
   await watcher.command(config);updated(17,{status:'complete'});
   await vi.advanceTimersByTimeAsync(2000);expect(api.tabs.reload).not.toHaveBeenCalled();
   await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'',error:'loading'});
-  await vi.advanceTimersByTimeAsync(5600);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(17600);expect(api.tabs.reload).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(400);expect(api.tabs.reload).toHaveBeenCalledTimes(1);
   await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
   await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalledTimes(2);watcher.stop();
+});
+it('lets a slow public story render after twelve seconds, then returns to fast polling',async()=>{
+  vi.setSystemTime(100000);const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({accepted:true})));
+  await watcher.command(config);updated(17,{status:'complete'});
+  await vi.advanceTimersByTimeAsync(12000);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
+  await vi.advanceTimersByTimeAsync(200);expect(api.tabs.reload).toHaveBeenCalledTimes(1);watcher.stop();
 });
 it('reuses its owned post window across schedules instead of opening more login windows',async()=>{
   const watcher=new FacebookWatcher(()=>connected,vi.fn());await watcher.command(config);watcher.stop();

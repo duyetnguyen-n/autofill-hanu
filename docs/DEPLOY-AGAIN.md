@@ -1,5 +1,13 @@
 # Cập nhật website HANU sau này
 
+**v1.9.1 — đọc Facebook khi mạng lỗi hoặc bài dựng chậm:** deploy backend/UI để
+cập nhật gói tải và trạng thái chờ đọc; cập nhật/Reload extension trong đúng thư mục
+đang nạp. Bộ đọc tự thử lại khi cấu hình hoặc báo cáo thất bại dù DOM không đổi,
+gửi lại trạng thái mỗi 10 giây, và cho bài đang dựng tối đa 20 giây trước khi tải lại.
+Không cần migration. Phải cấp quyền Facebook tùy chọn trên profile theo dõi.
+Bài mẫu `1134747255900532` ghi giờ mở 20:00 ngày 19/10/2026; lịch khác giờ/ngày
+vẫn bị chặn trong luồng đăng ký thật, diễn tập dùng riêng form thử.
+
 **ChineseTest: ảnh gốc, bản nháp và lệ phí chỉ đọc (24/10/2026):** chạy migration
 `supabase/migrations/202610240001_chinesetest_profiles.sql` trên project đã có
 migration ChineseTest runners trước khi deploy backend/UI. Dùng bucket private

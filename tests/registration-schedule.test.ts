@@ -1,5 +1,6 @@
 import {describe,it,expect,vi} from 'vitest';
 import {JSDOM} from 'jsdom';
+import {readFileSync} from 'node:fs';
 import {facebookMessage,prepareFacebookPost} from '../src/facebook-document';
 import {facebookPostKey,formLink,parseHskLinks,parseTestForm,registrationDateError,type RegistrationSchedule} from '../src/registration-schedule';
 import {RegistrationScheduler} from '../manager/server/registration-scheduler';
@@ -11,6 +12,17 @@ const four='https://forms.gle/LevelFour',five='https://forms.gle/LevelFive';
 const start=Date.parse('2026-10-21T08:00:00+07:00');
 const flush=()=>new Promise<void>(r=>setImmediate(r));
 describe('post / level / form identity',()=>{
+  it('extracts the actual HANU story links through Facebook redirects and bilingual sections',()=>{
+    const dom=new JSDOM(readFileSync(new URL('./fixtures/facebook-hanu-message.html',import.meta.url),'utf8'),{url:post});
+    const text=facebookMessage(dom.window.document)!;
+    const expected={'3':{url:'https://forms.gle/cEnaCoH1hFakXxcy6'},'4':{url:'https://forms.gle/xQwFQM8s98PjEWJj6'},'5':{url:'https://forms.gle/MRG6pLYGgYbdRqKR9'},'6':{url:'https://forms.gle/Wg3AW72BEaWKbsfb7'}};
+    expect(parseHskLinks(text,'2026-10-19T13:00:00.000Z')).toEqual(expected);
+    expect(parseTestForm(text)).toEqual({url:'https://forms.gle/fAc5ex6xPyZdSUmu8'});
+    expect(registrationDateError(text,'2026-10-19T13:00:00.000Z')).toBeUndefined();
+    expect(registrationDateError(text,'2026-10-24T13:00:00.000Z')).toMatch(/khác lịch/);
+    expect(parseHskLinks(text,'2026-10-24T13:00:00.000Z')).toEqual({});
+    expect(text).not.toContain('WrongComment');dom.window.close();
+  });
   it('finds only explicitly labelled Test forms, rejecting conflicting sample links',()=>{
     expect(parseTestForm('MẪU FORM ĐĂNG KÝ THÍ SINH CÓ THỂ ĐIỀN THỬ:\nhttps://forms.gle/Sample\nHSK 4: '+four)).toEqual({url:'https://forms.gle/Sample'});
     expect(parseTestForm('HSK 4: '+four)).toBeUndefined();
