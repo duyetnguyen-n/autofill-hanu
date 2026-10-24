@@ -11,31 +11,58 @@ export class ApiError extends Error {
 export const invalidSession = (e: unknown) => e instanceof ApiError && ["auth", "identity"].includes(e.kind);
 export const transientFailure = (e: unknown) => e instanceof ApiError && e.kind === "transient";
 const requestStage = (path:string):ApiError["stage"] => path === "/common/get_safe_stamp" ? "clock" : path === "/userInfo/getInfo" ? "identity" : path.includes("submitPersonalInfo") ? "registration" : path.includes("selectOrder/") ? "order" : path === "/common/upload" ? "upload" : "read";
+const transportMessage = (path:string, timeout=false) => {
+  const stage=requestStage(path),reason=timeout?"quá thời gian chờ":"kết nối bị gián đoạn";
+  if(stage==="registration")return `Gửi đăng ký ${reason}. Cần đối chiếu kết quả; không gửi lại đơn tự động.`;
+  if(stage==="clock")return `Chưa lấy được giờ máy chủ ChineseTest (${reason}). Chưa thực hiện bước tiếp theo.`;
+  if(stage==="identity")return `Chưa kiểm tra được phiên đăng nhập ChineseTest (${reason}). Thử lại khi kết nối ổn định.`;
+  if(stage==="upload")return `ChineseTest chưa xác nhận tải ảnh (${reason}). Ảnh gốc vẫn được giữ; có thể thử đồng bộ lại.`;
+  return `Chưa đọc được dữ liệu ChineseTest (${reason}). Thử lại khi kết nối ổn định.`;
+};
+export interface ClientTiming { readTimeoutMs:number; uploadTimeoutMs:number; retryDelayMs:number }
+const DEFAULT_TIMING:ClientTiming={readTimeoutMs:20000,uploadTimeoutMs:60000,retryDelayMs:500};
 export const requestSignature = (stamp: number) => createHash("md5").update("http://new.chinesetest.cn752f03ca0ef1b621fa4e" + stamp).digest("hex").toUpperCase();
 export class ChineseTestClient {
   private agent: Agent;
   private jar: CookieJar;
-  constructor(private session?: Session, private origin = ORIGIN, fixtureCa?: string) {
+  private timing:ClientTiming;
+  constructor(private session?: Session, private origin = ORIGIN, fixtureCa?: string, fixtureTiming?: Partial<ClientTiming>) {
     if (origin !== ORIGIN && !(process.env.CHINESETEST_FIXTURE === "1" && /^https:\/\/localhost:\d+$/.test(origin))) throw new Error("API chỉ cho phép máy chủ ChineseTest.");
     if (fixtureCa && origin === ORIGIN) throw new Error("Không thay đổi TLS ChineseTest.");
+    if(fixtureTiming&&origin===ORIGIN)throw new Error("Chỉ thay thời gian chờ trong kiểm thử cục bộ.");
+    this.timing={...DEFAULT_TIMING,...fixtureTiming};
     this.agent = new Agent({ keepAlive: true, maxSockets: 6, maxFreeSockets: 4, rejectUnauthorized: true, ...(fixtureCa ? { ca: fixtureCa } : {}) });
     this.jar = session ? CookieJar.deserializeSync(session.cookies) : new CookieJar();
   }
   async call(path: string, params?: Row, body?: Row | Buffer, contentType = "application/json"): Promise<Row> {
     if (!/^\/[a-zA-Z0-9_/?=&.,-]+$/.test(path) || path.includes("..") || path.startsWith("//")) throw new Error("Đường dẫn API không hợp lệ.");
-    const stamp = await this.raw("/common/get_safe_stamp", undefined, undefined, Date.now());
+    const stamp = await this.read("/common/get_safe_stamp", undefined, Date.now());
     if (Number(stamp.code) !== 200) throw new ApiError("API thời gian ChineseTest từ chối yêu cầu (mã " + stamp.code + ").", Number(stamp.code), undefined, [401,403].includes(Number(stamp.code)) ? "auth" : undefined, "clock");
     if (!Number.isFinite(stamp.data) || Math.abs(stamp.data - Date.now()) > 60000) throw new ApiError("Không xác minh được thời gian máy chủ. Kiểm tra đồng hồ máy và kết nối.", undefined, undefined, "protocol", "clock");
-    const result = await this.raw(path, params, body, stamp.data, contentType);
+    const result = body===undefined?await this.read(path,params,stamp.data):await this.raw(path, params, body, stamp.data, contentType);
     const message = String(result.msg || result.message || "request không được chấp nhận").slice(0, 400);
     const safe = /token|password|authorization|cookie|bearer|eyJ/i.test(message) ? "Request bị từ chối; kiểm tra trong ChineseTest" : message;
+    // This upload error can occur while getInfo still verifies the same session.
+    // Keep it scoped to the upload; do not invalidate the account or retry a POST.
+    if (path === "/common/upload" && Number(result.code) === 500 && message.includes("认证失败")) throw new ApiError("ChineseTest từ chối xác thực yêu cầu tải ảnh (mã 500). Ảnh gốc vẫn được giữ; thử Lưu hồ sơ lại. Nếu lỗi tiếp diễn, đăng nhập lại tài khoản trên runner.", 500, undefined, "api", "upload");
     if (Number(result.code) !== 200) throw new ApiError([401, 403].includes(Number(result.code)) ? `ChineseTest từ chối phiên đăng nhập (mã ${result.code}). Đăng nhập lại trước khi chạy.` : `ChineseTest: ${safe} (${result.code ?? "không có mã"}).`, Number(result.code), undefined, [401,403].includes(Number(result.code)) ? "auth" : undefined, requestStage(path));
     return result;
+  }
+  private async read(path:string,params:Row|undefined,stamp:number):Promise<Row>{
+    try{return await this.raw(path,params,undefined,stamp,"application/json");}
+    catch(e){
+      // Only GETs are retried. An upload or registration POST is never repeated here.
+      if(!transientFailure(e) || (e instanceof ApiError && (e.retryAfterMs || 0)>5000))throw e;
+      const delay=e instanceof ApiError?Math.max(this.timing.retryDelayMs,e.retryAfterMs || 0):this.timing.retryDelayMs;
+      await new Promise(resolve=>setTimeout(resolve,delay));
+      return this.raw(path,params,undefined,path==="/common/get_safe_stamp"?Date.now():stamp,"application/json");
+    }
   }
   private async raw(path: string, params: Row | undefined, body: Row | Buffer | undefined, stamp: number, contentType = "application/json"): Promise<Row> {
     const url = new URL("/chinesetestwebapi" + path, this.origin);
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
     const bytes = body === undefined ? undefined : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
+    const timeout=path==="/common/upload"?this.timing.uploadTimeoutMs:this.timing.readTimeoutMs;
     const headers: Record<string, string> = { Accept: "application/json, text/plain, */*", "Content-Type": contentType, "User-Language": "en", Origin: ORIGIN, Referer: ORIGIN + "/kaoshibaoming", "Access-Ch-Ref-Stamp": String(stamp), "Access-Ch-Ref-Site": requestSignature(stamp) };
     if (this.session) headers.Authorization = `Bearer ${this.session.token}`;
     const cookie = await this.jar.getCookieString(url.href); if (cookie) headers.Cookie = cookie;
@@ -49,8 +76,8 @@ export class ChineseTestClient {
         const cookies = Promise.all((res.headers["set-cookie"] || []).map(c => this.jar.setCookie(c, url.href)));
         void cookies.catch(() => {});
         res.on("data", chunk => { size += chunk.length; if (size > 4 * 1024 * 1024) { fail(new ApiError("Phản hồi ChineseTest quá lớn.")); req.destroy(); } else chunks.push(chunk); });
-        res.on("aborted", () => fail(new ApiError("Phản hồi bị ngắt; cần đối chiếu nếu đã gửi đơn.", undefined, undefined, "transient")));
-        res.on("error", () => fail(new ApiError("Mất kết nối khi đọc phản hồi.", undefined, undefined, "transient")));
+        res.on("aborted", () => fail(new ApiError(transportMessage(path), undefined, undefined, "transient")));
+        res.on("error", () => fail(new ApiError(transportMessage(path), undefined, undefined, "transient")));
         res.on("end", () => { void (async () => {
           if (settled) return;
           await cookies;
@@ -62,9 +89,9 @@ export class ChineseTestClient {
           settled = true; clearTimeout(deadline); resolve(data);
         })().catch(() => fail(new ApiError("Không lưu được phiên phản hồi."))); });
       });
-      deadline = setTimeout(() => { fail(new ApiError("API quá thời gian chờ; cần đối chiếu nếu đã gửi đơn.", undefined, undefined, "transient")); req.destroy(); }, 15000);
-      req.setTimeout(15000, () => { fail(new ApiError("API quá thời gian chờ; không gửi lại đơn tự động.", undefined, undefined, "transient")); req.destroy(); });
-      req.on("error", () => fail(new ApiError("Không kết nối được ChineseTest; kiểm tra trạng thái trước khi gửi lại.", undefined, undefined, "transient")));
+      deadline = setTimeout(() => { fail(new ApiError(transportMessage(path,true), undefined, undefined, "transient")); req.destroy(); }, timeout);
+      req.setTimeout(timeout, () => { fail(new ApiError(transportMessage(path,true), undefined, undefined, "transient")); req.destroy(); });
+      req.on("error", () => fail(new ApiError(transportMessage(path), undefined, undefined, "transient")));
       if (bytes) req.end(bytes); else req.end();
     });
   }

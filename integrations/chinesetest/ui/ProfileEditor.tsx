@@ -5,6 +5,7 @@ import { profileFromWebsite } from "./planning";
 import type { SessionView } from "../../../src/protocol";
 import { BusyLine } from "./BusyLine";
 import { profileApi, profilePath, saveDraft, savedPhoto, imageBase64 } from "./profile-api";
+import { synchronizeProfile } from "./profile-sync";
 type Request = (command: Command, args?: Row) => Promise<any>;
 export function ProfileEditor({ accountId, deviceId, name, request, close }: { accountId: string; deviceId: string; name: string; request: Request; close(): void }) {
   const [draft,setDraft] = useState<Personal>(personalFrom({})), [cloud,setCloud] = useState<CloudProfile | null>(null), [countries,setCountries] = useState<Row[]>([]), [languages,setLanguages] = useState<Row[]>([]), [years,setYears] = useState<Row>({}), [professions,setProfessions] = useState<Row[][]>([[],[],[]]), [professionIds,setProfessionIds] = useState<string[]>(["","",""]), [profiles,setProfiles] = useState<SessionView[]>([]), [source,setSource] = useState(""), [busy,setBusy] = useState(true), [error,setError] = useState(""), [note,setNote] = useState(""), [progress,setProgress] = useState("Đang tải hồ sơ đã lưu…"), [loaded,setLoaded] = useState(false), [loadAttempt,setLoadAttempt]=useState(0);
@@ -25,6 +26,7 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
     try {
       const [saved,local]=await Promise.all([profileApi<CloudProfile | null>(path),request("read-profile",{accountId})]);
       if(!mounted.current)return;
+      if(local.profileSyncJobsVersion!==1)throw new Error("Cập nhật ChineseTest Runner để nhận bản sửa timeout đồng bộ ảnh, rồi mở lại hồ sơ.");
       if(saved)keepCloud(saved);setDraft(saved?.personal || local.personal);setLoaded(true);
       if(saved?.status==="draft")setNote("Đã khôi phục bản nháp. Bấm Lưu hồ sơ để đồng bộ sang ChineseTest.");
     } catch(e){if(mounted.current)setError((e as Error).message);} finally{if(mounted.current){setBusy(false);setProgress("");}}
@@ -55,11 +57,12 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
     try{
       let base64:string | undefined;
       if(p.photoVersion){
+        setProgress("Đang ghi nhận ảnh mới trên máy chạy…");
         await request("stage-profile",{accountId,photoVersion:p.photoVersion});
         setProgress("Đang đọc ảnh đã lưu…");base64=await savedPhoto(path,p.photoVersion);
       }
       setProgress(p.photoVersion!==p.syncedPhotoVersion?"Đang tải ảnh lên ChineseTest…":"Đang đồng bộ hồ sơ với máy chạy…");
-      const result=await request("save-profile",{accountId,personal:draft,photoVersion:p.photoVersion,base64,mimeType:p.photoMime});
+      const result=await synchronizeProfile(request,{accountId,personal:draft,photoVersion:p.photoVersion,base64,mimeType:p.photoMime},message=>{if(mounted.current)setProgress(message);},()=>mounted.current);
       setProgress("Đang xác nhận hồ sơ đã đồng bộ…");
       p=await profileApi<CloudProfile>(path+"/synced",{revision:p.revision,photoVersion:p.photoVersion,chineseTestPhoto:result.personal.photo});
       keepCloud(p);setDraft(result.personal);setNote("Đã lưu hồ sơ và đồng bộ ảnh sang ChineseTest.");

@@ -33,6 +33,24 @@ it("persists a send claim and rejects a second runner for the same candidate/exa
 it("is disabled unless explicitly configured",async()=>{
  const app=await httpFixture();try{expect((await app.api("chinesetest/devices")).status).toBe(404);expect(await(await fetch(app.config.origin+"/api/auth/config")).json()).not.toHaveProperty("chinesetestEnabled");}finally{await app.close();}
 },15000);
+it("returns encrypted sync progress while the upload is pending and acknowledges completion only after saving",async()=>{
+ const app=await httpFixture(undefined,false,true),runner=await connectRunner(app);
+ let release!:()=>void;runner.shared.uploadGate=new Promise<void>(r=>release=r);
+ try{
+  const device=await(await app.api("chinesetest/pair",0,{code:runner.code})).json() as Device;
+  const accountId=runner.data.accounts[0].view.id,photoVersion=crypto.randomUUID();
+  expect((await runner.command(device,"stage-profile",{accountId,photoVersion})).result.ok).toBe(true);
+  const started=await runner.command(device,"start-profile-sync",{accountId,photoVersion,personal:runner.data.accounts[0].personal,base64:"fixture",mimeType:"image/png"});
+  expect(started.status).toBe(200);expect(started.result.ok).toBe(true);
+  const id=started.result.data.id;
+  await expect.poll(async()=>(await runner.command(device,"profile-sync-status",{accountId,id})).result.data.phase).toBe("uploading");
+  expect(runner.data.accounts[0].syncedPhotoVersion).not.toBe(photoVersion);
+  release();
+  await expect.poll(async()=>(await runner.command(device,"profile-sync-status",{accountId,id})).result.data.phase).toBe("done");
+  expect((await runner.command(device,"profile-sync-status",{accountId,id})).result.data.result).toMatchObject({photoVersion,personal:{photo:"/fixture/new-portrait.jpg"}});
+  expect(runner.shared.uploadCalls).toBe(1);expect(runner.shared.submits).toHaveLength(0);
+ }finally{release();await runner.close();await app.close();}
+},15000);
 it("releases both local and cloud claims after verifying cancellation before granting a new run",async()=>{
  const app=await httpFixture(undefined,false,true),a=await connectRunner(app),b=await connectRunner(app);
  try{

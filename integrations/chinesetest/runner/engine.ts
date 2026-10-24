@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { identityKeys, fingerprint } from "../../hcmue/crypto";
 import { atDeadline } from "../../hcmue/runner/deadline";
-import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type Row, type Personal, type Target, type AccountView, type Run, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
+import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type ProfileSyncStatus, type Row, type Personal, type Target, type AccountView, type Run, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
 import { ChineseTestClient, ApiError, invalidSession, transientFailure, type Session } from "./client";
 import { LoginWindow } from "./login";
 import { candidateKey, inspectTarget, existingRegistration, centerFrom, readFeeQuote } from "./checks";
@@ -20,7 +20,9 @@ export class Engine {
   private publicClient: ChineseTestClient;
   private discoveries = new Map<string, { at: number; pending: boolean; promise: Promise<Row[]> }>();
   private writes: Promise<void> = Promise.resolve();
-  private mutations: Promise<void> = Promise.resolve();
+  private commands: Array<{command:Command;args:Row;limits:Limits;resolve(value:any):void;reject(error:unknown):void}>=[];
+  private draining=false;
+  private syncJobs=new Map<string,ProfileSyncStatus & {signature:string;createdAt:number}>();
   private closed = false;
   private loginAccountId?: string;
   private lastWall = Date.now(); private lastMono = performance.now(); private lag = 0;
@@ -51,7 +53,7 @@ export class Engine {
   }
   async identity() { return { id: this.data.id, name: this.data.name, platform: process.platform, publicKey: this.data.keys.publicKey, fingerprint: await fingerprint(this.data.keys.publicKey) }; }
   snapshot(): RunnerState {
-    return { protocolVersion: 1, profileSyncVersion: 1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
+    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
       accounts: this.data.accounts.map(a => ({ ...a.view })), plans: structuredClone(this.data.plans), schedules: this.data.schedules.map(({ personal: _p, identityHash: _h, accountKey: _k, ...s }) => {
         const { orderKey: _secret, ...attempt } = s.attempt; return structuredClone({ ...s, attempt });
       }), loginPending: this.login.pending, now: new Date().toISOString(), eventLoopLagMs: this.lag };
@@ -84,6 +86,26 @@ export class Engine {
   private async executeWork(command: Command, args: Row, limits: Limits): Promise<any> {
     if (this.closed) throw new Error("Runner đang dừng.");
     if (command === "state") return this.snapshot();
+    if(command==="profile-sync-status"){
+      const job=this.syncJobs.get(String(args.id));
+      if(!job || job.accountId!==args.accountId)throw new Error("Runner đã khởi động lại hoặc không còn lượt đồng bộ này. Mở lại hồ sơ và bấm Lưu hồ sơ để tiếp tục.");
+      const {signature:_signature,createdAt:_created,...status}=job;return structuredClone(status);
+    }
+    if(command==="start-profile-sync"){
+      const a=this.account(String(args.accountId));this.ensureEditable(a);
+      for(const [id,job] of this.syncJobs)if(["done","failed"].includes(job.phase)&&Date.now()-job.createdAt>10*60000)this.syncJobs.delete(id);
+      const personal=personalFrom(args.personal || {});
+      const signature=createHash("sha256").update(JSON.stringify({...personal,photo:"",photoVersion:args.photoVersion || null})).digest("hex");
+      const pending=[...this.syncJobs.values()].find(j=>j.accountId===a.view.id&&!["done","failed"].includes(j.phase));
+      if(pending){if(pending.signature!==signature)throw new Error("Máy đang đồng bộ một bản hồ sơ khác của tài khoản này. Chờ hoàn tất rồi lưu bản mới.");return {id:pending.id};}
+      for(const [id,job] of this.syncJobs)if(job.accountId===a.view.id)this.syncJobs.delete(id);
+      if(this.syncJobs.size>=MAX_ACCOUNTS)throw new Error("Máy đang đồng bộ nhiều hồ sơ. Chờ hoàn tất rồi thử lại.");
+      if(typeof args.base64==="string"&&args.base64.length>1_400_000)throw new Error("Ảnh quá lớn.");
+      const job:ProfileSyncStatus & {signature:string;createdAt:number}={id:randomUUID(),accountId:a.view.id,phase:"queued",signature,createdAt:Date.now()};
+      this.syncJobs.set(job.id,job);
+      void this.execute("save-profile",{...args,personal,syncJobId:job.id},limits).then(result=>{job.result=result;job.phase="done";},error=>{job.error=(error as Error).message;job.phase="failed";});
+      return {id:job.id};
+    }
     if (command === "stop-all") { for (const s of this.data.schedules) if (activeStatus(s.status) || s.status === "prepared") this.stop(s); await this.persist(); return this.snapshot(); }
     if (command === "stop") { const s = this.run(String(args.id)); if (activeStatus(s.status) || s.status === "prepared") this.stop(s); await this.persist(); return this.snapshot(); }
     if (command === "save-plan") {
@@ -124,7 +146,7 @@ export class Engine {
     }
     if (["read-profile", "stage-profile", "quote-fee", "inspect", "save-profile", "upload-photo", "remove", "prepare"].includes(command)) {
       const a = this.account(String(args.accountId)); const client = this.client(a);
-      if (command === "read-profile") return { personal: structuredClone(a.personal), photoVersion: a.photoVersion, syncedPhotoVersion: a.syncedPhotoVersion };
+      if (command === "read-profile") return { personal: structuredClone(a.personal), photoVersion: a.photoVersion, syncedPhotoVersion: a.syncedPhotoVersion,profileSyncJobsVersion:1 };
       if (command === "stage-profile") {
         this.ensureEditable(a);
         if (typeof args.photoVersion !== "string" || !/^[a-f0-9-]{36}$/.test(args.photoVersion)) throw new Error("Phiên bản ảnh không hợp lệ.");
@@ -146,6 +168,7 @@ export class Engine {
       }
       if (command === "save-profile") {
         this.ensureEditable(a);
+        const job=this.syncJobs.get(String(args.syncJobId));
         const previousPersonal=structuredClone(a.personal), previousSynced=a.syncedPhotoVersion;
         const personal=personalFrom(args.personal || {});
         // Photo paths are owned by the upload, not the caller's possibly stale form.
@@ -157,11 +180,14 @@ export class Engine {
         if (version && (a.syncedPhotoVersion !== version || !personal.photo)) {
           a.photoVersion=version; this.view(a); await this.persist();
           if (typeof args.base64 !== "string" || args.base64.length > 1_400_000) throw new Error("Cần ảnh đã lưu trên Supabase để đồng bộ.");
+          if(job)job.phase="checking-session";
           await this.checkIdentity(a);
+          if(job)job.phase="uploading";
           const path=await client.upload(Buffer.from(args.base64,"base64"),String(args.mimeType));
           a.personal.photo=path; a.syncedPhotoVersion=version; personal.photo=path;
         }
         validatePersonal(personal);
+        if(job)job.phase="saving";
         a.personal=personal; this.view(a);
         try { await this.persist(); }
         catch(e) { a.personal=previousPersonal; a.syncedPhotoVersion=previousSynced; this.view(a); throw e; }
@@ -185,6 +211,7 @@ export class Engine {
       const duplicate = await existingRegistration(client, target);
       if (duplicate) throw new Error("Test Records đã có đăng ký cùng cấp/ngày. Không tạo lượt mới.");
       const inspection = await inspectTarget(client, target, a.personal, await this.sites(target));
+      this.photoReady(a);
       if (command === "inspect") { const { payload: _payload, ...publicInspection } = inspection; return { ...publicInspection, personal: a.personal, checkedAt: Date.now() }; }
       const hash = candidateKey(a.session.key, a.personal, target);
       if (this.data.schedules.some(s => s.identityHash === hash && (s.attempt.count > 0 || s.status === "reserved") && !s.verifiedAbsent)) throw new Error("Lượt trước còn khóa gửi. Đối chiếu trước khi chuẩn bị lại.");
@@ -205,6 +232,7 @@ export class Engine {
       if (!s.test && args.claimKey !== s.identityHash) throw new Error("Thiếu khóa chống trùng từ website.");
       const version = s.version;
       const a = this.account(s.accountId); this.photoReady(a); await this.checkIdentity(a);
+      this.photoReady(a);
       if (this.closed || s.version !== version || s.status !== "prepared") throw new Error("Lượt đã dừng hoặc thay đổi trong khi bật lịch.");
       if (createHash("sha256").update(JSON.stringify(a.personal)).digest("hex") !== createHash("sha256").update(JSON.stringify(s.personal)).digest("hex")) throw new Error("Hồ sơ đã đổi. Chuẩn bị lại trước khi bật lịch.");
       s.status = "armed"; s.updatedAt = Date.now(); s.message = "Lịch đã lưu trên máy; chờ giờ mở.";
@@ -248,9 +276,20 @@ export class Engine {
   execute(command: Command, args: Row = {}, limits: Limits): Promise<any> {
     if (command === "state") return Promise.resolve(this.snapshot());
     // Stop can invalidate an in-flight read immediately, rather than wait behind it.
-    if (command === "read-profile" || command === "stop" || command === "stop-all") return this.executeWork(command, args, limits);
-    const work = this.mutations.then(() => this.executeWork(command, args, limits));
-    this.mutations = work.then(() => {}, () => {}); return work;
+    if (["read-profile","stage-profile","start-profile-sync","profile-sync-status","stop","stop-all"].includes(command)) return this.executeWork(command,args,limits);
+    return new Promise((resolve,reject)=>{
+      this.commands.push({command,args,limits,resolve,reject});
+      void this.drainCommands();
+    });
+  }
+  private async drainCommands(){
+    if(this.draining)return;this.draining=true;
+    try{while(this.commands.length){
+      // Finish the current read, then prioritize saves/login over queued catalogs.
+      const priority=this.commands.findIndex(item=>!["catalog","quote-fee"].includes(item.command));
+      const [item]=this.commands.splice(priority<0?0:priority,1);
+      try{item.resolve(await this.executeWork(item.command,item.args,item.limits));}catch(e){item.reject(e);}
+    }}finally{this.draining=false;}
   }
   private async runLoop(s: Run) {
     const version = s.version, deadline = s.target.targetAt + s.target.waitMs;

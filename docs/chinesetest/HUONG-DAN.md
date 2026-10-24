@@ -61,6 +61,23 @@ Mac và Windows có Google Chrome. Báo cáo ghi đúng hệ điều hành đã 
 - Có thể chọn từ danh mục hoặc nhập tên/mã điểm thi chưa xuất hiện cho ngày thi mong muốn. Danh mục chỉ gồm điểm đã được ChineseTest công bố, không bảo đảm mọi điểm ẩn đều có mặt. Runner chỉ gửi khi API đăng ký trả đúng điểm thi trong đúng ngày/cấp/hình thức và các kiểm tra khác đạt.
 - Lưu cấu hình không bật lịch. Kiểm tra API chỉ đọc, báo phí/môn đi kèm hoặc dữ liệu còn thiếu. Chuẩn bị lưu bản hồ sơ cố định cho lượt. Sửa hồ sơ/cấu hình cần chuẩn bị lại.
 
+## Khi đồng bộ ảnh phản hồi chậm
+
+Bấm **Lưu hồ sơ** một lần, chờ dòng tiến trình: chờ lượt → kiểm tra phiên → tải ảnh
+→ lưu kết quả → xác nhận. Website theo dõi từng bước; không giữ một yêu cầu dài
+trong suốt thời gian tải ảnh. Giữ runner, máy và mạng hoạt động đến khi có kết quả.
+
+Nếu ChineseTest chưa xác nhận tải ảnh, ảnh gốc và bản nháp trên Supabase vẫn còn.
+Mở lại website → chọn đúng máy/tài khoản → **Hồ sơ / ảnh** → **Lưu hồ sơ**;
+không cần chọn lại ảnh. Nếu lượt cũ còn chạy, runner tiếp tục theo dõi lượt đó;
+nếu đã lưu thành công cùng phiên bản ảnh, runner không upload lại. Lỗi tải ảnh
+không có nghĩa là đã gửi đơn đăng ký thi.
+
+Bản sửa phản hồi chậm cần **deploy website và tải gói runner mới trên cả Mac/Windows**.
+Dừng runner cũ khi không có lịch hoạt động, giải nén gói mới vào thư mục cố định
+và mở Start ChineseTest trong gói mới. Giữ nguyên kho ChineseTestRunner để giữ
+tài khoản/liên kết. Không cần chạy SQL hoặc thay biến môi trường cho riêng bản sửa này.
+
 ## Test và Live
 
 - Mặc định Diễn tập, không gọi POST đăng ký. Chọn giờ ít nhất 6 giây tới 7 ngày phía trước, chuẩn bị rồi bật lịch. Test đợi điểm thi và kiểm tra điều kiện thật; không chứng minh có slot.
