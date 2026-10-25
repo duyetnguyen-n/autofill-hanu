@@ -18,7 +18,7 @@ export class RegistrationScheduler {
   value?:RegistrationSchedule;
   private loaded=false;private queue=Promise.resolve();private timer?:ReturnType<typeof setInterval>;
   private preparing=new Set<string>();private prepared=new Map<string,number>();private launching=new Set<string>();
-  private replacing=false;
+  private replacing=false;private removingProfiles=new Set<string>();
   private launches=new Map<string,Promise<unknown>>();
   private prepareAttempt=new Map<string,number>();
   private watcherBusy=false;private watcherSent=0;private watcherFailures=new Set<string>();
@@ -138,16 +138,17 @@ export class RegistrationScheduler {
   });}
   async removeProfile(id:string){
     // Fence START before awaiting its durable transaction or queued callbacks.
-    this.hold(id);await this.launches.get(id);
+    this.removingProfiles.add(id);this.hold(id);await this.launches.get(id);
     return this.exclusive(async()=>{
       const s=this.value;if(!s)return;
+      for(const member of s.members.filter(m=>m.id===id))member.status='held';
       s.members=s.members.filter(m=>m.id!==id);
       if(s.watcher?.id===id){const w=s.watcher;delete s.watcher;if(this.hooks.connected(id))void this.hooks.command(id,'WATCH_FACEBOOK',{stop:true,token:w.token}).catch(()=>{});}
       if(s.watcherProfileId===id)delete s.watcherProfileId;
       if(!s.members.length)s.status='cancelled';
       if(s.lastError===s.watcherError)delete s.lastError;delete s.watcherError;
       this.watcherFailures.delete(id);this.watcherSent=0;await this.persist();
-    });
+    }).finally(()=>{this.removingProfiles.delete(id);});
   }
   hold(id:string){const s=this.value,m=s?.members.find(m=>m.id===id);if(!s||!this.active||!m||!['waiting','starting'].includes(m.status))return;
     // Synchronous fence: a pending durable START also observes this before send.
@@ -189,7 +190,7 @@ export class RegistrationScheduler {
     let w=s.watcher;
     if(!w||!this.hooks.connected(w.id)||this.watcherFailures.has(w.id)||sessions.find(p=>p.id===w!.id)?.facebookAccess?.permission==='missing'||s.watcherProfileId&&w.id!==s.watcherProfileId){
       if(w&&this.hooks.connected(w.id))void this.hooks.command(w.id,'WATCH_FACEBOOK',{stop:true,token:w.token}).catch(()=>{});
-      const candidates=sessions.filter(p=>this.hooks.connected(p.id)&&p.linked!==false&&!this.watcherFailures.has(p.id)&&p.facebookAccess?.permission!=='missing'&&(!s.watcherProfileId||p.id===s.watcherProfileId));
+      const candidates=sessions.filter(p=>!this.removingProfiles.has(p.id)&&this.hooks.connected(p.id)&&p.linked!==false&&!this.watcherFailures.has(p.id)&&p.facebookAccess?.permission!=='missing'&&(!s.watcherProfileId||p.id===s.watcherProfileId));
       const next=candidates.find(p=>p.facebookAccess?.permission==='granted'&&p.facebookAccess.reader==='ready')??candidates[0];
       if(!next){
         // Back off after trying all peers. Resetting the timestamp to zero on
@@ -220,7 +221,7 @@ export class RegistrationScheduler {
     if(!s.manualOnly&&(!captured||s.watcher))this.watch(s,sessions);
     const dispatch:typeof s.members=[];let reasonsChanged=false;
     for(const member of s.members){
-      if(!['waiting','starting'].includes(member.status)||this.launching.has(member.id))continue;
+      if(this.removingProfiles.has(member.id)||!['waiting','starting'].includes(member.status)||this.launching.has(member.id))continue;
       const session=sessions.find(p=>p.id===member.id),link=s.rehearsal?s.testForm:s.links[member.level];
       const reason=!session||!this.hooks.connected(member.id)?'Mở Chrome profile để kết nối':session.conflict?'Giải quyết xung đột hồ sơ':!session.synced?'Đang đồng bộ hồ sơ':!session.profile?'Chưa có hồ sơ':this.prepared.get(`${s.id}:${session.id}`)!==session.revision?(member.error??'Đang kiểm tra ảnh và chuẩn bị tab'):!link?.url||link.error?(link?.error??(s.rehearsal?'Chưa có form thử hợp lệ':'Chưa có link HSK hợp lệ')):s.rehearsal&&(!s.testForm?.url||s.testForm.error)?'Chưa có form thử hợp lệ':undefined;
       if(member.waitingReason!==reason){member.waitingReason=reason;reasonsChanged=true;}
@@ -238,7 +239,7 @@ export class RegistrationScheduler {
     if(dispatch.length||reasonsChanged||dirty)await this.persist();
     for(const member of dispatch){
       this.launching.add(member.id);
-      const valid=()=>this.value?.id===s.id&&this.active&&member.status==='starting'&&this.now()<Date.parse(s.expiresAt);
+      const valid=()=>!this.removingProfiles.has(member.id)&&s.members.includes(member)&&this.value?.id===s.id&&this.active&&member.status==='starting'&&this.now()<Date.parse(s.expiresAt);
       const launch=(async()=>{
         if(!valid())return;
         const group=await this.hooks.start(member.id,member.url!,s,valid);

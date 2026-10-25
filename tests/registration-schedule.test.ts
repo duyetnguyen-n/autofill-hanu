@@ -287,3 +287,10 @@ describe('Facebook permission routing and profile removal',()=>{
     await f.observe('HSK 4: '+four);await f.tick();expect(f.hooks.start.mock.calls.some(c=>c[0]==='profile-0')).toBe(false);
   });
 });
+
+it('fences deletion while a restored schedule is still loading',async()=>{
+  const original=fixture();await original.arm();const seed=original.saved()!;seed.manualOnly=true;seed.links={'4':{url:four,source:'manual',observedAt:''},'5':{url:five,source:'manual',observedAt:''}};
+  const f=fixture();let loaded!:(s:RegistrationSchedule)=>void;f.hooks.load.mockImplementation(()=>new Promise(r=>{loaded=r;}));
+  const ticking=f.engine.tick();await flush();const removing=f.engine.removeProfile('profile-0');loaded(seed);await Promise.all([ticking,removing]);await f.tick();
+  expect(f.engine.value?.members).toHaveLength(9);expect(f.hooks.start.mock.calls.some(c=>c[0]==='profile-0')).toBe(false);
+});
