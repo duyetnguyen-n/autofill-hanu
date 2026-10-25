@@ -28,6 +28,8 @@ try{
  await observe({error:'Không xác định duy nhất bài viết vì có nhiều vùng nội dung.'});
  await expect(page.locator('.schedule-monitor')).toHaveClass(/error/);await expect(page.locator('.schedule-monitor')).toHaveAttribute('role','alert');
  mkdirSync('test-results/extension-193',{recursive:true});await page.screenshot({path:'test-results/extension-193/manager-reader-error.png',fullPage:true});
+ await observe({error:'Chưa mở hết nội dung bài. Đã thử mở tự động; bấm Xem Facebook để mở Xem thêm thủ công.'});
+ await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);await expect(page.locator('.schedule-monitor')).toContainText('Chưa mở hết nội dung bài');
  await observe({text:'Thông báo chưa đăng link.'});await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);
  await page.screenshot({path:'test-results/extension-193/manager-reader-waiting.png',fullPage:true});
  await observe({text:'HSK 4: https://forms.gle/FixtureFour'});await expect(page.locator('.schedule-monitor')).toHaveClass(/success/);

@@ -103,3 +103,22 @@ it('distinguishes granted permission from missing reader registration and repair
   expect(await facebookAccessStatus(true)).toEqual({permission:'granted',reader:'ready'});
   api.scripting.getRegisteredContentScripts.mockRejectedValue(new Error('script failed'));expect(await facebookAccessStatus()).toMatchObject({permission:'granted',reader:'error',error:'script failed'});
 });
+
+it('protects an expansion that begins after a readable post from the fast reload cadence',async()=>{
+  vi.setSystemTime(100000);const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({accepted:true})));await watcher.command(config);
+  const sender={tab:{id:17},frameId:0,url:config.postUrl} as any;
+  await watcher.observation(sender,{...config,postKey:'456:123',text:'Bản xem trước'});
+  await vi.advanceTimersByTimeAsync(1400);
+  await watcher.observation(sender,{...config,postKey:'456:123',text:'',error:'Đang chờ mở nội dung',postState:'expanding'});
+  await vi.advanceTimersByTimeAsync(10000);expect(api.tabs.reload).not.toHaveBeenCalled();
+  await watcher.observation(sender,{...config,postKey:'456:123',text:'',error:'Chưa mở hết nội dung bài',postState:'collapsed'});
+  await vi.advanceTimersByTimeAsync(200);expect(api.tabs.reload).toHaveBeenCalledTimes(1);watcher.stop();
+});
+it('gives a late SPA expansion its own bounded window without extending it on repeated reports',async()=>{
+  vi.setSystemTime(100000);const watcher=new FacebookWatcher(()=>connected,vi.fn(async()=>({accepted:true})));await watcher.command(config);
+  await vi.advanceTimersByTimeAsync(18000);await watcher.command(config);
+  const sender={tab:{id:17},frameId:0,url:config.postUrl} as any,payload={...config,postKey:'456:123',text:'',error:'Đang chờ mở nội dung',postState:'expanding'};
+  await watcher.observation(sender,payload);
+  for(let n=0;n<11;n++){await vi.advanceTimersByTimeAsync(1000);await watcher.observation(sender,payload);}
+  expect(api.tabs.reload).not.toHaveBeenCalled();await vi.advanceTimersByTimeAsync(1200);expect(api.tabs.reload).toHaveBeenCalledTimes(1);watcher.stop();
+});

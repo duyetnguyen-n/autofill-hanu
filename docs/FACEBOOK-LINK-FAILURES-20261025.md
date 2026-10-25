@@ -1,6 +1,6 @@
 # Các trường hợp không lấy được hoặc không dùng được link Facebook
 
-Rà soát theo luồng của bản 1.9.3 ngày 25/10/2026. Đây là danh sách các điểm chặn trong mã và các điều kiện vận hành đã xác định; Facebook có thể thay đổi giao diện hoặc cách phân phối nội dung về sau.
+Rà soát theo luồng của bản 1.9.3; phần bài thu gọn đã bổ sung ở bản 1.9.4 ngày 25/10/2026. Đây là danh sách các điểm chặn trong mã và các điều kiện vận hành đã xác định; Facebook có thể thay đổi giao diện hoặc cách phân phối nội dung về sau.
 
 ## Lỗi đã sửa
 
@@ -40,7 +40,7 @@ Rà soát theo luồng của bản 1.9.3 ngày 25/10/2026. Đây là danh sách 
 | 19 | Script chưa chạy trong tab mở từ trước, worker lỗi/extension vừa reload | Khôi phục script; tải lại đúng cửa sổ bài. Server cần nhận lại trạng thái quyền và WATCH. |
 | 20 | Facebook đổi DOM, không tìm thấy vùng nội dung bài | Không quét cả feed để đoán. Cần cập nhật selector theo DOM thực tế; có thể dán nội dung/link tạm thời. |
 | 21 | Có nhiều bài/vùng nội dung không xác định duy nhất | Từ chối đọc nhầm; mở permalink của đúng bài, đóng lớp xem bài khác. |
-| 22 | Bài bị thu gọn, nút Xem thêm không nhận diện/bấm được | Link chưa có trong DOM. Mở rộng bài; cần cập nhật cách nhận diện nếu Facebook đổi nhãn. |
+| 22 | Bài bị thu gọn, nút Xem thêm không nhận diện/bấm được | Bản 1.9.4 tự thử tối đa 3 lần/10 giây cho mỗi lượt tải, nhận nút trong nội dung hoặc sát vùng thông điệp, chờ nội dung thay đổi ổn định hoặc bỏ giới hạn CSS. Không nhận link từ bản thu gọn; báo vàng nếu chưa xác nhận được. Tự đọc lại khi mở thủ công thành công. Không quét phần bình luận để tìm nút. |
 | 23 | Link chỉ trong ảnh, video, bình luận, tệp đính kèm hoặc trang bên ngoài | Bộ đọc hiện đọc phần thông điệp bài, không OCR và không suy đoán từ bình luận. Dán link xác minh được hoặc sửa nguồn. |
 | 24 | Nội dung quá dài trên 120.000 ký tự, dữ liệu sai cấu trúc | Bị giới hạn/từ chối báo cáo; rút gọn/dán trực tiếp link đúng HSK. |
 | 25 | Đóng cửa sổ theo dõi, chuyển tab đó sang bài khác | Phiên đọc dừng hoặc khóa bài không khớp; hệ thống cần mở lại đúng bài. |

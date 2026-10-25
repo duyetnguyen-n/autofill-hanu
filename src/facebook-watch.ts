@@ -21,6 +21,7 @@ export async function enableFacebookWatch(){
 }
 export class FacebookWatcher {
   private watch?:Watch;private timer?:ReturnType<typeof setInterval>;private nextReload=0;private loadingSince=0;private busy=false;
+  private expansionSince?:number;
   private watchRevision=0;private paused=false;private generation=0;private revoked=new Set<string>();
   constructor(private connected:()=>boolean,private report:(payload:Record<string,unknown>)=>Promise<unknown>){
     // HTTP complete precedes Facebook's SPA article rendering. Only a readable
@@ -29,7 +30,7 @@ export class FacebookWatcher {
     chrome.tabs.onRemoved.addListener(id=>{if(id===this.watch?.tabId)this.stop();});
     chrome.permissions?.onRemoved?.addListener(p=>{if(p.origins?.some(o=>o.includes('facebook.com')))this.stop();});
   }
-  stop(){this.generation++;this.watch=undefined;clearInterval(this.timer);this.timer=undefined;void chrome.storage.local.remove('facebookWatch');}
+  stop(){this.expansionSince=undefined;this.generation++;this.watch=undefined;clearInterval(this.timer);this.timer=undefined;void chrome.storage.local.remove('facebookWatch');}
   async command(payload:Record<string,unknown>){
     if(payload.stop){this.revoked.add(String(payload.token));if(this.watch?.token===payload.token||!this.watch)this.stop();return {stopped:true};}
     if(payload.focus){
@@ -68,7 +69,9 @@ export class FacebookWatcher {
   }
   async observation(sender:chrome.runtime.MessageSender,payload:any){
     const config=this.configuration(sender);if(!config||config.scheduleId!==payload.scheduleId||config.token!==payload.token||config.postKey!==payload.postKey||typeof payload.text!=='string'||payload.text.length>120000)throw new Error('Trang không thuộc phiên theo dõi Facebook.');
-    if(!payload.error&&payload.text.trim())this.loadingSince=0;
+    if(payload.postState==='expanding')this.expansionSince??=Date.now();
+    else if(payload.postState==='collapsed')this.expansionSince=undefined;
+    if(!payload.error&&payload.text.trim()){this.loadingSince=0;this.expansionSince=undefined;}
     const result=await this.report({scheduleId:config.scheduleId,token:config.token,postKey:config.postKey,text:payload.text,error:typeof payload.error==='string'?payload.error.slice(0,300):undefined});
     const reply=result as {pauseReload?:boolean;watchRevision?:number}|undefined;
     if(this.watch?.token===config.token&&reply?.pauseReload===true&&Number(reply.watchRevision??0)>=this.watchRevision){this.paused=true;this.watchRevision=Number(reply.watchRevision??0);}
@@ -81,13 +84,13 @@ export class FacebookWatcher {
     const fast=now>=Date.parse(w.watchAt),interval=fast?1500:10000;
     // Entering the fast phase must not wait for the preceding slow deadline.
     this.nextReload=Math.min(this.nextReload,now+interval);
-    if(now<this.nextReload||this.loadingSince&&now-this.loadingSince<20000)return;
+    if(now<this.nextReload||this.loadingSince&&now-this.loadingSince<20000||this.expansionSince!==undefined&&now-this.expansionSince<12000)return;
     this.busy=true;this.nextReload=now+interval;
     try{
       const tab=await chrome.tabs.get(w.tabId);
       if(this.watch!==w)return;
       if(facebookPostKey(tab.url??'')!==facebookPostKey(w.postUrl))throw new Error('Tab theo dõi đã chuyển khỏi bài đã chọn.');
-      this.loadingSince=now;await chrome.tabs.reload(w.tabId);
+      this.expansionSince=undefined;this.loadingSince=now;await chrome.tabs.reload(w.tabId);
     }catch(e){if(this.watch===w){this.nextReload=Date.now()+5000;await this.report({scheduleId:w.scheduleId,token:w.token,postKey:facebookPostKey(w.postUrl),text:'',error:(e as Error).message}).catch(()=>{});}}
     finally{this.busy=false;}
   }

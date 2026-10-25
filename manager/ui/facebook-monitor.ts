@@ -8,6 +8,6 @@ export function facebookProfileLabel(s:SessionView){
 }
 export function facebookMonitorTone(s:RegistrationSchedule):'warning'|'error'|'success'{
   const error=s.lastError??s.watcher?.error;
-  if(error)return /chưa.*(quyền|kết nối)|cho phép theo dõi|cấp quyền|mở chrome profile|đang (tải|chờ)|chờ (đọc|nội dung)|đăng nhập|chưa (tìm|thấy)|không có.*link/i.test(error)?'warning':'error';
+  if(error)return /chưa.*(quyền|kết nối)|cho phép theo dõi|cấp quyền|mở chrome profile|đang (tải|chờ)|chờ (đọc|nội dung)|đăng nhập|chưa mở hết nội dung|chưa (tìm|thấy)|không có.*link/i.test(error)?'warning':'error';
   return s.linksCaptured?'success':'warning';
 }
