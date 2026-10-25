@@ -405,6 +405,30 @@ export class CloudRepository {
     if (row) await requireAccount(this.pool, row.owner);
     return row?.owner as string | undefined;
   }
+  async deleteProfile(owner:string,id:string){
+    await transaction(this.pool,async db=>{
+      await this.store(owner).assertLease(db);
+      await db.query('SELECT user_id FROM hanu.accounts WHERE user_id=$1 FOR UPDATE',[owner]);
+      const row=(await db.query('SELECT id FROM hanu.sessions WHERE owner=$1 AND id=$2 FOR UPDATE',[owner,id])).rows[0];
+      if(!row)throw new CloudError('Không tìm thấy profile.',404);
+      const photos=(await db.query('SELECT object_path FROM hanu.attachments WHERE owner=$1 AND session=$2',[owner,id])).rows;
+      if(photos.length&&!this.objects.remove)throw new CloudError('Chưa hỗ trợ xóa ảnh. Profile chưa bị xóa.',503);
+      // Keep database references on storage failure so deletion can be retried.
+      // Object removal is idempotent; never report success with orphaned photos.
+      for(const photo of photos)await this.objects.remove!(photo.object_path);
+      await db.query('DELETE FROM hanu.pairing WHERE owner=$1 AND replace_session=$2',[owner,id]);
+      await db.query('DELETE FROM hanu.locks WHERE owner=$1 AND session=$2',[owner,id]);
+      await db.query('DELETE FROM hanu.audit WHERE owner=$1 AND session=$2',[owner,id]);
+      await db.query('DELETE FROM hanu.sessions WHERE owner=$1 AND id=$2',[owner,id]);
+      const groups=(await db.query('SELECT id,data FROM hanu.groups WHERE owner=$1 FOR UPDATE',[owner])).rows;
+      for(const row of groups){
+        const group=row.data as GroupView;if(!group.members.includes(id))continue;
+        group.members=group.members.filter(member=>member!==id);group.startResults=group.startResults?.filter(result=>result.id!==id);delete group.requestSignature;
+        if(group.members.length)await db.query('UPDATE hanu.groups SET data=$3 WHERE owner=$1 AND id=$2',[owner,row.id,JSON.stringify(group)]);
+        else await db.query('DELETE FROM hanu.groups WHERE owner=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM hanu.runs WHERE owner=$1 AND id=$2)',[owner,row.id]);
+      }
+    });
+  }
   async revoke(owner: string, id: string) {
     await this.store(owner).connected(id, false);
     await transaction(this.pool, async db => {

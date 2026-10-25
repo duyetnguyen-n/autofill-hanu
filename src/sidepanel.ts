@@ -23,25 +23,29 @@ const targetTabId = targetTabParam && /^\d+$/.test(targetTabParam) ? Number(targ
 let permissionPending=false;
 async function refreshFacebookPermission(){
   if(!chrome.permissions?.contains)return;
+  const box=document.getElementById('facebookPermission')!,button=document.getElementById('enableFacebook') as HTMLButtonElement;
   try{
     const granted=await chrome.permissions.contains({origins:FACEBOOK_ORIGINS});
+    const reply=await chrome.runtime.sendMessage({type:'FACEBOOK_STATUS'});
     if(permissionPending)return;
-    const button=document.getElementById('enableFacebook') as HTMLButtonElement;
-    document.getElementById('facebookPermission')!.dataset.granted=String(granted);
-    button.disabled=granted;button.textContent=granted?'✓  Đã cho phép theo dõi':'Cho phép theo dõi Facebook';
-    document.getElementById('facebookPermissionStatus')!.textContent=granted?'Profile này có thể đọc bài khi bạn bật lịch.':'Chỉ cần cấp quyền trên một profile đọc bài.';
-  }catch{document.getElementById('facebookPermissionStatus')!.textContent='Chưa kiểm tra được quyền Facebook. Bấm nút để thử lại.';}
+    if(reply?.ok===false)throw new Error(reply.error);
+    const status=reply?.status;
+    box.dataset.granted=String(granted);box.dataset.state=status?.reader==='error'?'error':!granted||status?.reader!=='ready'?'warning':'ready';
+    button.disabled=false;button.textContent=granted?'Kiểm tra lại bộ đọc Facebook':'Cho phép theo dõi Facebook';
+    document.getElementById('facebookPermissionStatus')!.textContent=!granted?'Chưa cấp quyền trên profile này.':status?.error??(status?.reader==='ready'?'Đã có quyền · bộ đọc sẵn sàng. Trạng thái đọc bài xem trên website.':'Đã có quyền · bấm kiểm tra lại để khôi phục bộ đọc.');
+  }catch(e){box.dataset.state='error';button.disabled=false;document.getElementById('facebookPermissionStatus')!.textContent=`Chưa kiểm tra được bộ đọc: ${(e as Error).message}`;}
 }
 document.getElementById('enableFacebook')?.addEventListener('click',()=>{
-  // Request directly in the click gesture. Never widen permissions on load.
-  const request=chrome.permissions.request({origins:FACEBOOK_ORIGINS});
+  // Keep the permission request in the click gesture; repair granted scripts directly.
+  const granted=document.getElementById('facebookPermission')!.dataset.granted==='true';
+  const request=granted?Promise.resolve(true):chrome.permissions.request({origins:FACEBOOK_ORIGINS});
   const button=document.getElementById('enableFacebook') as HTMLButtonElement;
   permissionPending=true;button.disabled=true;button.textContent='Đang chờ cấp quyền…';
   void request.then(async granted=>{
     if(!granted)throw new Error('Chưa cấp quyền; vẫn có thể dán link HSK trên màn quản lý.');
     const result=await chrome.runtime.sendMessage({type:'FACEBOOK_ENABLE'});if(result?.ok===false)throw new Error(result.error);
     permissionPending=false;await refreshFacebookPermission();
-  }).catch(e=>{document.getElementById('facebookPermissionStatus')!.textContent=(e as Error).message;}).finally(()=>{permissionPending=false;if(document.getElementById('facebookPermission')!.dataset.granted!=='true'){button.disabled=false;button.textContent='Cho phép theo dõi Facebook';}});
+  }).catch(e=>{document.getElementById('facebookPermission')!.dataset.state='error';document.getElementById('facebookPermissionStatus')!.textContent=(e as Error).message;}).finally(()=>{permissionPending=false;button.disabled=false;if(document.getElementById('facebookPermission')!.dataset.granted!=='true'){button.textContent='Cho phép theo dõi Facebook';}});
 });
 void refreshFacebookPermission();
 chrome.permissions?.onAdded?.addListener(refreshFacebookPermission);
@@ -386,7 +390,8 @@ async function refreshNative(){
   if(details.dataset.paired!==paired){details.open=!s.paired;details.dataset.paired=paired;}
   $(HTMLElement,'#pairingSummary').textContent=s.paired?'Quản lý liên kết':'Liên kết profile';
   const badge=$(HTMLElement,'#connectionBadge');badge.dataset.connected=String(s.connected);badge.textContent=s.connected?'Đã kết nối':s.paired?'Đang nối lại':'Chưa liên kết';
-  const session=$(HTMLElement,'#sessionInfo');session.hidden=!s.sessionId;session.textContent=s.sessionId?`Mã phiên: ${s.sessionId}`:'';
+  const session=$(HTMLElement,'#sessionInfo');session.hidden=!s.sessionId;session.textContent=s.sessionId?`Mã profile: ${s.sessionId}`:'';
+  const fbId=document.getElementById('facebookProfileId');if(fbId)fbId.textContent=s.sessionId?`Mã profile: …${s.sessionId.slice(-8)}`:'';
   const text=$(HTMLElement,'#nativeStatus');
   text.textContent=s.connected?`Profile này đã kết nối ${cloudOrigin()?'website':'app'} quản lý.`:s.error||(s.paired?(cloudOrigin()?'Liên kết được giữ nguyên. Đang kết nối lại website.':'Đã liên kết. Hãy mở app quản lý.'):(cloudOrigin()?'Liên kết một lần để quản lý profile trên website.':'Sao chép ID extension sang app để tạo mã liên kết.'));
   text.className=s.connected?'native-connected':s.error?'native-error':'muted';
@@ -397,7 +402,7 @@ if(cloudOrigin()){
   const idRow=document.querySelector<HTMLElement>('.extension-id-row');if(idRow)idRow.hidden=true;
   $(HTMLElement,'#connectionTitle').textContent='Kết nối website';
 }
-$(HTMLButtonElement,'#unlinkProfile').addEventListener('click',async()=>{try{await send({type:'NATIVE_UNLINK'});await refreshNative();}catch(e){$(HTMLElement,'#nativeStatus').textContent=(e as Error).message;}});
+$(HTMLButtonElement,'#unlinkProfile').addEventListener('click',async()=>{if(!window.confirm(cloudOrigin()?'Hủy liên kết và xóa vĩnh viễn profile, ảnh và lịch sử trên hệ thống? Thao tác không thể hoàn tác, không hủy đăng ký đã gửi. Hồ sơ lưu trên Chrome này vẫn còn.':'Hủy liên kết profile với app quản lý?'))return;try{await send({type:'NATIVE_UNLINK'});await refreshNative();}catch(e){$(HTMLElement,'#nativeStatus').textContent=(e as Error).message;}});
 $(HTMLButtonElement,'#pairProfile').addEventListener('click',async()=>{const button=$(HTMLButtonElement,'#pairProfile');button.disabled=true;button.textContent='Đang liên kết...';try{await send({type:'NATIVE_PAIR',code:$(HTMLInputElement,'#pairCode').value});await refreshNative();}catch(e){const status=$(HTMLElement,'#nativeStatus');status.textContent=(e as Error).message;status.className='native-error';}finally{button.disabled=false;button.textContent='Liên kết profile';}});
 void refreshNative();const statusTimer=setInterval(()=>{void refreshNative();reconcileVisibleRun();},3000);
 window.addEventListener('pagehide',()=>{clearInterval(statusTimer);window.removeEventListener('focus',reconcileVisibleRun);document.removeEventListener('visibilitychange',reconcileVisibleRun);},{once:true});

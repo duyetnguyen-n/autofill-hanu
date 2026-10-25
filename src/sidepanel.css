@@ -92,3 +92,5 @@ button.text-button { color: #25725b; background: transparent; padding: 0; min-he
 .connection-card [hidden] { display: none !important; }
 @media (max-width: 320px) { main { padding: 12px; }.connection-card { padding: 15px 12px; }.connection-heading { align-items: flex-start; flex-direction: column; gap: 6px; } }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+
+.facebook-permission[data-state="warning"] #facebookPermissionStatus{color:#865c16}.facebook-permission[data-state="error"] #facebookPermissionStatus{color:#b42318}.facebook-permission[data-granted="true"] .permission-button{cursor:pointer;opacity:1}.facebook-permission #facebookProfileId{font-size:10px;overflow-wrap:anywhere}

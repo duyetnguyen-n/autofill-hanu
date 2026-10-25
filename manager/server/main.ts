@@ -22,7 +22,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
   const webSockets=new WebSocketServer({noServer:true,maxPayload:1024*1024});const browsers=new Set<WebSocket>();
   let origin='';const cookie=`hanu=${uiToken}`;const authenticate=(req:IncomingMessage)=>req.headers.cookie?.split(';').some(c=>c.trim()===cookie)===true;
   let emergencyError='';
-  const state=()=>({sessions:store.sessions(),groups:store.groups(),registrationSchedule:coordinator.scheduler.value,platform:{os:process.platform,arch:process.arch},allowedExtensionIds:allowedIds(),emergencyError});
+  const state=()=>({sessions:coordinator.facebookSessions(store.sessions()),groups:store.groups(),registrationSchedule:coordinator.scheduler.value,platform:{os:process.platform,arch:process.arch},allowedExtensionIds:allowedIds(),emergencyError});
   function failClosed(error:unknown){if(!/database or disk is full|disk I\/O error/i.test(String(error)))return;emergencyError='Không lưu được tiến độ do ổ đĩa đầy hoặc lỗi ghi. Đã dừng các phiên. Giải phóng dung lượng rồi mở lại app.';for(const ws of coordinator.peers.values())if(ws.readyState===1){ws.send(JSON.stringify({type:'EMERGENCY_STOP',error:emergencyError}));ws.close(1011,'Storage unavailable');}try{coordinator.changed();}catch{}}
   function allowedIds():string[]{try{return JSON.parse(readFileSync(join(dir,'allowed-extensions.json'),'utf8'));}catch{return [];}}
   const peerLastSeen=new Map<string,number>();
@@ -51,6 +51,8 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req);return json(await coordinator.assignHsk(b.ids,b.level));}
         if(path==='/api/registration-schedule'&&req.method==='POST')return json(await coordinator.scheduler.arm(await body(req)));
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.cancel());}
+        if(path==='/api/registration-schedule/watcher'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.changeWatcher(b.id));}
+        if(path==='/api/registration-schedule/facebook-status'&&req.method==='POST'){await body(req);return json(await Promise.all(store.sessions().filter(s=>s.connected&&s.linked!==false).map(async s=>{try{await coordinator.command(s.id,'PING',{},undefined,5000);return {id:s.id,ok:true};}catch(e){return {id:s.id,ok:false,error:(e as Error).message};}})));}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.focusWatcher());}
         if((path==='/api/registration-schedule/pause'||path==='/api/registration-schedule/resume')&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduledControl(b.scheduleId,path.endsWith('/pause')?'PAUSE':'RESUME'));}
         if(path==='/api/registration-schedule/stop'&&req.method==='POST'){const b=await body(req);return json(await coordinator.stopScheduledRuns(b.scheduleId));}

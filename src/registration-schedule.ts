@@ -35,7 +35,7 @@ export interface RegistrationSchedule {
   finalQuestions?:Partial<Record<HskLevel,HskVerificationAnswer>>;rehearsalAnswer?:HskVerificationAnswer;linksCaptured?:boolean;watchRevision?:number;
   pausedAt?:string;manualOnly?:boolean;startOnLink?:boolean;rehearsal?:boolean;testForm?:HskLink;dateWarning?:string;watcherProfileId?:string;
   watcher?:{id:string;token:string;ready:boolean;error?:string};
-  lastReadAt?:string;lastObservedAt?:string;lastError?:string;createdAt:string;updatedAt:string;
+  lastReadAt?:string;lastObservedAt?:string;lastError?:string;watcherError?:string;createdAt:string;updatedAt:string;
 }
 export const activeSchedule=(s?:RegistrationSchedule)=>!!s&&!['finished','cancelled','expired'].includes(s.status);
 export function facebookPostKey(value:string):string|undefined {

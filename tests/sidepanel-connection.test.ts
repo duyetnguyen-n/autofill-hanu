@@ -10,6 +10,7 @@ function setup(granted=false){
   let allowed=granted,removed:Function|undefined;
   const request=vi.fn(async()=>{allowed=true;return true;}),send=vi.fn(async(m:any)=>{
     if(m.type==='GET_PANEL_STATE')return {profile:emptyProfile(),tabId:1};
+    if(m.type==='FACEBOOK_STATUS')return {ok:true,status:{permission:allowed?'granted':'missing',reader:allowed?'ready':'missing'}};
     if(m.type==='NATIVE_STATUS')return {extensionId:'a'.repeat(32),sessionId:'fixture-session',connected:true,paired:true};
     return {ok:true};
   });
@@ -18,9 +19,12 @@ function setup(granted=false){
 }
 it('shows the existing Facebook grant without prompting and updates after revocation',async()=>{
   const f=setup(true);await import('../src/sidepanel');
-  await vi.waitFor(()=>expect(document.querySelector<HTMLButtonElement>('#enableFacebook')!.disabled).toBe(true));
-  expect(document.querySelector('#enableFacebook')!.textContent).toContain('Đã cho phép');expect(f.request).not.toHaveBeenCalled();
-  f.revoke();await vi.waitFor(()=>expect(document.querySelector<HTMLButtonElement>('#enableFacebook')!.disabled).toBe(false));
+  await vi.waitFor(()=>expect(document.querySelector('#facebookPermissionStatus')!.textContent).toContain('Đã có quyền · bộ đọc sẵn sàng'));
+  expect(document.querySelector<HTMLButtonElement>('#enableFacebook')!.disabled).toBe(false);expect(f.request).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>('#enableFacebook')!.click();
+  await vi.waitFor(()=>expect(f.send).toHaveBeenCalledWith({type:'FACEBOOK_ENABLE'}));expect(f.request).not.toHaveBeenCalled();
+  await vi.waitFor(()=>expect(document.querySelector<HTMLButtonElement>('#enableFacebook')!.disabled).toBe(false));
+  f.revoke();await vi.waitFor(()=>expect(document.querySelector('#enableFacebook')!.textContent).toContain('Cho phép theo dõi Facebook'));
   expect(document.querySelector('#enableFacebook')!.textContent).toContain('Cho phép theo dõi Facebook');
 });
 it('requests permission only on click and preserves an expanded connection section across refreshes',async()=>{
@@ -34,4 +38,11 @@ it('requests permission only on click and preserves an expanded connection secti
   document.querySelector<HTMLButtonElement>('#enableFacebook')!.click();expect(f.request).toHaveBeenCalledOnce();
   await vi.waitFor(()=>expect(document.querySelector('#facebookPermission')!.getAttribute('data-granted')).toBe('true'));
   expect(f.send).toHaveBeenCalledWith({type:'FACEBOOK_ENABLE'});
+});
+
+it('requires a destructive warning before unlink and allows cancelling',async()=>{
+  const f=setup(true);await import('../src/sidepanel');await vi.waitFor(()=>expect(document.querySelector('#unlinkProfile')!.hasAttribute('hidden')).toBe(false));
+  const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+  document.querySelector<HTMLButtonElement>('#unlinkProfile')!.click();expect(confirm).toHaveBeenCalledWith(expect.stringContaining('xóa vĩnh viễn'));expect(f.send).not.toHaveBeenCalledWith({type:'NATIVE_UNLINK'});
+  confirm.mockReturnValue(true);document.querySelector<HTMLButtonElement>('#unlinkProfile')!.click();await vi.waitFor(()=>expect(f.send).toHaveBeenCalledWith({type:'NATIVE_UNLINK'}));confirm.mockRestore();
 });

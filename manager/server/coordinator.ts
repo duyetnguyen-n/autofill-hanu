@@ -2,6 +2,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
+import type {FacebookAccessStatus} from '../../src/protocol';
 import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, canStartSeparateTest, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
 import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode,type FormQuestionSummary} from '../../src/shared';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
@@ -15,6 +16,14 @@ export class Coordinator {
   peers=new Map<string,WebSocket>();
   pending=new Map<string,{session:string;resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
   private facebookPeers=new Map<string,{peer:WebSocket;capabilities:string[]}>();
+  private facebookStatuses=new Map<string,FacebookAccessStatus>();
+  facebookSessions(sessions:SessionView[]):SessionView[]{return sessions.map(s=>({...s,facebookAccess:this.peers.has(s.id)?this.facebookStatuses.get(s.id):undefined}));}
+  private facebookStatus(id:string,value:any){
+    if(!this.peers.has(id)||!value||!['granted','missing','unknown'].includes(value.permission)||!['ready','missing','error'].includes(value.reader))return;
+    const next:FacebookAccessStatus={permission:value.permission,reader:value.reader,...(typeof value.error==='string'?{error:value.error.slice(0,300)}:{})};
+    if(isDeepStrictEqual(this.facebookStatuses.get(id),next))return;
+    this.facebookStatuses.set(id,next);this.scheduler.facebookChanged(id);this.progressChanged();
+  }
   failures=new Map<string,Map<string,number>>();
   changed=()=>{};
   progressChanged=()=>this.changed();
@@ -45,7 +54,7 @@ export class Coordinator {
     this.scheduler=new RegistrationScheduler({
       load:async()=>store.registrationSchedule?.(),
       save:async s=>{if(!store.saveRegistrationSchedule)throw new Error('Server chưa hỗ trợ lưu lịch.');await store.saveRegistrationSchedule(s);},
-      sessions:async()=>store.sessions(),connected:id=>this.peers.has(id),
+      sessions:async()=>this.facebookSessions(await store.sessions()),connected:id=>this.peers.has(id),
       command:(id,kind,payload)=>this.command(id,kind,payload,undefined,5000),
       prepare:async id=>{
         const ping=await this.command(id,'PING',{},undefined,5000);if(!ping?.capabilities?.includes('scheduledHskLinks'))throw new Error('Cập nhật extension để dùng lịch HSK.');
@@ -79,6 +88,7 @@ export class Coordinator {
   async disconnect(id:string,ws:WebSocket) {
     if(this.peers.get(id)!==ws)return;this.peers.delete(id);
     this.facebookPeers.delete(id);
+    this.facebookStatuses.delete(id);
     this.runBuffer?.halt(id);
     const write=this.transition(id,async()=>{await this.runBuffer?.flush(id);this.runBuffer?.forget(id);await this.store.connected(id,false);});
     await this.attention.cancel(id);
@@ -112,6 +122,7 @@ export class Coordinator {
         try{if(this.peers.get(id)!==peer||peer.readyState!==1)throw new Error('Mất kết nối profile.');peer.send(JSON.stringify(command));}
         catch(e){clearTimeout(timer);this.pending.delete(commandId);reject(e);}
       });
+      if(kind==='PING'&&this.peers.get(id)===peer)this.facebookStatus(id,result?.facebookAccess);
       if(tracked)await this.receipt(id,{...receipt,state:'acknowledged',updatedAt:new Date().toISOString()});
       return result;
     }catch(e){
@@ -121,6 +132,7 @@ export class Coordinator {
     }
   }
   async receive(id:string,message:any) {
+    if(message.type==='FACEBOOK_STATUS'){this.facebookStatus(id,message.status);return;}
     if(message.type==='RESULT'){const p=this.pending.get(message.commandId);if(!p||p.session!==id)return;clearTimeout(p.timer);this.pending.delete(message.commandId);message.ok?p.resolve(message.result):p.reject(new Error(message.error??'Lệnh thất bại.'));return;}
     if(message.type==='REQUEST'&&message.kind==='FACEBOOK_OBSERVATION'&&typeof message.requestId==='string'){
       try{const result=await this.scheduler.observe(id,message);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,...result}));}

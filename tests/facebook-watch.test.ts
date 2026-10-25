@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-import {FacebookWatcher} from '../src/facebook-watch';
+import {FacebookWatcher,facebookAccessStatus} from '../src/facebook-watch';
 
 let updated:Function,removed:Function,connected=true;let data:Record<string,any>;let api:any;
 const config={scheduleId:'schedule',token:'token',postUrl:'https://www.facebook.com/story.php?story_fbid=123&id=456',watchAt:new Date(100000).toISOString(),expiresAt:new Date(400000).toISOString()};
@@ -94,4 +94,12 @@ it('ignores a lease renewal sent before the link was captured, but allows a newe
  await watcher.observation({tab:{id:17},frameId:0,url:config.postUrl} as any,{...config,postKey:'456:123',text:'HSK 4: https://forms.gle/Four'});
  await watcher.command({...config,watchRevision:1,pauseReload:false});await vi.advanceTimersByTimeAsync(12000);expect(api.tabs.reload).not.toHaveBeenCalled();
  await watcher.command({...config,watchRevision:3,pauseReload:false});await vi.advanceTimersByTimeAsync(1600);expect(api.tabs.reload).toHaveBeenCalled();watcher.stop();
+});
+
+it('distinguishes granted permission from missing reader registration and repairs only an existing grant',async()=>{
+  api.permissions.contains.mockResolvedValue(false);expect(await facebookAccessStatus(true)).toEqual({permission:'missing',reader:'missing'});expect(api.scripting.registerContentScripts).not.toHaveBeenCalled();
+  api.permissions.contains.mockResolvedValue(true);expect(await facebookAccessStatus()).toEqual({permission:'granted',reader:'missing'});
+  api.scripting.registerContentScripts.mockImplementation(async()=>{api.scripting.getRegisteredContentScripts.mockResolvedValue([{id:'hanu-facebook-message'}]);});
+  expect(await facebookAccessStatus(true)).toEqual({permission:'granted',reader:'ready'});
+  api.scripting.getRegisteredContentScripts.mockRejectedValue(new Error('script failed'));expect(await facebookAccessStatus()).toMatchObject({permission:'granted',reader:'error',error:'script failed'});
 });

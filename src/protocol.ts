@@ -23,7 +23,13 @@ export function sameExecution(a:ExecutionView|null|undefined,b:ExecutionView|nul
   const fields:Record<keyof ExecutionView,true>={runId:true,tabId:true,mode:true,status:true,managed:true,tabOpen:true,active:true,eventSeq:true,message:true,startedAt:true,updatedAt:true};
   return (Object.keys(fields) as (keyof ExecutionView)[]).every(key=>a[key]===b[key]);
 }
+export interface FacebookAccessStatus {
+  permission:'granted'|'missing'|'unknown';
+  reader:'ready'|'missing'|'error';
+  error?:string;
+}
 export interface SessionView {
+  facebookAccess?:FacebookAccessStatus;
   hskLevel?:import('./registration-schedule').HskLevel;
   id: string; name: string; expectedEmail: string; connected: boolean;
   /** Cloud token remains linked even while the Chrome profile is offline. */

@@ -132,7 +132,7 @@ export async function serveCloud(options: {
   const state = async (runtime: Runtime) => {
     runtime.snapshot ??= Promise.all([runtime.store.sessions(), runtime.store.groups()]).then(([sessions, groups]) => ({sessions,groups}));
     const saved = await runtime.snapshot;
-    return {sessions: runtime.coordinator.runBuffer!.overlay(saved.sessions),groups:saved.groups,registrationSchedule:runtime.coordinator.scheduler.value,owner:runtime.store.owner,
+    return {sessions: runtime.coordinator.facebookSessions(runtime.coordinator.runBuffer!.overlay(saved.sessions)),groups:saved.groups,registrationSchedule:runtime.coordinator.scheduler.value,owner:runtime.store.owner,
       allowedExtensionIds: [], platform: { os: 'cloud', arch: '' }, cloud: true, emergencyError};
   };
   function failClosed(error: unknown) {
@@ -355,6 +355,8 @@ export async function serveCloud(options: {
         if(path==='/api/registration-schedule'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,b.mode);return json(res,await coordinator.scheduler.arm(b));}
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
         if(path==='/api/registration-schedule/focus'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.focusWatcher());}
+        if(path==='/api/registration-schedule/watcher'&&req.method==='POST'){const b=await body(req,1024);return json(res,await coordinator.scheduler.changeWatcher(b.id));}
+        if(path==='/api/registration-schedule/facebook-status'&&req.method==='POST'){await body(req,1024);const profiles=(await store.sessions()).filter(s=>coordinator.peers.has(s.id)&&s.linked!==false);return json(res,await Promise.all(profiles.map(async s=>{try{await coordinator.command(s.id,'PING',{},undefined,5000);return {id:s.id,ok:true};}catch(e){return {id:s.id,ok:false,error:(e as Error).message};}})));}
         if((path==='/api/registration-schedule/pause'||path==='/api/registration-schedule/resume')&&req.method==='POST'){const b=await body(req,1024);if(path.endsWith('/resume'))assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduledControl(b.scheduleId,path.endsWith('/pause')?'PAUSE':'RESUME'));}
         if(path==='/api/registration-schedule/stop'&&req.method==='POST'){const b=await body(req,1024);return json(res,await coordinator.stopScheduledRuns(b.scheduleId));}
         if(path==='/api/registration-schedule/replace'&&req.method==='POST'){const b=await body(req,8192);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduler.replace(b.level,b.url));}
@@ -391,12 +393,13 @@ export async function serveCloud(options: {
             if (action === 'reconcile') return json(res, await coordinator.command(id, 'RECONCILE', {}, s.run?.runId));
             if (action === 'resolve') { if (!['received', 'not_received'].includes(value.result)) throw new CloudError('Kết quả xác minh không hợp lệ.'); await coordinator.resolve(id, value.result); return json(res, { ok: true }); }
             if (action === 'unlink') {
-              // Closing the socket halts the client, revocation prevents HELLO.
-              const peer = coordinator.peers.get(id);
-              peer?.send(JSON.stringify({ type: 'REVOKED' })); peer?.close(1008, 'Unlinked');
-              if (peer) await coordinator.disconnect(id, peer);
+              if(value.confirmDelete!==true)throw new CloudError('Cần xác nhận xóa vĩnh viễn profile, ảnh và lịch sử.',409);
+              await coordinator.scheduler.removeProfile(id);
+              const peer=coordinator.peers.get(id);
+              peer?.send(JSON.stringify({type:'REVOKED'}));peer?.close(1008,'Profile deleted');
+              if(peer)await coordinator.disconnect(id,peer);
               coordinator.runBuffer?.halt(id);await coordinator.runBuffer?.flush(id);coordinator.runBuffer?.forget(id);
-              await repository.revoke(user.id, id); coordinator.changed(); return json(res, { ok: true });
+              await repository.deleteProfile(user.id,id);coordinator.changed();return json(res,{ok:true});
             }
             if (action === 'attachment') {
               if (!s.profile) throw new CloudError('Đọc hồ sơ trước khi thêm ảnh.');
@@ -504,8 +507,19 @@ export async function serveCloud(options: {
           if (current!.coordinator.peers.get(id!) !== ws) throw new CloudError('Kết nối đã được thu hồi.', 403);
           if (m.protocol !== PROTOCOL_VERSION || m.sessionId !== id) throw new CloudError('Mã phiên không khớp kết nối.', 401);
           if(m.type==='REQUEST'&&m.kind==='UNLINK'){
-            await repository.revoke(owner!,id!);
-            ws.send(JSON.stringify({type:'REPLY',requestId:m.requestId,ok:true}));ws.close(1008,'Unlinked');current!.coordinator.changed();return;
+            try{
+              if(m.confirmDelete!==true)throw new CloudError('Cần xác nhận xóa vĩnh viễn profile, ảnh và lịch sử.',409);
+              await current!.coordinator.scheduler.removeProfile(id!);
+              await current!.coordinator.disconnect(id!,ws);
+              current!.coordinator.runBuffer?.halt(id!);await current!.coordinator.runBuffer?.flush(id!);current!.coordinator.runBuffer?.forget(id!);
+              await repository.deleteProfile(owner!,id!);
+              ws.send(JSON.stringify({type:'REPLY',requestId:m.requestId,ok:true}));ws.close(1008,'Profile deleted');current!.coordinator.changed();
+            }catch(error){
+              if(!(error instanceof CloudError)&&(error as any).code)failClosed(error);
+              ws.send(JSON.stringify({type:'REPLY',requestId:m.requestId,ok:false,error:error instanceof CloudError||!(error as any).code?(error as Error).message:'Không xóa được profile. Thử lại trên website.'}));
+              if(current!.coordinator.peers.get(id!)!==ws)ws.close(1011,'Delete incomplete');
+            }
+            return;
           }
           // Resume checks its form before returning its command RESULT. A load
           // failure may also wait for PAUSE while START is checking its form.

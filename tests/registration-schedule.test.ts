@@ -72,7 +72,7 @@ function fixture(seed?:RegistrationSchedule){
   let clock=start-360000,saved=seed?structuredClone(seed):undefined;
   const sessions:SessionView[]=Array.from({length:10},(_,i)=>({id:`profile-${i}`,name:`P${i}`,hskLevel:i%2?'5':'4',expectedEmail:`p${i}@example.test`,connected:true,lastSeen:'',revision:1,synced:true,profile:emptyProfile()}));
   const online=new Set(sessions.map(s=>s.id));
-  const hooks={load:vi.fn(async()=>saved),save:vi.fn(async(s:RegistrationSchedule)=>{saved=structuredClone(s);}),sessions:vi.fn(async()=>structuredClone(sessions)),connected:(id:string)=>online.has(id),command:vi.fn(async()=>({ready:true})),prepare:vi.fn(async(_id:string):Promise<number|void>=>{}),reset:vi.fn(async()=>{}),start:vi.fn(async(id:string,url:string,s:RegistrationSchedule,valid:()=>boolean):Promise<GroupView>=>{if(!valid())throw Error('cancelled');return {id:`run-${id}`,url,mode:s.mode,members:[id],paused:false,createdAt:new Date(clock).toISOString()};}),changed:vi.fn(),error:vi.fn()};
+  const hooks={load:vi.fn(async()=>saved),save:vi.fn(async(s:RegistrationSchedule)=>{saved=structuredClone(s);}),sessions:vi.fn(async()=>structuredClone(sessions)),connected:(id:string)=>online.has(id),command:vi.fn(async(_id:string,_kind:string,_payload:Record<string,unknown>)=>({ready:true})),prepare:vi.fn(async(_id:string):Promise<number|void>=>{}),reset:vi.fn(async()=>{}),start:vi.fn(async(id:string,url:string,s:RegistrationSchedule,valid:()=>boolean):Promise<GroupView>=>{if(!valid())throw Error('cancelled');return {id:`run-${id}`,url,mode:s.mode,members:[id],paused:false,createdAt:new Date(clock).toISOString()};}),changed:vi.fn(),error:vi.fn()};
   const engine=new RegistrationScheduler(hooks,()=>clock);
   const arm=(extra={})=>engine.arm({postUrl:post,startsAt:new Date(start).toISOString(),ids:sessions.map(s=>s.id),mode:'test',startOnLink:false,...extra});
   const observe=(text:string)=>engine.observe(engine.value!.watcher!.id,{scheduleId:engine.value!.id,token:engine.value!.watcher!.token,postKey:facebookPostKey(post),text});
@@ -255,5 +255,35 @@ describe('instant routing and recovery',()=>{
     expect(results[0].ok).toBe(false);expect(f.engine.value?.members[0]).toMatchObject({status:'held',error:'Lượt đã khóa gửi'});
     await f.observe(`HSK 4: ${four}`);await f.tick();expect(f.engine.value?.links['4']?.error).toMatch(/Đã loại link/);
     expect(f.hooks.start).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('Facebook permission routing and profile removal',()=>{
+  it('prefers the granted reader and never dispatches to known missing-permission profiles',async()=>{
+    const f=fixture();for(const s of f.sessions)s.facebookAccess={permission:'missing',reader:'missing'};
+    f.sessions[4].facebookAccess={permission:'granted',reader:'ready'};
+    await f.arm();await f.tick();expect(f.engine.value?.watcher?.id).toBe('profile-4');
+    expect(f.hooks.command.mock.calls.every(c=>c[0]==='profile-4')).toBe(true);
+  });
+  it('clears the previous profile permission failure when fallback succeeds',async()=>{
+    const f=fixture();f.hooks.command.mockRejectedValueOnce(new Error('Mở extension ở một profile → Cho phép theo dõi Facebook. Các profile khác không cần quyền này.'));
+    await f.arm();await f.tick();await f.tick();expect(f.engine.value?.watcher?.ready).toBe(true);
+    expect(f.engine.value?.lastError).toBeUndefined();expect(f.engine.value?.watcherError).toBeUndefined();
+  });
+  it('recovers a pinned missing grant immediately after its access report changes',async()=>{
+    const f=fixture();f.sessions[0].facebookAccess={permission:'missing',reader:'missing'};
+    await f.arm({watcherProfileId:'profile-0'});await f.tick();expect(f.engine.value?.lastError).toMatch(/Profile P0.*chưa được cấp quyền/);
+    expect(f.hooks.command).not.toHaveBeenCalled();
+    f.sessions[0].facebookAccess={permission:'granted',reader:'ready'};f.engine.facebookChanged('profile-0');await f.tick();
+    expect(f.engine.value?.watcher).toMatchObject({id:'profile-0',ready:true});expect(f.engine.value?.lastError).toBeUndefined();
+    await f.engine.changeWatcher('profile-2');await f.tick();expect(f.engine.value?.watcher?.id).toBe('profile-2');
+    await expect(f.engine.changeWatcher('foreign-profile')).rejects.toThrow('không thuộc tài khoản');
+  });
+  it('removes a deleted member and reader without affecting remaining members',async()=>{
+    const f=fixture();await f.arm({watcherProfileId:'profile-0'});await f.tick();
+    await f.engine.removeProfile('profile-0');f.sessions.splice(0,1);f.online.delete('profile-0');await f.tick();
+    expect(f.engine.value?.members.some(m=>m.id==='profile-0')).toBe(false);expect(f.engine.value?.members).toHaveLength(9);
+    expect(f.engine.value?.watcherProfileId).toBeUndefined();expect(f.engine.value?.watcher?.id).toBe('profile-1');
+    await f.observe('HSK 4: '+four);await f.tick();expect(f.hooks.start.mock.calls.some(c=>c[0]==='profile-0')).toBe(false);
   });
 });

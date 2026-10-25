@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import {digest} from '../../manager/server/store';
 import { WebSocket } from 'ws';
 import { httpFixture, users, extension } from './fixture';
 
@@ -69,7 +70,7 @@ it('pairs an unpacked extension without native registration and isolates API and
   expect(personal.sessions.map((s: any) => s.id)).toEqual([a.sessionId]);
 });
 
-it('keeps image drafts, isolates downloads and revokes tokens when a profile is unlinked', async () => {
+it('requires confirmation, deletes images and profile, and revokes credentials on unlink', async () => {
   const f = await setup(), a = await connectExtension(f);
   const profile = (await f.repository.store(users[0]).session(a.sessionId)).profile!;
   profile.values.fullName = 'Tên đã lưu';
@@ -86,10 +87,13 @@ it('keeps image drafts, isolates downloads and revokes tokens when a profile is 
   expect(download.headers.get('x-content-type-options')).toBe('nosniff');
   expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes);
   const closed = new Promise<number>(r => a.ws.once('close', r));
-  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(200);
+  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(409);
+  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {confirmDelete:true})).status).toBe(200);
   expect(await closed).toBe(1008);
   expect(await f.repository.authenticate(a.sessionId, extension, a.token)).toBeUndefined();
-  expect((await f.repository.store(users[0]).session(a.sessionId)).profile!.values.fullName).toBe('Tên đã lưu');
+  await expect(f.repository.store(users[0]).session(a.sessionId)).rejects.toMatchObject({status:404});
+  expect(f.blobs.size).toBe(0);expect((await f.api(path,0)).status).toBe(404);
+  expect((await(await f.api('state')).json()).sessions).toEqual([]);
 });
 
 it('rejects page-origin extension connections and spoofed profile tokens', async () => {
@@ -111,7 +115,7 @@ it('logout closes the browser session and invalidates unused tickets while linke
 });
 
 
-it('unlinks offline profiles, invalidates pending relink codes and preserves data through a new link', async () => {
+it('deletes offline profiles and their history/locks/groups, invalidating pending relink codes', async () => {
   const f = await setup(), a = await f.pair();
   await a.store.connected(a.sessionId, false);
   const other = await f.pair();
@@ -122,20 +126,17 @@ it('unlinks offline profiles, invalidates pending relink codes and preserves dat
   await f.pool.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,'retained-form','retained-run','received')", [users[0], a.sessionId]);
   const oldCode = await f.repository.pairCode(users[0], a.sessionId);
   expect(snapshot.linked).toBe(true);
-  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(200);
+  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {})).status).toBe(409);
+  expect((await f.api(`sessions/${a.sessionId}/unlink`, 0, {confirmDelete:true})).status).toBe(200);
   expect(await f.repository.authenticate(a.sessionId, extension, a.token)).toBeUndefined();
   await expect(f.repository.pair(crypto.randomUUID(), extension, oldCode)).rejects.toMatchObject({ status: 401 });
   const state = await (await f.api('state')).json();
-  expect(state.sessions.find((s: any) => s.id === a.sessionId)).toMatchObject({ linked: false, connected: false, profile: snapshot.profile });
-  expect(await a.store.history(a.sessionId)).toEqual([run]);
-  expect(await a.store.blocked(a.sessionId, 'retained-form')).toBe(true);
-  expect(await f.repository.authenticate(other.sessionId, extension, other.token)).toBe(users[0]);
-  const newCode = await f.repository.pairCode(users[0], a.sessionId);
-  const relink = await f.repository.pair(crypto.randomUUID(), extension, newCode);
-  expect(relink.sessionId).toBe(a.sessionId);
-  expect(await a.store.session(a.sessionId)).toMatchObject({ linked: true, profile: snapshot.profile });
-  expect(await a.store.history(a.sessionId)).toEqual([run]);
-  expect(await a.store.blocked(a.sessionId, 'retained-form')).toBe(true);
+  expect(state.sessions.some((s:any)=>s.id===a.sessionId)).toBe(false);
+  await expect(a.store.history(a.sessionId)).rejects.toMatchObject({status:404});
+  expect((await f.pool.query('SELECT * FROM hanu.locks WHERE session=$1',[a.sessionId])).rows).toEqual([]);
+  expect((await f.pool.query('SELECT * FROM hanu.groups WHERE id=$1',[run.runId])).rows).toEqual([]);
+  expect(await f.repository.authenticate(other.sessionId,extension,other.token)).toBe(users[0]);
+  await expect(f.repository.pairCode(users[0],a.sessionId)).rejects.toMatchObject({status:404});
 });
 
 it('starts from the linked extension through the same quota and Live gates as the manager', async () => {
@@ -181,4 +182,30 @@ it.each(['manager','extension'] as const)('allows a separate Test via %s without
   expect(await store.blocked(a.sessionId,'old-live')).toBe(true);
   expect((await store.history(a.sessionId)).find(r=>r.runId===previous.runId)).toMatchObject({status:'submit_uncertain',autoContinue:false,submitAttempted:true});
   expect(a.messages.filter(m=>m.type==='COMMAND'&&m.kind==='START')).toHaveLength(1);
+});
+
+it('reports Facebook access for the authenticated profile only and clears it on disconnect',async()=>{
+  const f=await setup(),a=await connectExtension(f),b=await connectExtension(f,1);
+  a.ws.send(JSON.stringify({type:'FACEBOOK_STATUS',protocol:1,sessionId:a.sessionId,status:{permission:'granted',reader:'ready'}}));
+  await expect.poll(async()=>(await(await f.api('state')).json()).sessions[0].facebookAccess).toEqual({permission:'granted',reader:'ready'});
+  expect((await(await f.api('state',1)).json()).sessions[0].facebookAccess).toBeUndefined();
+  const gone=new Promise(r=>a.ws.once('close',r));
+  a.ws.send(JSON.stringify({type:'FACEBOOK_STATUS',protocol:1,sessionId:b.sessionId,status:{permission:'missing',reader:'missing'}}));
+  await expect.poll(()=>a.messages.some(m=>m.type==='ERROR'&&/phiên/.test(m.error))).toBe(true);
+  expect((await(await f.api('state',1)).json()).sessions[0].facebookAccess).toBeUndefined();
+  await gone;
+  await expect.poll(async()=>(await(await f.api('state')).json()).sessions[0].facebookAccess).toBeUndefined();
+});
+it('unlinks through the extension with explicit confirmation and removes the profile',async()=>{
+  const f=await setup(),a=await connectExtension(f);
+  a.ws.send(JSON.stringify({type:'REQUEST',protocol:1,sessionId:a.sessionId,requestId:'delete-profile',kind:'UNLINK',confirmDelete:true}));
+  await expect.poll(()=>a.messages.find(m=>m.requestId==='delete-profile')).toMatchObject({ok:true});
+  await expect(f.repository.store(users[0]).session(a.sessionId)).rejects.toMatchObject({status:404});
+});
+it('leaves deletion retryable if photo storage refuses removal',async()=>{
+  const f=await setup(),a=await f.pair();await a.store.saveAttachment(a.sessionId,'photo',Buffer.from('photo'),digest(Buffer.from('photo')));
+  const remove=vi.spyOn(f.objects,'remove').mockRejectedValueOnce(new Error('storage unavailable'));
+  await expect(f.repository.deleteProfile(users[0],a.sessionId)).rejects.toThrow('storage unavailable');
+  expect(await a.store.session(a.sessionId)).toBeTruthy();expect(f.blobs.size).toBe(1);
+  remove.mockRestore();await f.repository.deleteProfile(users[0],a.sessionId);expect(f.blobs.size).toBe(0);
 });

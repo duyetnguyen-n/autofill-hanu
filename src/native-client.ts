@@ -1,4 +1,4 @@
-import { CHUNK_BYTES, NATIVE_HOST, PROTOCOL_VERSION, bytesToBase64, sha256, validateProfile, type Command, type ExecutionView } from './protocol';
+import { CHUNK_BYTES, NATIVE_HOST, PROTOCOL_VERSION, bytesToBase64, sha256, validateProfile, type Command, type ExecutionView,type FacebookAccessStatus } from './protocol';
 import { getProfile, getProfileRevision, getAttachment, saveAttachment, deleteAttachment, saveProfile } from './storage';
 import type { RunState, AttachmentRef } from './shared';
 import { cloudOrigin, websocketConnector, type Connector, type CoordinatorPort } from './coordinator-transport';
@@ -13,6 +13,7 @@ interface Adapter {
   reconcile():Promise<unknown>;
   execution?():Promise<ExecutionView|null>;
   watchFacebook?(payload:Record<string,unknown>):Promise<unknown>;
+  facebookStatus?():Promise<FacebookAccessStatus>;
 }
 export function createNativeClient(adapter:Adapter,options:{origin?:string;connector?:Connector}={}){
   const origin=options.origin??cloudOrigin(),cloud=!!origin;
@@ -33,6 +34,14 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   const requests=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
   const send=(m:Record<string,unknown>)=>{if(!port)throw new Error('Cầu nối chưa kết nối.');port.postMessage({...m,protocol:PROTOCOL_VERSION,sessionId:identity.sessionId});};
   function reportExecution(){if(!adapter.execution)return;executionQueue=executionQueue.then(async()=>{if(!connected)return;const sourceRunId=lastStateRunId;const execution=await adapter.execution!();if(connected&&sourceRunId===lastStateRunId)send({type:'EXECUTION',execution,sourceRunId});}).catch(()=>undefined);}
+  let facebookReport:Promise<void>|undefined;
+  function reportFacebook(){
+    if(!adapter.facebookStatus||!connected)return Promise.resolve();
+    if(facebookReport)return facebookReport;
+    const current=port,version=generation;
+    const work=adapter.facebookStatus().then(status=>{if(connected&&port===current&&version===generation)send({type:'FACEBOOK_STATUS',status});}).catch(()=>{});
+    facebookReport=work;void work.finally(()=>{if(facebookReport===work)facebookReport=undefined;});return work;
+  }
   async function status(){await ensureIdentity();return {sessionId:identity.sessionId,extensionId:chrome.runtime.id,paired:!!identity.token,connected,error,cloud,origin};}
   async function ensureIdentity(){if(identity)return;identityLoading??=(async()=>{const s=await chrome.storage.local.get(identityKey);identity=s[identityKey]??{sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});})();await identityLoading;}
   function pairingError(message:string){error=message;if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error(message));pairing=undefined;}pairCode=undefined;}
@@ -49,8 +58,8 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   }
   function onMessage(m:any,current:CoordinatorPort){
     if(m.type==='EMERGENCY_STOP'){connected=false;pairingError(m.error??'App không lưu được tiến độ. Đã dừng phiên.');void adapter.disconnected().catch(()=>undefined);return;}
-    if(m.type==='PAIRED'){identity.token=m.token;if(cloud&&typeof m.sessionId==='string')identity.sessionId=m.sessionId;pairCode=undefined;connected=true;attempt=0;clearAlarm();error='';void chrome.storage.local.set({[identityKey]:identity}).then(()=>{if(pairing){clearTimeout(pairing.timer);pairing.resolve();pairing=undefined;}return adapter.reconcile();}).catch(e=>pairingError((e as Error).message));return;}
-    if(m.type==='WELCOME'){connected=true;attempt=0;clearAlarm();error='';void adapter.reconcile().then(reportExecution).catch(e=>pairingError((e as Error).message));return;}
+    if(m.type==='PAIRED'){identity.token=m.token;if(cloud&&typeof m.sessionId==='string')identity.sessionId=m.sessionId;pairCode=undefined;connected=true;attempt=0;clearAlarm();error='';void reportFacebook();void chrome.storage.local.set({[identityKey]:identity}).then(()=>{if(pairing){clearTimeout(pairing.timer);pairing.resolve();pairing=undefined;}return adapter.reconcile();}).catch(e=>pairingError((e as Error).message));return;}
+    if(m.type==='WELCOME'){connected=true;attempt=0;clearAlarm();error='';void reportFacebook();void adapter.reconcile().then(reportExecution).catch(e=>pairingError((e as Error).message));return;}
     if(m.type==='REVOKED'||m.type==='UNPAIRED'&&cloud){connected=false;stopped=true;generation++;clearAlarm();pairingError('Profile chưa liên kết hoặc đã bị ngắt. Lấy mã mới trên website để liên kết lại.');identity={sessionId:crypto.randomUUID()};void chrome.storage.local.set({[identityKey]:identity});void adapter.disconnected();port=undefined;current.disconnect();return;}
     if(m.type==='UNPAIRED'){connected=false;return;}
     if(m.type==='ERROR'){
@@ -97,7 +106,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const readOnly=['WATCH_FACEBOOK','PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
     if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:'2026-10-21-verification-1.8.1',capabilities:['preparedFormTab','sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:chrome.runtime.getManifest?.().version??'unknown',facebookAccess:await adapter.facebookStatus?.(),capabilities:['preparedFormTab','sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='WATCH_FACEBOOK'){if(!adapter.watchFacebook)throw new Error('Extension chưa hỗ trợ theo dõi Facebook.');result=await adapter.watchFacebook(p);}
     else if(c.kind==='FOCUS')result=await adapter.focus();
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
@@ -126,7 +135,7 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const requestId=crypto.randomUUID();
     // Controls can include profile transfer or account/page checks. Match the
     // coordinator's command budget; short submit grants keep their own limit.
-    const timeout=kind==='ATTENTION_ACQUIRE'?180000:['START','RESTART','RECOVER'].includes(kind)?120000:['CONTROL','AUTO_RESUME'].includes(kind)?60000:5000;
+    const timeout=kind==='ATTENTION_ACQUIRE'?180000:['START','RESTART','RECOVER'].includes(kind)?120000:['CONTROL','AUTO_RESUME','UNLINK'].includes(kind)?60000:5000;
     return new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{
         requests.delete(requestId);
@@ -139,14 +148,14 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
   }
 
   return {
-    status,request,isConnected:()=>connected,
+    status,request,isConnected:()=>connected,facebookChanged:reportFacebook,
     boot:()=>void connect(),
     async pair(code:string){await ensureIdentity();if(identity.token){await connect();return status();}if(pairing)throw new Error('Đang liên kết, vui lòng chờ phản hồi.');if(!/^[A-F0-9]{12}$/.test(code.trim().toUpperCase()))throw new Error('Mã liên kết phải gồm 12 ký tự. Sao chép mã mới từ app.');pairCode=code.trim().toUpperCase();error='';stopped=false;generation++;const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);const confirmation=new Promise<void>((resolve,reject)=>{pairing={resolve,reject,timer:setTimeout(()=>pairingError('Chưa xác nhận sau 10 giây. Kiểm tra trang quản lý và lấy mã mới.'),10000)};});if(connecting){await new Promise<void>(resolve=>{const timer=setInterval(()=>{if(!connecting){clearInterval(timer);resolve();}},50);});}await connect();await confirmation;return status();},
-    async unlink(){await adapter.disconnected();if(cloud&&connected)await request('UNLINK');stopped=true;connected=false;generation++;clearAlarm();const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);identity={sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});return status();},
+    async unlink(){if(cloud&&!connected)throw new Error('Kết nối lại website để xóa profile trên hệ thống.');await adapter.disconnected();if(cloud)await request('UNLINK',undefined,{confirmDelete:true});stopped=true;connected=false;generation++;clearAlarm();const old=port;port=undefined;old?.disconnect();clearTimeout(reconnectTimer);identity={sessionId:crypto.randomUUID()};await chrome.storage.local.set({[identityKey]:identity});return status();},
     state(run:RunState){if(run.managed)lastStateRunId=run.runId;if(connected&&run.managed)send({type:'STATE',run});if(connected)reportExecution();},
     profileChanged(){if(connected)send({type:'PROFILE_CHANGED'});},
     failure(run:RunState){if(connected)send({type:'LOAD_FAILURE',runId:run.runId});},
-    heartbeat(){if(connected){send({type:'HEARTBEAT'});reportExecution();}}
+    heartbeat(){if(connected){send({type:'HEARTBEAT'});reportExecution();void reportFacebook();}}
     ,dispose(){stopped=true;connected=false;generation++;clearAlarm();clearTimeout(reconnectTimer);if(pairing){clearTimeout(pairing.timer);pairing.reject(new Error('Đã đóng kết nối.'));pairing=undefined;}const old=port;port=undefined;old?.disconnect();for(const p of requests.values()){clearTimeout(p.timer);p.reject(new Error('Đã đóng kết nối.'));}requests.clear();}
   };
 }

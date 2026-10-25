@@ -1,11 +1,23 @@
 import {facebookPostKey} from './registration-schedule';
+import type {FacebookAccessStatus} from './protocol';
 export const FACEBOOK_ORIGINS=['https://www.facebook.com/*'];
 const SCRIPT_ID='hanu-facebook-message';
+/** Inspect this Chrome profile only; repair registration without requesting new permissions. */
+export async function facebookAccessStatus(repair=false):Promise<FacebookAccessStatus>{
+  try{
+    if(!await chrome.permissions.contains({origins:FACEBOOK_ORIGINS}))return {permission:'missing',reader:'missing'};
+    try{
+      if(repair)await enableFacebookWatch();
+      const scripts=await chrome.scripting.getRegisteredContentScripts({ids:[SCRIPT_ID]});
+      return {permission:'granted',reader:scripts.length?'ready':'missing'};
+    }catch(e){return {permission:'granted',reader:'error',error:(e as Error).message.slice(0,300)};}
+  }catch(e){return {permission:'unknown',reader:'error',error:(e as Error).message.slice(0,300)};}
+}
 interface Watch {scheduleId:string;token:string;postUrl:string;watchAt:string;expiresAt:string;tabId:number;leaseUntil:number}
 export async function enableFacebookWatch(){
-  if(!await chrome.permissions.contains({origins:FACEBOOK_ORIGINS}))throw new Error('Mở extension ở một profile → Cho phép theo dõi Facebook. Các profile khác không cần quyền này.');
+  if(!await chrome.permissions.contains({origins:FACEBOOK_ORIGINS}))throw new Error('Profile này chưa có quyền Facebook. Mở extension của đúng profile → Cho phép theo dõi Facebook.');
   const scripts=await chrome.scripting.getRegisteredContentScripts({ids:[SCRIPT_ID]});
-  if(!scripts.length)await chrome.scripting.registerContentScripts([{id:SCRIPT_ID,matches:FACEBOOK_ORIGINS,js:['facebook-content.js'],runAt:'document_start',persistAcrossSessions:true}]);
+  if(!scripts.length){try{await chrome.scripting.registerContentScripts([{id:SCRIPT_ID,matches:FACEBOOK_ORIGINS,js:['facebook-content.js'],runAt:'document_start',persistAcrossSessions:true}]);}catch(e){if(!(await chrome.scripting.getRegisteredContentScripts({ids:[SCRIPT_ID]})).length)throw e;}}
 }
 export class FacebookWatcher {
   private watch?:Watch;private timer?:ReturnType<typeof setInterval>;private nextReload=0;private loadingSince=0;private busy=false;
