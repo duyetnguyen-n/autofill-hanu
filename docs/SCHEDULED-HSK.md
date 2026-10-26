@@ -7,7 +7,7 @@
 
 ## Nguồn link
 
-**Facebook:** cấp quyền tùy chọn tại một extension, dùng permalink của bài thông báo. Tool chỉ đọc nội dung của bài; chỉ giữ link theo nhãn HSK có trong các profile của lượt này, bỏ form thử và bình luận, giữ tham số điền sẵn. Link trùng được gộp; nhiều link khác nhau cho cùng HSK hoặc ngày đăng ký khác lịch sẽ có lỗi rõ ràng. Giờ đặt dùng để đối chiếu đợt và tăng nhịp tìm link trước 30 giây; không phải điều kiện trì hoãn chạy.
+**Facebook:** cấp quyền tùy chọn tại một extension, dùng permalink của bài thông báo. Tool chỉ đọc nội dung của bài; chỉ giữ link theo nhãn HSK có trong các profile của lượt này, bỏ form thử và bình luận, giữ tham số điền sẵn. Link trùng được gộp; nhiều link khác nhau cho cùng HSK sẽ có lỗi rõ ràng. Ngày/giờ đăng ký trong bài khác lịch chỉ hiện cảnh báo vàng; tool vẫn lấy link và chạy bình thường khi profile sẵn sàng. Giờ đặt dùng để tăng nhịp tìm link trước 30 giây; không phải điều kiện trì hoãn chạy.
 
 Khi đã lấy đủ link cho các cấp độ còn chờ, tool chốt nguồn và yêu cầu extension **ngừng tải lại Facebook ngay trong phản hồi nhận link**, kể cả khi profile chưa kết nối hoặc đang chuẩn bị. Tab Facebook vẫn có thể xem lại. Những cấp chưa có link vẫn được tìm tiếp. Link bị loại thủ công không được Facebook tự khôi phục.
 

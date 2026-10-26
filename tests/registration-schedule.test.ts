@@ -136,10 +136,12 @@ describe('durable scheduled dispatch',()=>{
     const calls=f.hooks.command.mock.calls.length;f.setTime(start+3600000);await f.tick();expect(f.hooks.command).toHaveBeenCalledTimes(calls);
     await f.engine.setPaused(false,id);await f.tick();expect(f.engine.value?.watcher?.token).not.toBe(token);expect(f.engine.value?.watcher?.ready).toBe(true);
   });
-  it('shows discovered links with a blocking date error during a normal run',async()=>{
-    const f=fixture();await f.arm();f.setTime(start-30000);await f.tick();f.setTime(start);
+  it.each(['test','live'] as const)('warns about a different date without blocking automatic %s dispatch',async mode=>{
+    const f=fixture();await f.arm({mode});f.setTime(start-30000);await f.tick();f.setTime(start);
     await f.observe('Đăng ký từ 08:00 ngày 20.10.2026\nHSK 4: '+four);await f.tick();
-    expect(f.engine.value?.links['4']).toMatchObject({url:four,error:expect.stringContaining('khác lịch')});expect(f.hooks.start).not.toHaveBeenCalled();
+    expect(f.engine.value?.dateWarning).toMatch(/khác lịch/);expect(f.engine.value?.lastError).toBeUndefined();
+    expect(f.engine.value?.links['4']).toMatchObject({url:four});expect(f.engine.value?.links['4']?.error).toBeUndefined();
+    expect(f.hooks.start).toHaveBeenCalledTimes(5);expect(f.hooks.start.mock.calls.every(c=>c[1]===four&&c[2].mode===mode)).toBe(true);
   });
   it('rejects Live rehearsals and watcher profiles from another account',async()=>{
     const f=fixture();await expect(f.arm({mode:'live',rehearsal:true})).rejects.toThrow('chỉ dùng chế độ Test');
@@ -177,10 +179,11 @@ describe('durable scheduled dispatch',()=>{
     await f.observe('Link sẽ có sau');expect(f.engine.value?.links).toEqual({});
     for(const p of f.sessions)f.online.add(p.id);f.setTime(start);await f.tick();expect(f.hooks.start).not.toHaveBeenCalled();
   });
-  it('keeps verified links through slow refreshes but blocks a previous registration date',async()=>{
+  it('dispatches remaining levels from an older date while preserving the warning after completion',async()=>{
     const f=fixture();await f.arm();f.setTime(start-30000);await f.tick();await f.observe(`HSK 4: ${four}`);
     f.setTime(start);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(5);
-    await f.observe(`Đăng ký từ 08:00 ngày 20.10.2026\nHSK 5: ${five}`);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(5);expect(f.engine.value?.lastError).toMatch(/khác lịch/);
+    await f.observe(`Đăng ký từ 08:00 ngày 20.10.2026\nHSK 5: ${five}`);await f.tick();expect(f.hooks.start).toHaveBeenCalledTimes(10);
+    expect(f.engine.value?.dateWarning).toMatch(/khác lịch/);expect(f.engine.value?.lastError).toBeUndefined();expect(f.engine.value?.status).toBe('finished');
   });
   it('holds only the stopped profile and cancellation fences queued starts',async()=>{
     const f=fixture();await f.arm({links:{'4':four,'5':five}});f.engine.hold('profile-0');f.setTime(start-30000);await f.tick();

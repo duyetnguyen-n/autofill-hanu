@@ -8,6 +8,9 @@ it('never renders missing permission, waiting content or an actual failure as gr
   expect(tone({})).toBe('warning');expect(tone({lastError:'ND: Mở extension ở một profile → Cho phép theo dõi Facebook.'})).toBe('warning');
   expect(tone({lastError:'Có nhiều bài viết; không xác định được đúng bài.'})).toBe('error');
   expect(tone({linksCaptured:true})).toBe('success');expect(tone({linksCaptured:true,lastError:'Sai ngày đăng ký'})).toBe('error');
+  expect(tone({dateWarning:'Giờ/ngày đăng ký trong bài khác lịch đã đặt.'})).toBe('warning');
+  expect(tone({linksCaptured:true,dateWarning:'Giờ/ngày đăng ký trong bài khác lịch đã đặt.'})).toBe('warning');
+  expect(tone({dateWarning:'Khác lịch',lastError:'Không xác định được đúng bài.'})).toBe('error');
 });
 it('shows the exact profile suffix and distinguishes connection, grant and reader health',()=>{
   expect(facebookProfileLabel({id:'test-12345678',name:'ND',connected:true,facebookAccess:{permission:'granted',reader:'ready'}} as any)).toContain('ND · …12345678 · đã có quyền');

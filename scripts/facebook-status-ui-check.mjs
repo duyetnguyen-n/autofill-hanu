@@ -17,8 +17,8 @@ try{
  const schedule=await app.coordinator.scheduler.arm({ids:[ids[0]],postUrl:'https://www.facebook.com/story.php?story_fbid=123&id=456',startsAt:new Date(Date.now()+600000).toISOString(),mode:'test'});
  await expect.poll(()=>app.coordinator.scheduler.value?.watcher?.ready).toBe(true);
  expect(app.coordinator.scheduler.value.watcher.id).toBe(ids[1]);
- browser=await chromium.launch({channel:'chromium',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto(app.url);await page.getByRole('switch',{name:'Đăng ký theo cấp độ HSK',exact:true}).check();
+ browser=await chromium.launch({channel:process.env.HANU_TEST_BROWSER??(process.platform==='win32'?'msedge':'chromium'),headless:true});const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(app.url);await expect(page.getByRole('switch',{name:'Đăng ký theo cấp độ HSK',exact:true})).toBeChecked();
  await expect(page.locator('.schedule-reader-identity')).toContainText('22222222');
  await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);
  const source=page.getByLabel('Profile đọc Facebook',{exact:true});await expect(source).toBeEnabled();await source.selectOption(ids[0]);
@@ -32,8 +32,14 @@ try{
  await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);await expect(page.locator('.schedule-monitor')).toContainText('Chưa mở hết nội dung bài');
  await observe({text:'Thông báo chưa đăng link.'});await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);
  await page.screenshot({path:'test-results/extension-193/manager-reader-waiting.png',fullPage:true});
+ await observe({text:'Đăng ký từ 08:00 ngày 01.01.2020\nHSK 4: link sẽ cập nhật'});
+ await expect(page.locator('.schedule-monitor')).toHaveClass(/warning/);
+ await expect(page.locator('.schedule-monitor')).toHaveAttribute('role','status');
+ await expect(page.locator('.schedule-date-warning')).toContainText('vẫn lấy link và chạy bình thường');
+ await page.screenshot({path:'test-results/extension-193/manager-reader-date-warning.png',fullPage:true});
  await observe({text:'HSK 4: https://forms.gle/FixtureFour'});await expect(page.locator('.schedule-monitor')).toHaveClass(/success/);
+ await expect(page.locator('.schedule-date-warning')).toHaveCount(0);
  await page.screenshot({path:'test-results/extension-193/manager-reader-success.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- expect(errors).toEqual([]);console.log('PASS: ready reader chosen, active source switch, missing grant yellow, parse error red/alert, waiting yellow, captured links green, desktop/mobile layout. Synthetic profiles only.');
+ expect(errors).toEqual([]);console.log('PASS: ready reader chosen, active source switch, missing grant yellow, parse error red/alert, waiting yellow, captured links green, date mismatch yellow/status with readable notice, desktop/mobile layout. Synthetic profiles only.');
 }finally{await browser?.close();await app?.close();rmSync(dir,{recursive:true,force:true});}

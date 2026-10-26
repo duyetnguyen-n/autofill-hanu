@@ -79,7 +79,7 @@ function registrationTime(line:string):number|undefined {
 }
 export function registrationDateError(text:string,startsAt:string):string|undefined {
   const times=text.normalize('NFKC').split(/\r?\n/).map(registrationTime).filter((t):t is number=>t!==undefined);
-  if(times.length&&!times.includes(Date.parse(startsAt)))return 'Giờ/ngày đăng ký trong bài khác lịch đã đặt. Giữ chờ; có thể dán link đúng vào ô HSK.';
+  if(times.length&&!times.includes(Date.parse(startsAt)))return 'Giờ/ngày đăng ký trong bài khác lịch đã đặt. Tool vẫn lấy link và chạy bình thường khi profile sẵn sàng.';
 }
 export function parseHskLinks(text:string,startsAt?:string):Partial<Record<HskLevel,{url?:string;error?:string}>> {
   const lines=text.normalize('NFKC').split(/\r?\n/),hasTimes=!!startsAt&&lines.some(l=>registrationTime(l)!==undefined);

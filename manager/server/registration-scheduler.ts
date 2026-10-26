@@ -161,14 +161,14 @@ export class RegistrationScheduler {
       if(typeof payload.text!=='string'||payload.text.length>120000||payload.postKey!==facebookPostKey(s.postUrl))throw new Error('Nội dung không thuộc bài được theo dõi.');
       const at=new Date(this.now()).toISOString();s.lastObservedAt=at;
       s.dateWarning=payload.error?undefined:registrationDateError(payload.text,s.startsAt);
-      s.lastError=payload.error?String(payload.error).slice(0,300):s.rehearsal?undefined:s.dateWarning;
+      s.lastError=payload.error?String(payload.error).slice(0,300):undefined;
       if(!payload.error&&!s.linksCaptured){
         s.lastReadAt=at;
-        const found=s.rehearsal?{}:parseHskLinks(payload.text,s.dateWarning?undefined:s.startsAt),sample=s.rehearsal?parseTestForm(payload.text):undefined;
+        const found=s.rehearsal?{}:parseHskLinks(payload.text),sample=s.rehearsal?parseTestForm(payload.text):undefined;
         if(s.rehearsal&&s.testForm?.source!=='manual')s.testForm=sample?{...sample,source:'facebook',observedAt:at}:undefined;
         // A newer observation replaces automatic entries, including conflicts
         // and removed links. Explicit manual entries always win.
-        for(const level of new Set(s.members.map(m=>m.level))){if(s.links[level]?.source==='manual')continue;const next=found[level];if(next)s.links[level]={...next,error:next.error??(!s.rehearsal?s.dateWarning:undefined),source:'facebook',observedAt:at};else delete s.links[level];}
+        for(const level of new Set(s.members.map(m=>m.level))){if(s.links[level]?.source==='manual')continue;const next=found[level];if(next)s.links[level]={...next,source:'facebook',observedAt:at};else delete s.links[level];}
         if(s.rehearsal&&!s.testForm?.url)s.lastError=s.testForm?.error??'Chưa thấy link được ghi rõ là form thử trong bài. Không mở form đăng ký thật.';
       }
       await this.persist();
