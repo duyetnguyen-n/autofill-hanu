@@ -79,6 +79,36 @@ function fixture(seed?:RegistrationSchedule){
   const tick=async()=>{await engine.tick();await flush();await engine.tick();await flush();};
   return {engine,hooks,sessions,online,arm,observe,tick,setTime:(at:number)=>{clock=at;},saved:()=>saved};
 }
+describe('periodic recovery and immediate events',()=>{
+  it('reads waiting profiles once per second and stops the periodic reads on close',async()=>{
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']});
+    const f=fixture();
+    try{
+      await f.arm();f.engine.open();f.engine.open();await f.tick();
+      f.hooks.sessions.mockClear();
+      await vi.advanceTimersByTimeAsync(999);expect(f.hooks.sessions).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);expect(f.hooks.sessions).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4000);expect(f.hooks.sessions).toHaveBeenCalledTimes(5);
+      f.engine.close();await vi.advanceTimersByTimeAsync(2000);expect(f.hooks.sessions).toHaveBeenCalledTimes(5);
+      expect(f.hooks.error).not.toHaveBeenCalled();
+    }finally{f.engine.close();vi.useRealTimers();}
+  });
+  it.each(['test','live'] as const)('dispatches Facebook and manual links between periodic ticks in %s mode',async mode=>{
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']});
+    const f=fixture();
+    try{
+      await f.arm({mode});f.engine.open();await f.tick();
+      await vi.advanceTimersByTimeAsync(100);
+      await f.observe(`HSK 4: ${four}`);await flush();
+      expect(f.hooks.start).toHaveBeenCalledTimes(5);
+      await f.engine.manual('5',five);await flush();await flush();
+      expect(f.hooks.start).toHaveBeenCalledTimes(10);
+      expect(f.hooks.start.mock.calls.every(c=>c[2].mode===mode)).toBe(true);
+      expect(f.engine.value?.status).toBe('finished');expect(f.hooks.error).not.toHaveBeenCalled();
+    }finally{f.engine.close();vi.useRealTimers();}
+  });
+});
+
 describe('durable scheduled dispatch',()=>{
   it('prepares immediately and dispatches matching links before the hour when enabled',async()=>{
     const f=fixture();await f.arm({startOnLink:true});await f.tick();expect(f.hooks.prepare).toHaveBeenCalledTimes(10);

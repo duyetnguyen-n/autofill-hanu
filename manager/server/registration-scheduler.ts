@@ -27,7 +27,9 @@ export class RegistrationScheduler {
   constructor(private hooks:Hooks,private now=()=>Date.now()){}
   private exclusive<T>(work:()=>Promise<T>):Promise<T>{const p=this.queue.then(async()=>{if(!this.loaded){this.value=await this.hooks.load();this.loaded=true;if(this.value)this.hooks.changed();}return work();});this.queue=p.then(()=>{},()=>{});return p;}
   private async persist(){if(!this.value)return;this.value.updatedAt=new Date(this.now()).toISOString();await this.hooks.save(structuredClone(this.value));this.hooks.changed();}
-  open(){this.closed=false;if(this.timer)return;this.timer=setInterval(()=>void this.tick().catch(this.hooks.error),200);this.timer.unref();void this.tick().catch(this.hooks.error);}
+  // Periodic recovery reads at most once per second. Link reports, manual
+  // links and preparation completion still trigger tick() immediately.
+  open(){this.closed=false;if(this.timer)return;this.timer=setInterval(()=>void this.tick().catch(this.hooks.error),1000);this.timer.unref();void this.tick().catch(this.hooks.error);}
   close(){this.closed=true;clearInterval(this.timer);this.timer=undefined;this.watcherSent=0;}
   get active(){return !this.closed&&!this.cancelling&&this.value?.id!==this.cancelledId&&activeSchedule(this.value);}
   async arm(input:any){return this.exclusive(async()=>{

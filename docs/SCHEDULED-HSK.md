@@ -5,6 +5,11 @@
 3. Bấm **Bật & chuẩn bị Test/Live**. Tool kiểm tra phiên bản extension, hồ sơ, email, ảnh và mở sẵn một tab chờ thuộc đúng profile. Profile chưa kết nối hiện lý do chờ riêng.
 4. Khi có link Google Forms hợp lệ đúng HSK, profile đã chuẩn bị nhận lệnh ngay. Không chờ giờ đặt, HSK khác hay profile khác. Nếu đồng bộ làm đổi revision, bước chuẩn bị trả về revision thực tế và tự kích hoạt phân phối khi xong.
 
+Bộ điều phối kiểm tra các profile còn chờ mỗi 1 giây để giảm lượt đọc database.
+Nhận link Facebook, nhập link thủ công và hoàn tất chuẩn bị profile vẫn kích hoạt
+ngay, không chờ vòng định kỳ. Câu xác thực được xử lý khi nhận trạng thái từ
+profile hoặc lưu đáp án, cũng không chờ vòng này.
+
 ## Nguồn link
 
 **Facebook:** cấp quyền tùy chọn tại một extension, dùng permalink của bài thông báo. Tool chỉ đọc nội dung của bài; chỉ giữ link theo nhãn HSK có trong các profile của lượt này, bỏ form thử và bình luận, giữ tham số điền sẵn. Link trùng được gộp; nhiều link khác nhau cho cùng HSK sẽ có lỗi rõ ràng. Ngày/giờ đăng ký trong bài khác lịch chỉ hiện cảnh báo vàng; tool vẫn lấy link và chạy bình thường khi profile sẵn sàng. Giờ đặt dùng để tăng nhịp tìm link trước 30 giây; không phải điều kiện trì hoãn chạy.
