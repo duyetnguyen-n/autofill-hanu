@@ -1,137 +1,111 @@
-# Google Forms Direct · Lab — 27/10/2026
+# Google Forms thử nghiệm — 27/10/2026
 
-Chức năng nghiên cứu mới, độc lập với bộ tự điền Google Forms hiện tại.
-Mở Side Panel extension → **Google Forms Direct · Lab** → **Mở chức năng Lab**.
-Trang riêng là `google-direct.html`; mã riêng nằm trong `src/google-direct/`.
-Không sửa engine `background.ts`/`content.ts`, protocol, khóa gửi, lịch chạy,
-dữ liệu hồ sơ hay backend quản lý. Bản mới có executor tự động riêng, nút
-**Tự chạy và gửi form test**, và chỉ cho phép đúng published ID của form Lab.
+## Cách dùng và phạm vi
 
-Executor dựng POST từ FormData của document hiện tại, thay answers bằng snapshot
-hồ sơ, đi qua đúng nhánh bằng request (không điền từng control). Tại câu file,
-tool tự mở Picker và bàn giao ảnh qua helper thuần `StoredPickerUploads` với
-job/guard riêng. Tab form được kích hoạt để Google Picker có thể render. Request
-tiếp giữ nguyên upload reference/partialResponse do Google tạo. POST cuối dùng
-`fetch` cùng origin trong MAIN world, gửi toàn bộ nhánh và đọc nội dung HTTP;
-không cần tải lại các trang sau câu upload chỉ để điền ô. Trước POST cuối,
-executor lưu khóa riêng `googleDirectSubmit:<formId>:<account>`; kết quả chưa rõ
-không được tự gửi lại. Token phiên không rời document form, không lưu cookie/token.
-Khi đã đối chiếu phía chủ form là chưa có phản hồi, nút đối chiếu chỉ giải quyết
-đúng run ID đang pending và giữ metadata đối chiếu. Reload Lab không xóa khóa.
+Mở **Google Forms thử nghiệm** trong thanh điều hướng trang quản lý, đường dẫn
+`/google-direct`. Màn hình dùng chính component quản lý Google Forms hiện có:
+profile, ảnh, cấp HSK, lịch/link theo HSK, đáp án xác thực, theo dõi, Tạm dừng,
+Tiếp tục, Dừng từng profile, Dừng lượt và Dừng tất cả. Không cần thực hiện quy
+trình đọc schema/xem payload/chạy thủ công ở trang Lab cũ.
 
-Trạng thái nghiệm thu thật sẽ cập nhật sau lượt chạy bằng extension; kiểm thử
-fixture không được coi là bằng chứng Google đã nhận phản hồi.
+`/` tiếp tục chọn engine cũ mặc định. `/google-direct` đặt `engine: direct` khi
+bật lịch hoặc bắt đầu. Lựa chọn được giữ trong lịch, nhóm, lượt chạy và Chạy lại.
+Extension cũ thiếu capability `googleDirect` bị từ chối, không tự chuyển về
+engine cũ. `google-direct.html` còn được build để chẩn đoán kỹ thuật, không còn
+được giới thiệu trong Side Panel như luồng sử dụng chính.
 
-## Kết quả khảo sát trên form được cung cấp
+Hiện executor thử nghiệm chỉ chấp nhận hai form LAB do người dùng sở hữu:
 
-[Form Lab](https://docs.google.com/forms/d/e/1FAIpQLScRrul5GFZkLQD21oVlarFeb1AbomeKoqOJGVsnW3k3XbMtIA/viewform)
-có tiêu đề “LAB — Mô phỏng đăng ký HSK / thử submit”. GET không có phiên Google
-trả trang yêu cầu đăng nhập; Chrome đã đăng nhập đọc được metadata.
+- [LAB chuẩn](https://docs.google.com/forms/d/e/1FAIpQLScRrul5GFZkLQD21oVlarFeb1AbomeKoqOJGVsnW3k3XbMtIA/viewform).
+- [LAB câu lệ phí](https://docs.google.com/forms/d/e/1FAIpQLSevBk_8863gvlRtkeaKONg6H7y4teYgGU11SBQgg3LSAJNhlw/viewform).
 
-- Script `FB_PUBLIC_LOAD_DATA_` tại trang người trả lời chứa toàn bộ 20 câu hỏi,
-  9 trang, entry IDs, lựa chọn, validation và nhánh điều hướng. Bản Lab đọc
-  script dưới dạng JSON, không dùng `eval` hay truy cập trạng thái JS nội bộ.
-- Mỗi nhánh CCCD hoặc hộ chiếu đi qua 8 trang. Chỉ lấy trường bắt buộc của
-  nhánh đã chọn. `pageHistory` dùng chỉ số trang; đích rẽ nhánh dùng ID section.
-  Slot 5 của page-break mô tả đích ra của section **trước đó**. Quan sát Chrome
-  đã xác nhận nhánh CCCD bỏ qua trang hộ chiếu để đến trang giới tính/upload.
-- Hai câu cam kết có tiêu đề tương tự nhau; phải phân biệt bằng nội dung
-  lựa chọn. Một giá trị đồng ý có thể có lựa chọn tiếng Trung và tiếng Việt.
-  Planner ưu tiên giá trị chính xác rồi thứ tự alias đã khai báo trong rule.
-- Câu xác thực `entry.1045827748` có validation `^2026$`. Lab không suy luận
-  đáp án; hồ sơ giả dùng đáp án mô phỏng khai báo sẵn hoặc người dùng nhập riêng.
-- Upload `entry.1365092776` là bắt buộc, chấp nhận ảnh/PDF tối đa 10 MB theo UI.
-  Attachment ID nội bộ/tên ảnh/base64 chưa phải mã tệp Google; không đưa chúng
-  vào `entry.*` như thể ảnh đã upload thành công.
-- Đích form quan sát được là
-  `https://docs.google.com/forms/u/0/d/e/<published-id>/formResponse`.
-  Các hidden field gồm `fvv`, `partialResponse`, `pageHistory`, `token`, `tag`,
-  `fbzx`, `submissionTimestamp`. Chưa kết luận field nào bắt buộc cho POST cuối.
-  Lab chỉ trả tên các field phiên, không xuất giá trị token/cookie.
+Đáp án lệ phí `1234567` chỉ là dữ liệu giả của LAB. Không suy ra đáp án từ biểu
+thức validation. Test dừng trước request Gửi; Live gửi phản hồi thật lên LAB.
+Chưa mở cho form đăng ký HANU thật, chưa triển khai website production.
 
-Trong lượt khảo sát này, Google Picker mở ra nhưng iframe vẫn trống; đã đóng
-Picker bằng Escape. Chưa upload tệp và chưa quan sát được handshake/file reference
-để đối chiếu POST có ảnh. Form còn bản nháp dữ liệu giả, chưa gửi phản hồi.
+## Tách phần thử nghiệm
 
-Schema fixture ở `tests/fixtures/google-direct-lab.json` được rút gọn trực tiếp
-từ DOM form này: giữ ID, lựa chọn, validation, metadata phân trang; bỏ mô tả,
-tài khoản và dữ liệu phiên. Các test không truy cập mạng và không tạo phản hồi.
+Executor và trạng thái extension nằm riêng trong `src/google-direct/`:
+`ManagedDirect`, `DirectExecutor`, `googleDirectManagedRun`, `googleDirectLease`
+và `googleDirectSubmit:<form>:<account>`. Không ghi đè các bản ghi `run:*`,
+`managedRun` hay khóa gửi của engine cũ. `src/content.ts` không đổi.
 
-## Cách dùng bản khảo sát
+Background chỉ thêm bộ chọn engine và kiểm tra không chạy chồng trên cùng
+Chrome profile. Hai engine cùng kiểm tra lease khi bắt đầu; lệnh quản lý được
+gắn đúng run ID. Hồ sơ và ảnh vẫn dùng chung bản đồng bộ có sẵn, mỗi lượt lấy
+snapshot. Backend vẫn dùng bộ điều phối, giới hạn tài khoản/Live và khóa gửi
+hiện có. Đây không phải hai kho profile hay hai bộ điều phối song song: tài
+khoản vẫn có một lịch hoạt động tại một thời điểm như trước.
 
-1. Build extension (`npm run build:extension`) và reload bản extension phát triển.
-2. Mở Lab từ Side Panel. Bấm **Mở form test** nếu chưa mở form trong profile đó.
-3. Chọn tab cụ thể, chọn **Hồ sơ giả** hoặc **Hồ sơ đã lưu trên Chrome này**,
-   rồi bấm **Đọc form và lập dữ liệu**.
-4. Xem nguồn ghép, giá trị, quy tắc chưa đạt và lộ trình trang. Có thể sửa đáp án
-   riêng trong Lab; không lưu đè hồ sơ. Với lựa chọn, dùng nguyên văn lựa chọn
-   hoặc giá trị đã có alias trong rule (ví dụ `CCCD`, `HỘ CHIẾU`, `Nam`).
-5. Payload mặc định ẩn giá trị; chỉ hiện khi tick lựa chọn tương ứng. Đây là
-   **bản nháp phần answers/pageHistory**; executor tự ghép các field phiên ngay
-   trong document Google tại mỗi request.
-6. Bấm **Tự chạy và gửi form test**. Hồ sơ giả dùng PNG fixture 1×1; hồ sơ đã
-   lưu dùng Blob đính kèm trong Chrome hiện tại. Lệnh này thực sự gửi phản hồi.
-   Không cần tự điền, chọn dropdown, tìm ảnh trên ổ đĩa hoặc bấm Tiếp/Gửi.
+## Những lỗi tìm được và sửa
 
-Bước đọc form/xem trước vẫn chỉ đọc. Chỉ khi bấm nút chạy, executor mới upload
-và gửi request. Nó không đổi run/lease/khóa gửi của luồng cũ, và từ chối chạy nếu
-luồng cũ đang giữ profile/khóa form. Dữ liệu hồ sơ gốc không bị lưu đè.
+1. **So sánh schema theo thứ tự lựa chọn.** Google xáo trộn đáp án cam kết giữa
+   các lần tải, làm bản cũ báo schema thay đổi ngay trước request đầu. Fingerprint
+   mới bỏ qua thứ tự lựa chọn, vẫn so nội dung, ID, validation và đích phân nhánh.
+2. **Không nhận nút `Gửi`.** Google dùng Unicode tách dấu, khác chuỗi `Gửi` trong
+   regex. Nhãn điều khiển được chuẩn hóa NFC trước khi nhận diện.
+3. **Sửa `partialResponse` rồi nhảy từ upload tới cuối.** Bỏ thao tác tự ghép
+   bản nháp và giả lập toàn bộ `pageHistory`. Mỗi request giữ nguyên trạng thái
+   Google trả về và chỉ thêm đáp án của trang hiện tại.
+4. **Bản nháp thay đổi sau upload.** Google tự commit upload bằng nút Tiếp của
+   chính trang. Chỉ riêng phần upload chuẩn bị các điều khiển liên quan và dùng
+   thao tác native. Sau đó các trang còn lại dùng fetch cùng origin, tránh
+   điều hướng/beforeunload làm phát sinh autosave cạnh tranh. `dlut` lấy đúng từ
+   packet do Google tạo, không dựng bằng thời gian hiện tại; `fuIds` được giữ.
+5. **Metadata tạm bị Trusted Types chặn.** Lưu metadata dưới dạng văn bản trong
+   phần tử trơ, không gán HTML/script thực thi, không tạo policy hay nới CSP.
+   Trạng thái HTTP và token chỉ ở trong document Google, không gửi về server.
+6. **Dừng và kết quả chưa rõ.** Abort chặn request tiếp theo, hủy fetch/Picker,
+   đợi tác vụ dừng rồi mới xác nhận. Nếu đã được backend cấp quyền Gửi hoặc
+   request cuối có thể đã đi, giữ trạng thái chưa rõ và khóa gửi; không tự retry.
+   Stop đến sau xác nhận thành công không hạ kết quả thành chưa rõ.
+7. **Ảnh cũ trong draft.** Lượt mới thay attachment trong câu upload bằng đúng
+   Blob của snapshot, không dùng tên tệp giống nhau để suy ra nội dung giống.
+8. **Trang form sau khi gửi HTTP.** Khi Google xác nhận, ẩn form cũ, xóa trạng
+   thái HTTP tạm và hiển thị xác nhận ngay trong trang; không để các nút cũ dẫn
+   người dùng tiếp tục gửi. Không tạo popup cố định ở góc màn hình.
 
-## Thiết kế bước tiếp theo
+## Bằng chứng Google thật
 
-Google Forms REST API chính thức chỉ có `responses.get` và `responses.list`,
-không có endpoint tạo câu trả lời: xem
-[forms.responses](https://developers.google.com/workspace/forms/api/reference/rest/v1/forms.responses).
-Vì vậy hướng đang nghiên cứu là giao thức responder web, không phải một API
-submit chính thức. `FB_PUBLIC_LOAD_DATA_` và vị trí các slot có thể thay đổi.
+Thực hiện trong Chrome đã đăng nhập của người dùng, chỉ dữ liệu và ảnh giả,
+không gửi form HANU gốc. Phản hồi đã được xem lại ở phía chủ form:
 
-Các phần còn cần nghiệm thu trên Google thật:
+| Lượt | Phạm vi thời gian | Kết quả đối chiếu |
+|---|---|---|
+| LAB chuẩn, CCCD, `NGHIEN CUU LAB` | 3.847 ms chỉ riêng chạy lại từ trang cuối; không phải toàn lượt | Phản hồi số 1: CCCD, email giả, ngân hàng, `2026`; mở được PNG đã lưu trên Drive |
+| LAB chuẩn, hộ chiếu, `NGHIEN CUU HO CHIEU` | 14.273 ms từ khi gọi executor đến nhận xác nhận, gồm mở tab/upload/chuyển trang/gửi | Phản hồi số 2: `AB0000000`, CCCD trống, tên/chủ tài khoản đúng, ảnh và `2026` |
+| LAB lệ phí, CCCD, `NGHIEN CUU LE PHI` | 24.926 ms toàn lượt | Phản hồi số 4 của form này: CCCD `000000000000`, tên/chủ tài khoản đúng, có tệp và đáp án giả `1234567` |
 
-1. Quan sát một lượt mô phỏng qua UI, ghi cấu trúc request đã loại dữ liệu phiên
-   để xác định chính xác `partialResponse`, cách ghi email và trạng thái upload.
-   Không lấy cookie từ profile khác hoặc chuyển token về server quản lý.
-2. Viết uploader mới, độc lập với run cũ. Có thể tái sử dụng helper thuần
-   `assignPickerFile` nhưng phải có session/guard riêng. Chỉ chốt khi Google
-   trả file reference gắn đúng account, form, entry và lượt. Kiểm tra cả ảnh
-   đã lưu nhỏ và ảnh lớn, lỗi kích thước/định dạng, đổi tài khoản và hết phiên.
-3. So sánh payload từ planner với request UI thực tế cho cả CCCD và hộ chiếu;
-   loại trường ở nhánh không đi qua, xử lý sentinel/multi-value nếu cần.
-   Các mã điều hướng âm, grid, date/time thật, Other và nhiều checkbox hiện
-   báo chưa hỗ trợ; không đoán cách mã hóa.
-4. Executor riêng đã kiểm tra lại schema/account và dữ liệu trước POST, khóa
-   bền vững trước gửi và không tự retry khi chưa rõ. Trước khi mở cho form ngoài
-   allowlist Lab hoặc nối website, phải áp dụng quyền Live/quota ở backend.
-5. Xác nhận response-only acknowledgement và đối chiếu phản hồi phía chủ form.
-   HTTP 200 hoặc `fetch` hoàn tất không đủ chứng minh Google đã ghi phản hồi.
-6. Nghiệm thu dữ liệu giả trên form Lab; chỉ cân nhắc thay engine cũ sau khi
-   upload, phân nhánh, xác thực tài khoản và chống gửi trùng đều đã được chứng minh.
+Ảnh fixture là PNG 1×1 rất nhỏ, không phải ảnh giấy tờ thực tế. Các con số trên
+là từng mẫu đo, không phải trung bình/p95, không bảo đảm nhanh hơn trên mọi lượt.
+Một số lượt khảo sát trước bản sửa dừng ở schema, nhận diện Gửi, xung đột draft
+hoặc lỗi injection; không có request Gửi cuối trong các lượt thất bại đó. Có
+một lượt LAB lệ phí không nhận được kết quả injection sau upload; lượt mới
+được bắt đầu riêng rồi thành công. Chưa đủ mẫu để khẳng định hết lỗi mạng/phiên.
 
-Hướng khả thi trước mắt là chuẩn bị toàn bộ dữ liệu từ schema, hoàn tất upload
-trong phiên hợp lệ rồi dùng một request gửi cuối. Chưa có bằng chứng trong lượt
-nghiên cứu này rằng form upload bắt buộc có thể bỏ toàn bộ điều hướng trang.
+Bằng chứng được lưu cục bộ trong `test-results/google-direct-fix/`:
+`owner-response-1.txt`, `owner-response-2.txt`, `owner-fee-response-4.txt`, ảnh
+chụp trang chủ form/Drive và giao diện. Không xuất cookie, token hay HAR.
 
-## Kiểm tra
+## Kiểm tra và giới hạn nghiệm thu
 
-`npm test -- tests/google-direct.test.ts` kiểm tra schema thực đã rút gọn, hai
-nhánh, tiêu đề cam kết trùng, thiếu/sai xác thực, validation, ảnh local không
-thay mã upload, metadata sai và vòng lặp điều hướng. Xem kết quả kiểm tra cuối
-trong phản hồi bàn giao; tài liệu không coi test fixture là nghiệm thu gửi thật.
+- 94 file test, **857 test qua** với `npm test -- --maxWorkers=2`.
+- `npm run typecheck`, build extension local/Online, manager và cloud server/UI
+  qua; `git diff --check` qua. Build UI vẫn có cảnh báo chunk lớn vốn có.
+- Kiểm tra UI trong Chrome với server cục bộ và 3 profile giả: chọn nhiều
+  profile, link theo HSK, bật lịch Direct, Tạm dừng cả lượt, Dừng tất cả; backend
+  lưu cả 3 về idle. Kiểm tra reload giữ kết quả đã dừng. Đây là fixture, không
+  phải ba Chrome profile thực chạy Google đồng thời.
+- Đã xem bố cục desktop và viewport mobile 390×844. Dùng lại Fluent UI, CSS và
+  Notice của màn cũ, không dựng một giao diện nghiên cứu khác cho người dùng.
+- Gửi Google thật đã kiểm tra executor trong extension. Chưa có nghiệm thu
+  trọn chuỗi web production → extension → nhiều tài khoản Google thật; cần
+  cập nhật đồng bộ web/extension và kiểm tra phần này trước khi sử dụng thực tế.
+- Chưa benchmark ảnh giấy tờ dung lượng thực, tải đồng thời nhiều profile,
+  quota/chặn lưu lượng, phiên hết hạn hay schema form thật chưa mở.
 
-Kết quả ngày 27/10/2026: **91 file test qua, 821 test qua, 1 bỏ qua**;
-`npm run typecheck`, `npm run build:extension` và `git diff --check` qua.
-Lệnh test dùng `node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run --maxWorkers=2`
-với `C:\Program Files\Git\usr\bin` bổ sung vào PATH của tiến trình test để có
-OpenSSL. Lượt chạy mặc định nhiều worker gặp timeout ở test cloud; giảm số
-worker giải quyết được mà không đổi timeout hoặc mã của các test đó.
-
-Giao diện đã được kiểm tra trong Chrome bằng build thực + shim fixture offline
-chỉ phục vụ xem thử cục bộ. Ảnh ở `test-results/google-direct-lab-preview.png`.
-Kiểm tra UI gồm hiển thị đúng 19 câu/17 entry trên nhánh CCCD, sửa đáp án riêng,
-ẩn/hiện payload, bỏ kết quả cũ khi đổi nguồn và không gửi request/ghi storage.
-Đã mở trang Lab từ extension Online thật và đọc được schema form qua phiên Google.
-Không tính preview offline là nghiệm thu upload hoặc gửi phản hồi.
-
-Bản executor có thêm 8 ca kiểm tra: chạy tự động theo nhánh, lưu khóa trước POST
-cuối, giữ khóa khi chưa rõ, chặn lượt cũ đang chạy, đổi tài khoản, Google trả lại
-trang validation, không POST lặp và giữ nguyên reference upload Google. Bộ chung
-đã qua **829 test, 92 file; 1 test bỏ qua**. Bản build có cả `dist` và `dist-cloud`.
+Các nghiên cứu trước vẫn ở [báo cáo giao thức ban đầu](GOOGLE-FORMS-DIRECT-SUBMIT-20261027.md),
+[so sánh LAB](GOOGLE-FORMS-LAB-20261027.md) và
+[các thử POST ban đầu](GOOGLE-FORMS-LIVE-POST-20261027.md). Kết luận âm ở các
+báo cáo đó chỉ áp dụng cho những cách gửi cũ đã thử, không phủ định các lượt
+thành công có session/upload hợp lệ ở trên.

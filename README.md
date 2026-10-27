@@ -1,12 +1,14 @@
 # HANU Coordinator 1.9.0
 
-## Google Forms Direct · Lab (nghiên cứu riêng)
+## Google Forms thử nghiệm
 
-Side Panel có mục **Google Forms Direct · Lab** để đọc schema toàn bộ form,
-ghép hồ sơ đã lưu và tự chạy request/upload/gửi trên form Lab theo nhánh CCCD/hộ chiếu.
-Executor mới có khóa chống gửi lặp và kiểm tra xác nhận của Google; nghiệm thu
-trên form thật đang được thực hiện, chưa mở gửi cho form đăng ký khác.
-Luồng Google Forms cũ giữ nguyên. Xem [kết quả nghiên cứu và cách dùng](docs/GOOGLE-FORMS-DIRECT-LAB.md).
+Mở **Google Forms thử nghiệm** (`/google-direct`) trong trang quản lý. Màn hình
+và thao tác dùng lại Google Forms hiện có; executor gửi và trạng thái extension
+tách riêng. `/` tiếp tục chọn engine cũ. Hiện chỉ mở hai form LAB đã đối chiếu,
+Test dừng trước Gửi; Live gửi dữ liệu lên LAB.
+
+Đã có lượt gửi Google thật thành công cho hộ chiếu và câu lệ phí; chưa mở cho
+đăng ký HANU thật, chưa deploy production. Xem [cách dùng, bằng chứng và giới hạn](docs/GOOGLE-FORMS-DIRECT-LAB.md).
 
 ## ChineseTest (chức năng tùy chọn)
 

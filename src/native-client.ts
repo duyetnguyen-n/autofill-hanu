@@ -7,7 +7,8 @@ interface Identity {sessionId:string;token?:string}
 interface Adapter {
   start(command:Command,sessionId:string):Promise<unknown>;
   control(command:Command):Promise<unknown>;
-  focus():Promise<unknown>;
+  focus(command?:Command):Promise<unknown>;
+  capabilities?:string[];
   disconnected(reason?:'transport'):Promise<void>;
   interrupt?(command:Command):Promise<void>;
   reconcile():Promise<unknown>;
@@ -106,9 +107,9 @@ export function createNativeClient(adapter:Adapter,options:{origin?:string;conne
     const readOnly=['WATCH_FACEBOOK','PING','FOCUS','SCAN_FORM','READ_PROFILE','ATTACHMENT_INFO','ATTACHMENT_READ','RECONCILE'].includes(c.kind);
     if(!readOnly&&!claimed){const replay=await claimCommand(c);if(replay.done)return replay.result;}
     const p=c.payload;let result:unknown;
-    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:chrome.runtime.getManifest?.().version??'unknown',facebookAccess:await adapter.facebookStatus?.(),capabilities:['preparedFormTab','sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
+    if(c.kind==='PING')result={sessionId:identity.sessionId,at:new Date().toISOString(),build:chrome.runtime.getManifest?.().version??'unknown',facebookAccess:await adapter.facebookStatus?.(),capabilities:[...(adapter.capabilities??[]),'preparedFormTab','sharedFinalQuestion','reliableRuns',...(adapter.watchFacebook?['scheduledHskLinks','facebookWatchWindow','facebookPostReady']:[]),...(cloud?['cloudCoordinator','accountAccess','extensionControls']:[])],execution:await adapter.execution?.()};
     else if(c.kind==='WATCH_FACEBOOK'){if(!adapter.watchFacebook)throw new Error('Extension chưa hỗ trợ theo dõi Facebook.');result=await adapter.watchFacebook(p);}
-    else if(c.kind==='FOCUS')result=await adapter.focus();
+    else if(c.kind==='FOCUS')result=await adapter.focus(c);
     else if(c.kind==='READ_PROFILE')result={profile:await getProfile(),revision:await getProfileRevision()};
     else if(c.kind==='ATTACHMENT_INFO'||c.kind==='ATTACHMENT_READ'){
       const profile=await getProfile();if(!Object.values(profile.attachments).some(a=>a?.id===p.id))throw new Error('Ảnh không thuộc hồ sơ của phiên.');const blob=await getAttachment(String(p.id));if(!blob)throw new Error('Không đọc được ảnh.');

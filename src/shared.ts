@@ -109,7 +109,9 @@ export interface RunLogEntry {
   message: string;
 }
 
+export type FormEngine = 'classic' | 'direct';
 export interface RunState {
+  engine?:FormEngine;
   // Durable user intent, independent of a temporary page/network blocker.
   autoContinue?: boolean;
   transportRecovery?: boolean;

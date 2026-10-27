@@ -8,6 +8,8 @@ import { cloudOrigin } from './coordinator-transport';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 import {FacebookWatcher,enableFacebookWatch,facebookAccessStatus} from './facebook-watch';
 
+import {ManagedDirect} from './google-direct/managed';
+
 const RUN_PREFIX = "run:";
 const interruptedRuns = new Set<string>();
 const storedPickerUploads = new StoredPickerUploads();
@@ -15,8 +17,27 @@ let interruptEpoch=0;
 let runWriteQueue=Promise.resolve();
 const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
 function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.then(fn);runWriteQueue=work.then(()=>undefined,()=>undefined);return work;}
-async function acquireLease(runId:string,tabId=-1,managed=false){return writeState(async()=>{const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});});}
-const native = createNativeClient({start:startManaged,control:managedControl,focus:focusManaged,disconnected:async reason=>{facebookWatcher.stop();await parkManaged(reason==='transport');},watchFacebook:p=>facebookWatcher.command(p),facebookStatus:()=>facebookAccessStatus(true),reconcile:reconcileManaged,execution:executionSnapshot,interrupt:async c=>{const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();}});
+async function acquireLease(runId:string,tabId=-1,managed=false){return navigator.locks.request('hanu-profile-start',()=>writeState(async()=>{if((await chrome.storage.local.get('googleDirectLease')).googleDirectLease?.active)throw new Error('Google Forms thử nghiệm đang giữ profile. Dừng lượt đó trước.');const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});}));}
+async function directSelected(c?:Command){const d=await direct.run();if(!d)return false;if(c?.runId)return c.runId===d.runId;const classic=await getManaged();return !classic||d.updatedAt>classic.updatedAt;}
+
+const native = createNativeClient({
+  capabilities:['googleDirect'],
+  start:(c,id)=>c.payload.engine==='direct'?direct.start(c,id):startManaged(c,id),
+  control:async c=>await directSelected(c)?direct.control(c):managedControl(c),
+  focus:async c=>await directSelected(c)?direct.focus():focusManaged(),
+  disconnected:async reason=>{facebookWatcher.stop();await direct.disconnected();await parkManaged(reason==='transport');},
+  watchFacebook:p=>facebookWatcher.command(p),facebookStatus:()=>facebookAccessStatus(true),
+  reconcile:async()=>await directSelected()?direct.reconcile():reconcileManaged(),
+  execution:async()=>await direct.execution()??executionSnapshot(),
+  interrupt:async c=>{
+    await direct.interrupt(c);
+    if(await directSelected(c))return;
+    const current=await getManaged();if(c.runId&&current?.runId&&c.runId!==current.runId&&!endedExecution(current))throw new Error('Lệnh thuộc lượt cũ; không dừng lượt mới.');
+    interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();
+  }
+});
+const direct = new ManagedDirect({connected:()=>native.isConnected(),state:r=>native.state(r),request:(kind,r)=>native.request(kind,r)});
+
 const facebookWatcher=new FacebookWatcher(()=>native.isConnected(),payload=>native.request('FACEBOOK_OBSERVATION',undefined,payload));
 chrome.permissions?.onAdded?.addListener(()=>void native.facebookChanged());
 chrome.permissions?.onRemoved?.addListener(()=>void native.facebookChanged());

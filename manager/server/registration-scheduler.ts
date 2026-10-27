@@ -39,6 +39,7 @@ export class RegistrationScheduler {
     if(!Number.isFinite(at)||at<now-30000||at>now+31*86400000)throw new Error('Chọn giờ chạy trong 31 ngày tới (giờ Việt Nam).');
     if(!manualOnly&&!facebookPostKey(String(input.postUrl??'')))throw new Error('Dùng link trực tiếp story.php hoặc /posts/ của đúng bài Facebook.');
     if(!['test','live'].includes(input.mode)||!Array.isArray(input.ids)||!input.ids.length||input.ids.length>100||new Set(input.ids).size!==input.ids.length)throw new Error('Chọn các profile và chế độ chạy hợp lệ.');
+    if(input.engine!==undefined&&!['classic','direct'].includes(input.engine))throw new Error('Engine không hợp lệ.');
     validateFinalQuestion(input.finalQuestion);
     if(input.finalQuestions!==undefined&&(!input.finalQuestions||typeof input.finalQuestions!=='object'||Array.isArray(input.finalQuestions)))throw new Error('Đáp án theo HSK không hợp lệ.');
     for(const [level,q]of Object.entries(input.finalQuestions??{})){if(!isHskLevel(level))throw new Error('HSK không hợp lệ.');validateHskAnswer(q);}
@@ -58,7 +59,7 @@ export class RegistrationScheduler {
     });
     this.cancelling=false;this.cancelledId=undefined;this.prepared.clear();this.watcherFailures.clear();this.watcherSent=0;
     const previous=this.value;
-    this.value={id:randomUUID(),postUrl:manualOnly?'':input.postUrl,manualOnly,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+(manualOnly?1800000:120000)).toISOString(),mode:input.mode,startOnLink:true,rehearsal:input.rehearsal===true,testForm:input.rehearsal&&input.testFormUrl?.trim()?{url:formLink(input.testFormUrl.trim())!,source:'manual',observedAt:new Date(now).toISOString()}:undefined,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,finalQuestions:structuredClone(input.finalQuestions??{}),rehearsalAnswer:structuredClone(input.rehearsalAnswer),createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
+    this.value={...(input.engine==='direct'?{engine:'direct' as const}:{}),id:randomUUID(),postUrl:manualOnly?'':input.postUrl,manualOnly,startsAt:new Date(at).toISOString(),prepareAt:new Date(at-300000).toISOString(),watchAt:new Date(at-30000).toISOString(),expiresAt:new Date(at+(manualOnly?1800000:120000)).toISOString(),mode:input.mode,startOnLink:true,rehearsal:input.rehearsal===true,testForm:input.rehearsal&&input.testFormUrl?.trim()?{url:formLink(input.testFormUrl.trim())!,source:'manual',observedAt:new Date(now).toISOString()}:undefined,watcherProfileId:input.watcherProfileId,status:'armed',members,links:{},finalQuestion:input.finalQuestion,finalQuestions:structuredClone(input.finalQuestions??{}),rehearsalAnswer:structuredClone(input.rehearsalAnswer),createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString()};
     for(const [key,url]of Object.entries(input.links??{}))if(url&&members.some((m:{level:string})=>m.level===key))this.setManual(key,url);
     try{await this.persist();}catch(e){this.value=previous;throw e;}return structuredClone(this.value);
   });}

@@ -75,7 +75,7 @@ export class Coordinator {
         if(current.run.submitAttempted)throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
         await this.control(member.id,'STOP',current.run.runId);
       },
-      start:(id,url,s,guard)=>this.start([id],url,s.mode,initialHskQuestion(s,s.members.find(m=>m.id===id)!.level),s.members.find(m=>m.id===id)!.requestId,undefined,guard),
+      start:(id,url,s,guard)=>this.start([id],url,s.mode,initialHskQuestion(s,s.members.find(m=>m.id===id)!.level),s.members.find(m=>m.id===id)!.requestId,undefined,guard,s.engine),
       started:(id,runId)=>{void (async()=>{await this.runBuffer?.flush(id);const session=await store.session(id);if(session.run?.runId===runId)this.queueScheduledAnswer(id,session.run);})().catch(this.unavailable);},
       changed:()=>this.changed(),error:e=>this.unavailable(e)
     });
@@ -397,30 +397,32 @@ export class Coordinator {
       if(stopped.run?.runId!==s.run.runId||stopped.run?.status!=='idle'||stopped.execution)throw new Error('Chưa xác nhận profile đã dừng. Đối chiếu trạng thái trước khi chạy lại.');
       if(!stopped.synced){const imported=await this.pull(id);if(imported.conflict)throw new Error('Hồ sơ đã thay đổi. Chọn bản cần giữ trước khi chạy lại.');}
       if(this.intents.get(id)!==intent)throw new Error('Đã hủy Chạy lại vì có lệnh Dừng hoặc Tạm dừng mới.');
-      return this.start([id],s.run.url,s.run.mode,s.run.finalQuestion,requestId,s.run.runId);
+      return this.start([id],s.run.url,s.run.mode,s.run.finalQuestion,requestId,s.run.runId,undefined,s.run.engine);
     })();
     this.restarts.set(id,work);try{return await work;}finally{if(this.restarts.get(id)===work)this.restarts.delete(id);}
   }
-  async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion,requestId?:string,restartOf?:string,guard?:()=>boolean){
+  async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion,requestId?:string,restartOf?:string,guard?:()=>boolean,engine?:import('../../src/shared').FormEngine){
+    if(engine!==undefined&&!['classic','direct'].includes(engine))throw new Error('Engine không hợp lệ.');
+    if(engine==='direct'){const {directLabFormId}=await import('../../src/google-direct/schema');directLabFormId(url);}
     if(guard&&!guard())throw new Error('Lịch đã hủy hoặc profile đã bỏ chờ.');
     if(requestId!==undefined&&(typeof requestId!=='string'||!/^[-a-zA-Z0-9]{8,100}$/.test(requestId)))throw new Error('Mã yêu cầu không hợp lệ.');
     const intents=new Map((Array.isArray(ids)?ids:[]).map(id=>[id,this.intents.get(id)??0]));
-    const signature=createHash('sha256').update(JSON.stringify({ids:Array.isArray(ids)?[...ids].sort():ids,url,mode,finalQuestion})).digest('hex');
+    const signature=createHash('sha256').update(JSON.stringify({ids:Array.isArray(ids)?[...ids].sort():ids,url,mode,finalQuestion,...(engine==='direct'?{engine}:{})})).digest('hex');
     if(requestId){
       const old=(this.store.groupForRequest?await this.store.groupForRequest(requestId):(await this.store.groups()).find(g=>g.requestId===requestId));
       if(old){if(old.requestSignature!==signature)throw new Error('Mã yêu cầu đã dùng cho thao tác khác.');return old;}
       const pending=this.starts.get(requestId);if(pending){const g=await pending;if(g.requestSignature!==signature)throw new Error('Mã yêu cầu đã dùng cho thao tác khác.');return g;}
     }
-    const work=this.startGroup(ids,url,mode,finalQuestion,requestId,signature,restartOf,intents,guard);
+    const work=this.startGroup(ids,url,mode,finalQuestion,requestId,signature,restartOf,intents,guard,engine);
     if(requestId)this.starts.set(requestId,work);
     try{return await work;}finally{if(requestId&&this.starts.get(requestId)===work)this.starts.delete(requestId);}
   }
-  private async startGroup(ids:string[],url:string,mode:RunMode,finalQuestion:FinalQuestion|undefined,requestId:string|undefined,requestSignature:string,restartOf:string|undefined,intents:Map<string,number>,guard?:()=>boolean){
+  private async startGroup(ids:string[],url:string,mode:RunMode,finalQuestion:FinalQuestion|undefined,requestId:string|undefined,requestSignature:string,restartOf:string|undefined,intents:Map<string,number>,guard?:()=>boolean,engine?:import('../../src/shared').FormEngine){
     validateFinalQuestion(finalQuestion);
     finalQuestion=finalQuestion?structuredClone(finalQuestion):undefined;
     if(finalQuestion?.formId&&canonicalFormId(url)&&finalQuestion.formId!==canonicalFormId(url))throw new Error('Câu hỏi cuối đã chọn thuộc form khác. Đọc lại câu hỏi hoặc nhập nội dung cho form này.');
     if(!allowedFormUrl(url)||!['test','live'].includes(mode))throw new Error('Link Google Forms hoặc chế độ không hợp lệ.');if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)throw new Error('Chọn các profile khác nhau.');
-    const id=randomUUID();const group={id,url,mode,members:ids,paused:false,createdAt:new Date().toISOString(),requestId,requestSignature,restartOf};
+    const id=randomUUID();const group={...(engine==='direct'?{engine}:{}),id,url,mode,members:ids,paused:false,createdAt:new Date().toISOString(),requestId,requestSignature,restartOf};
     // Persist the group gate before preparation. Each member then crosses its
     // own fenced transaction and dispatches immediately, without a batch barrier.
     await this.store.beginGroup(group,[]);this.changed();
@@ -434,6 +436,7 @@ export class Coordinator {
     const results=await Promise.all(ids.map(member=>(async()=>{
       try{
         await this.runBuffer?.flush(member);
+        if(engine==='direct'){const ping=await this.command(member,'PING',{},undefined,5000);if(!ping?.capabilities?.includes('googleDirect'))throw new Error('Cập nhật/Reload extension để dùng Google Forms thử nghiệm.');}
         if(finalQuestion){const result=await this.command(member,'PING',{},undefined,5000);if(!result?.capabilities?.includes('sharedFinalQuestion'))throw new Error('Reload hoặc cập nhật extension để dùng đáp án câu hỏi cuối chung.');if(result.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');}
         const s=await this.store.session(member);
         if(!this.peers.has(member)||!s.synced||!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error('Cần kết nối, đồng bộ và gán email Google.');
@@ -444,12 +447,12 @@ export class Coordinator {
         const hashes:Record<string,string>={};
         await Promise.all(Object.values(s.profile.attachments).filter(a=>!!a).map(async a=>{const info=await this.store.attachmentInfo(member,a.id);if(info.size!==a.size)throw new Error('Dung lượng ảnh không khớp hồ sơ.');hashes[a.id]=info.hash;}));
         if((this.intents.get(member)??0)!==intents.get(member)||guard&&!guard())throw new Error('Đã hủy Bắt đầu vì lịch đã hủy hoặc có lệnh Dừng/Tạm dừng mới.');
-        s.run={runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,autoContinue:true,retryOnReturn:true,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
+        s.run={...(engine==='direct'?{engine}:{}),runId:id,sessionId:member,managed:true,profileSnapshot:s.profile,autoContinue:true,retryOnReturn:true,finalQuestion:finalQuestion?structuredClone(finalQuestion):undefined,profileRevision:s.revision,expectedEmail:s.expectedEmail,tabId:-1,formId:'',url,mode,status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:group.createdAt,startedAt:group.createdAt,eventSeq:0};s.error=undefined;
         await this.store.beginGroup(group,[s],true);this.runBuffer?.begin([s],group);this.changed();
         const gate=await this.store.group(id);this.runBuffer?.groupGate(gate);
         if((this.intents.get(member)??0)!==intents.get(member)||gate.paused||guard&&!guard()){await failed(member,new Error('Đã hủy trước khi mở form vì có lệnh Dừng mới.'),true);return {id:member,ok:false,error:'Đã dừng trước khi mở form.'};}
         if(this.runBuffer?.has(member)&&!this.runBuffer.allowed(member,id))return {id:member,ok:false,error:'Lượt đã dừng.'};
-        void this.command(member,'START',{url,mode,finalQuestion,revision:s.revision,expectedEmail:s.expectedEmail,attachmentHashes:hashes},id,120000).catch(error=>failed(member,error)).catch(this.unavailable);
+        void this.command(member,'START',{...(engine==='direct'?{engine}:{}),url,mode,finalQuestion,revision:s.revision,expectedEmail:s.expectedEmail,attachmentHashes:hashes},id,120000).catch(error=>failed(member,error)).catch(this.unavailable);
         return {id:member,ok:true};
       }catch(error){await failed(member,error).catch(this.unavailable);return {id:member,ok:false,error:(error as Error).message};}
     })().then(async result=>{await this.store.recordStartResult(id,result);this.changed();return result;})));

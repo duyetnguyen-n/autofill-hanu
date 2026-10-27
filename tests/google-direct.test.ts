@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
 import {emptyProfile} from '../src/rules';
-import {DIRECT_LAB_FORM_ID,parseDirectSchema} from '../src/google-direct/schema';
+import {DIRECT_LAB_FORM_ID,directSchemaFingerprint,parseDirectSchema} from '../src/google-direct/schema';
 import {buildDirectPlan,previewDirectRequest} from '../src/google-direct/plan';
 
 // Sanitized DOM metadata observed on the supplied lab form, 2026-10-27.
@@ -80,4 +80,12 @@ describe('Google Forms Direct isolated research planner',() => {
       expect(plan.blockers.some(b => /vòng lặp|không tồn tại/.test(b))).toBe(true);
     }
   });
+});
+
+it('accepts Google-shuffled choices but rejects changed values, validation and destinations',()=>{
+  const original=parse(),shuffled=structuredClone(original);shuffled.sections.forEach(s=>s.questions.forEach(q=>q.options.reverse()));
+  expect(directSchemaFingerprint(shuffled)).toBe(directSchemaFingerprint(original));
+  for(const change of [(s:any)=>s.sections[1].questions[0].options[0].value='OTHER ANSWER',(s:any)=>s.sections[2].questions[2].options[0].goTo=123,(s:any)=>s.sections[8].questions[0].validations=[]]){
+    const changed=structuredClone(original);change(changed);expect(directSchemaFingerprint(changed)).not.toBe(directSchemaFingerprint(original));
+  }
 });

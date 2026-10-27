@@ -47,7 +47,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="hanu-local-backup.json"');return json(exportArchive(store));}
         if(path==='/api/pair'&&req.method==='POST'){const b=await body(req);if(b.extensionId){const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);}return json({code:store.pairCode(),expiresIn:300});}
         if(path==='/api/register-host'&&req.method==='POST'){const b=await body(req);const launcher=ensureNativeLauncher(dir,fileURLToPath(new URL('./bridge.cjs',import.meta.url)),options.launcher??process.env.HANU_NATIVE_LAUNCHER);const ids=registerNativeHost(String(b.extensionId).trim(),dir,launcher,options.nativeManifestDir);coordinator.changed();return json({ids});}
-        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion,b.requestId));}
+        if(path==='/api/start'&&req.method==='POST'){const b=await body(req);return json(await coordinator.start(b.ids,b.url,b.mode,b.finalQuestion,b.requestId,undefined,undefined,b.engine));}
         if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req);return json(await coordinator.assignHsk(b.ids,b.level));}
         if(path==='/api/registration-schedule'&&req.method==='POST')return json(await coordinator.scheduler.arm(await body(req)));
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req);return json(await coordinator.scheduler.cancel());}
@@ -84,7 +84,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         return json({error:'Không tìm thấy API.'},404);
       }
       if(req.method!=='GET')return json({error:'Method không hợp lệ.'},405);
-      const file=resolve(uiDir,'.'+decodeURIComponent(path==='/'?'/index.html':path));if(!file.startsWith(resolve(uiDir)+sep)||!existsSync(file))return json({error:'Không tìm thấy giao diện. Chạy build:manager.'},404);
+      const file=resolve(uiDir,'.'+decodeURIComponent(['/','/google-direct'].includes(path)?'/index.html':path));if(!file.startsWith(resolve(uiDir)+sep)||!existsSync(file))return json({error:'Không tìm thấy giao diện. Chạy build:manager.'},404);
       const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2'};res.setHeader('Content-Type',types[extname(file)]??'application/octet-stream');res.end(readFileSync(file));
     }catch(e){failClosed(e);json({error:emergencyError||(e as Error).message},400);}
   });

@@ -45,6 +45,7 @@ export function initialHskQuestion(s:RegistrationSchedule,level:HskLevel):FinalQ
 export interface HskLink {url?:string;source:'facebook'|'manual';error?:string;observedAt:string}
 export interface ScheduledMember {id:string;level:HskLevel;status:'waiting'|'starting'|'started'|'failed'|'held';error?:string;runId?:string;url?:string;requestId:string;dispatchedAt?:string;prepared?:boolean;waitingReason?:string;answerError?:string}
 export interface RegistrationSchedule {
+  engine?:import('./shared').FormEngine;
   id:string;postUrl:string;startsAt:string;expiresAt:string;prepareAt:string;watchAt:string;
   mode:RunMode;status:'armed'|'preparing'|'watching'|'running'|'finished'|'cancelled'|'expired';
   members:ScheduledMember[];links:Partial<Record<HskLevel,HskLink>>;finalQuestion?:FinalQuestion;

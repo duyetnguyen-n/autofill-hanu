@@ -19,11 +19,12 @@ export function readExecutionPage(): ExecutionPage {
   const allowed = location.origin === 'https://docs.google.com' && /^\/forms\/(?:u\/\d+\/)?d\/e\/[^/]+\/(?:viewform|formResponse)$/.test(location.pathname);
   if (!allowed) throw new Error('Tab đã rời Google Form. Kiểm tra đăng nhập trước khi tiếp tục.');
   const form = document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
-  const script = [...document.scripts].find(s => /^\s*(?:var\s+)?FB_PUBLIC_LOAD_DATA_\s*=/.test(s.textContent ?? ''))?.textContent ?? undefined;
+  const script = document.getElementById('hanuDirectSchema')?.textContent??[...document.scripts].find(s => /^\s*(?:var\s+)?FB_PUBLIC_LOAD_DATA_\s*=/.test(s.textContent ?? ''))?.textContent ?? undefined;
   const text = document.body.innerText ?? document.body.textContent ?? '';
   const visible = (e: Element) => {const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
-  const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(e => e.textContent?.trim() ?? '');
-  const history = form?.querySelector<HTMLInputElement>('input[name="pageHistory"]')?.value ?? '0';
+  const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(e => e.textContent?.normalize('NFC').trim() ?? '');
+  const current=document.querySelector<HTMLFormElement>('#hanuDirectState')??form;
+  const history = current?.querySelector<HTMLInputElement>('input[name="pageHistory"]')?.value ?? '0';
   const emailLabel = document.querySelector('[role="checkbox"][aria-label*="@"]')?.getAttribute('aria-label');
   const account = (emailLabel ?? form?.innerText ?? '').match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? '';
   // A random document key avoids confusing two pages with the same pathname.
@@ -31,7 +32,7 @@ export function readExecutionPage(): ExecutionPage {
   if (!html.dataset.hanuDirectDocument) html.dataset.hanuDirectDocument = crypto.randomUUID();
   return {url:location.href, documentKey:html.dataset.hanuDirectDocument,
     script, history:/^\d+(?:,\d+)*$/.test(history) ? history.split(',').map(Number) : [], account,
-    hasForm:!!form, hasNext:buttons.some(t => /^(tiếp|next)$/i.test(t)),hasSubmit:buttons.some(t => /^(gửi|submit)$/i.test(t)),
+    hasForm:!!form, hasNext:current?.id==='hanuDirectState'?current.dataset.next==='true':buttons.some(t => /^(tiếp|next)$/i.test(t)),hasSubmit:current?.id==='hanuDirectState'?current.dataset.final==='true':buttons.some(t => /^(gửi|submit)$/i.test(t)),
     draftRefresh:/bản nháp mới hơn|more recent draft|newer draft/i.test(text),
     text:text.slice(0,60000), blocked:[...document.querySelectorAll('iframe[src*="recaptcha"],iframe[src*="hcaptcha"]')].some(f=>visible(f)&&f.getBoundingClientRect().height>50)
       || /không còn chấp nhận|no longer accepting|too many requests|unusual traffic/i.test(text)};
@@ -47,9 +48,11 @@ export interface PagePost {
   sentinels: string[];
   uploadEntries: string[];
   history?: number[];
+  http?:boolean;
+  route?:number[];
 }
 export interface FinalPostResult {status:number;received:boolean;message:string}
-export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult}> {
+export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult;error?:string}> {
   if (location.origin !== 'https://docs.google.com' || !location.pathname.includes(`/d/e/${request.formId}/`) || document.documentElement.dataset.hanuDirectDocument !== request.documentKey) throw new Error('Document/form đã thay đổi trước khi gửi request.');
   const original = document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
   if (!original) throw new Error('Không còn form để gửi.');
@@ -58,7 +61,8 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
   if (document.documentElement.dataset.hanuDirectPost) throw new Error('Document này đã có request, không gửi lặp.');
   const account = (document.querySelector('[role="checkbox"][aria-label*="@"]')?.getAttribute('aria-label') ?? original.innerText ?? original.textContent ?? '').match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? '';
   if (!request.account || account.toLowerCase() !== request.account.toLowerCase()) throw new Error('Tài khoản Google đã thay đổi.');
-  const source = new FormData(original), body = new URLSearchParams();
+  if(document.documentElement.dataset.hanuDirectStopped)throw new Error('Đã dừng trước khi gửi request.');
+  const source = new FormData(document.querySelector<HTMLFormElement>('#hanuDirectState')??original), body = new URLSearchParams();
   for (const [key,value] of source) if (typeof value === 'string') body.append(key,value);
   // Keep Google's current upload references and partialResponse verbatim.
   // Never synthesize a Drive ID from local attachment metadata.
@@ -83,57 +87,69 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
     if (!/^entry\.\d+$/.test(key)) throw new Error('Tên trường request không hợp lệ.');
     body.append(key,value);
   }
-  // Google's autosaved draft can rehydrate older answers between navigations.
-  // Merge the frozen answers into partialResponse too, preserving Google file
-  // references and every other session slot verbatim.
-  const rawPartial=body.get('partialResponse');
-  if(rawPartial){
-    let partial:any;
-    try{partial=JSON.parse(rawPartial);}catch{throw new Error('Trạng thái bản nháp Google không hợp lệ.');}
-    if(!Array.isArray(partial)||partial[0]!=null&&!Array.isArray(partial[0]))throw new Error('Cấu trúc bản nháp Google đã thay đổi.');
-    const rows:any[]=partial[0]??[];
-    for(const key of keys){
-      const id=key.slice(6),values=request.entries.filter(e=>e[0]===key).map(e=>e[1]);
-      const old=rows.find(row=>Array.isArray(row)&&String(row[1])===id);
-      if(old)old[2]=values;else rows.push([null,Number(id),values,0]);
-    }
-    // Observed on this Lab: a file answer is [null, entry, null, 0, files],
-    // and the current entry's JSON equals slot 4 exactly. Preserve that opaque
-    // Google-produced structure; it is NOT a text answer in slot 2.
-    for(const [id,files] of uploadValues){
-      const old=rows.find(row=>Array.isArray(row)&&String(row[1])===id);
-      if(old){old[2]=null;old[4]=files;}else rows.push([null,Number(id),null,0,files]);
-    }
-    partial[0]=rows;body.set('partialResponse',JSON.stringify(partial));
+  // partialResponse belongs to the current Google response. Never merge or
+  // fabricate rows, pageHistory or draft revisions: entries encode THIS page.
+  const actualHistory=String(source.get('pageHistory')??'');
+  if(request.history&&request.history.join(',')!==actualHistory)throw new Error('Không được nhảy qua trang chưa được Google xác nhận.');
+  const sessionKey=`hanu-direct-draft:${request.formId}`;
+  const captured=JSON.parse(sessionStorage.getItem(sessionKey)??'{}');
+  for(const name of ['dlut','fuIds']){
+    if(body.get(name))captured[name]=body.get(name);
+    else if(captured[name])body.set(name,captured[name]);
   }
-  body.set('submissionTimestamp',String(Date.now()));
-  if(request.history){
-    if(!request.history.length||request.history.some(n=>!Number.isSafeInteger(n)||n<0))throw new Error('Lộ trình gửi không hợp lệ.');
-    body.set('pageHistory',request.history.join(','));
-  }
+  sessionStorage.setItem(sessionKey,JSON.stringify(captured));
   for (const id of request.sentinels) body.set(`entry.${id}_sentinel`,'');
   body.set('emailAddress',request.account);
   body.set('fvv',body.get('fvv') || '1');
-  body.delete('back');body.delete('continue');
+  body.delete('back');body.delete('continue');body.delete('submit');
   if (!request.final) body.set('continue','1');
-  if(request.final){
+  if(request.final||request.http){
+    if(request.final)body.set('submit','Submit');
     // Same-origin fetch keeps Google's authenticated upload session but does
     // not trigger beforeunload/autosave navigation after the file is selected.
     document.documentElement.dataset.hanuDirectPost=request.requestId;
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),35000);
+    const controller=new AbortController(),stop=()=>controller.abort(),timer=setTimeout(stop,35000);
+    document.addEventListener('hanu-direct-stop',stop,{once:true});
     try{
       const response=await fetch(action.href,{method:'POST',credentials:'include',redirect:'follow',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body.toString(),signal:controller.signal});
       const html=await response.text();
       // Parse only inert text/structural markers. Do not insert response HTML
       // into Google's document or create a Trusted Types policy in MAIN.
+      if(!request.final){
+        if(!response.ok)throw new Error(`Google từ chối chuyển trang HTTP ${response.status}.`);
+        const decode=(s:string)=>s.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi,(_all,v)=>v[0]==='#'?String.fromCodePoint(v[1].toLowerCase()==='x'?parseInt(v.slice(2),16):parseInt(v.slice(1),10)):({amp:'&',quot:'"',apos:"'",lt:'<',gt:'>'} as Record<string,string>)[v.toLowerCase()]);
+        const fields=new URLSearchParams();
+        for(const tag of html.match(/<input\b[^>]*>/gi)??[]){const attrs:Record<string,string>={};for(const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g))attrs[m[1].toLowerCase()]=decode(m[2]??m[3]??m[4]);if(attrs.name&&attrs.type?.toLowerCase()==='hidden')fields.append(attrs.name,attrs.value??'');}
+        const path=fields.get('pageHistory')??'',route=request.route;
+        const next=path.split(',').map(Number),position=route?.indexOf(next.at(-1)!);
+        const previous=String(source.get('pageHistory')??'').split(',').map(Number);
+        if(!route||position===undefined||position<0||path===previous.join(',')||next.join(',')!==route.slice(0,position+1).join(',')||position!==route.indexOf(previous.at(-1)!)+1||!fields.get('token')||!fields.get('fbzx')||!fields.get('partialResponse'))throw new Error('Google chưa xác nhận trang tiếp theo; dừng, không tự gửi lại.');
+        const script=[...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]).find(s=>/^\s*(?:var\s+)?FB_PUBLIC_LOAD_DATA_\s*=/.test(s));
+        if(!script)throw new Error('Không đọc được metadata trang tiếp theo.');
+        const state=document.createElement('form');state.id='hanuDirectState';state.hidden=true;state.dataset.next=String(position<route.length-1);state.dataset.final=String(position===route.length-1);
+        for(const[name,value]of fields){const input=document.createElement('input');input.type='hidden';input.name=name;input.value=value;state.append(input);}
+        const meta=document.createElement('pre');meta.id='hanuDirectSchema';meta.hidden=true;meta.textContent=script;
+        document.getElementById(state.id)?.remove();document.getElementById(meta.id)?.remove();document.body.append(state,meta);
+        document.documentElement.dataset.hanuDirectDocument=crypto.randomUUID();delete document.documentElement.dataset.hanuDirectPost;
+        return {scheduled:true};
+      }
       const hasForm=/<form\b[^>]*action\s*=\s*["'][^"']*\/formResponse(?:[?"'])/i.test(html);
       const captcha=/<iframe\b[^>]*src\s*=\s*["'][^"']*(?:recaptcha|hcaptcha)/i.test(html);
       const text=html.replace(/<(script|style|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,' ').replace(/<input\b[^>]*>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&#(\d+);/g,(_all,n)=>String.fromCodePoint(Number(n))).replace(/&nbsp;|&#xA0;/gi,' ').replace(/&amp;/gi,'&').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase().replace(/\s+/g,' ').trim();
       const received=response.ok&&!hasForm&&!captcha&&/(?:your )?response has been recorded|da ghi lai cau tra loi|cau tra loi cua ban da duoc ghi lai|chuc mung thi sinh da hoan thanh buoc dien thong tin dang ky bieu mau|恭喜您完成填写报名信息/.test(text);
+      if(received){
+        original.hidden=true;
+        document.getElementById('hanuDirectState')?.remove();document.getElementById('hanuDirectSchema')?.remove();
+        sessionStorage.removeItem(sessionKey);
+        const notice=document.createElement('section');notice.id='hanuDirectConfirmation';notice.setAttribute('role','status');notice.style.cssText='max-width:640px;margin:48px auto;padding:32px;background:white;border:1px solid #dadce0;border-radius:8px;font:16px/1.6 system-ui;color:#202124';
+        const heading=document.createElement('h1');heading.textContent='Đã gửi biểu mẫu';
+        const message=document.createElement('p');message.textContent='Google đã xác nhận ghi lại phản hồi. Bạn có thể đóng tab này.';notice.append(heading,message);document.body.prepend(notice);document.title=`Đã gửi · ${document.title}`;
+      }
       const draft=/ban nhap moi hon|more recent draft|newer draft/.test(text);
       const login=!!response.url&&new URL(response.url).hostname==='accounts.google.com';
       return {scheduled:true,finalResult:{status:response.status,received,message:received?'Google xác nhận đã ghi lại phản hồi.':login?'Google yêu cầu đăng nhập lại cho request Gửi.':draft?'Google trả về xung đột bản nháp, chưa xác nhận gửi.':hasForm?`Google trả lại form để kiểm tra dữ liệu; chưa xác nhận gửi. ${text.slice(-600)}`:`Google chưa trả xác nhận ghi phản hồi (HTTP ${response.status}).`}};
-    }finally{clearTimeout(timer);}
+    }catch(error){return {scheduled:true,error:(error as Error).message};}
+    finally{clearTimeout(timer);document.removeEventListener('hanu-direct-stop',stop);}
   }
   // Google pages can declare <base target="_blank">. A dynamically created
   // form must override it, otherwise the controller watches the wrong tab.
@@ -141,7 +157,7 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
   for (const [name,value] of body) {const input=document.createElement('input');input.type='hidden';input.name=name;input.value=value;post.append(input);}
   post.hidden=true;document.body.append(post);
   document.documentElement.dataset.hanuDirectPost=request.requestId;
-  setTimeout(()=>HTMLFormElement.prototype.submit.call(post),0);
+  setTimeout(()=>{if(!document.documentElement.dataset.hanuDirectStopped)HTMLFormElement.prototype.submit.call(post);},0);
   return {scheduled:true};
 }
 
@@ -149,12 +165,12 @@ export function refreshExecutionDraft():boolean {
   if(location.origin!=='https://docs.google.com'||!/\/forms\/(?:u\/\d+\/)?d\/e\//.test(location.pathname))return false;
   const text=document.body.innerText??'';
   if(!/bản nháp mới hơn|more recent draft|newer draft/i.test(text)||document.documentElement.dataset.hanuDirectDraftRefresh)return false;
-  const buttons=[...document.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(b=>/^(cập nhật|update)$/i.test(b.textContent?.trim()??'')&&b.getBoundingClientRect().width>0);
+  const buttons=[...document.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(b=>/^(cập nhật|update)$/i.test(b.textContent?.normalize('NFC').trim()??'')&&b.getBoundingClientRect().width>0);
   if(buttons.length!==1)return false;
   document.documentElement.dataset.hanuDirectDraftRefresh='1';buttons[0].click();return true;
 }
 
-export function inspectExecutionUpload(input: {questionId:string;entryId:string;label:string;name:string;open:boolean}): {state:'ready'|'waiting'|'picker'|'missing'|'conflict';pickerUrl?:string;opened?:boolean} {
+export function inspectExecutionUpload(input: {questionId:string;entryId:string;label:string;name:string;open:boolean;replaceExisting?:boolean}): {state:'ready'|'waiting'|'picker'|'missing'|'conflict';pickerUrl?:string;opened?:boolean;x?:number;y?:number} {
   const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
   const picker=[...document.querySelectorAll<HTMLIFrameElement>('iframe[src]')].find(f=>visible(f)&&f.src.startsWith('https://docs.google.com/picker?')&&new URL(f.src).searchParams.get('hostId')==='file-upload');
   if (picker) return {state:'picker',pickerUrl:picker.src};
@@ -164,12 +180,76 @@ export function inspectExecutionUpload(input: {questionId:string;entryId:string;
   const cards=candidates.filter(el=>!candidates.some(other=>other!==el&&el.contains(other)));
   if(cards.length!==1)return {state:'missing'};
   const card=cards[0], buttons=[...card.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(visible);
-  const remove=buttons.some(b=>/remove file|xóa tệp|xoa tep|delete file/i.test(`${b.getAttribute('aria-label')??''} ${b.textContent??''}`));
+  const remove=buttons.find(b=>/remove file|xóa tệp|xoa tep|delete file/i.test(`${b.getAttribute('aria-label')??''} ${b.textContent??''}`));
   const text=card.textContent??'';
+  if(remove&&input.replaceExisting){remove.scrollIntoView({block:'center'});const r=remove.getBoundingClientRect();return {state:'waiting',x:r.x+r.width/2,y:r.y+r.height/2};}
   if(remove)return {state:text.includes(input.name)?'ready':'conflict'};
   if(input.open){
     const add=buttons.filter(b=>/add file|thêm tệp|tai tep|tải tệp/i.test(b.textContent??''));
     if(add.length===1){add[0].click();return {state:'waiting',opened:true};}
   }
   return {state:'waiting'};
+}
+
+// Stop is scoped to this document; a final request may already be in flight.
+export function cancelExecutionPage():void {
+  document.documentElement.dataset.hanuDirectStopped='1';
+  document.dispatchEvent(new Event('hanu-direct-stop'));
+}
+
+// Use Google's own first Next to obtain its actual draft revision. Only the
+// verified-email introduction is eligible; never guess Date.now() for dlut.
+export function beginExecutionSession(formId:string):boolean {
+  if(location.origin!=='https://docs.google.com'||!location.pathname.includes(`/d/e/${formId}/`))throw new Error('Sai form khởi tạo.');
+  const form=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
+  if(!form)throw new Error('Không có form để Google ghi trạng thái.');
+  const save=()=>{
+    const body=new FormData(form),state:Record<string,string>={};
+    for(const name of ['dlut','fuIds']){const value=body.get(name);if(typeof value==='string'&&value)state[name]=value;}
+    sessionStorage.setItem(`hanu-direct-draft:${formId}`,JSON.stringify(state));
+  };
+  form.addEventListener('submit',save,{capture:true,once:true});
+  form.submit=function(){save();HTMLFormElement.prototype.submit.call(this);};
+  const checkbox=document.querySelector<HTMLElement>('[role="checkbox"][aria-label*="@"]');
+  if(checkbox?.getAttribute('aria-checked')==='false')checkbox.click();
+  const next=[...form.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(b=>/^(tiếp|next)$/i.test(b.textContent?.normalize('NFC').trim()??''));
+  if(next.length!==1)throw new Error('Không xác định được nút khởi tạo phiên.');
+  next[0].click();return true;
+}
+
+export function resetExecutionPage():void {
+  if(document.documentElement.dataset.hanuDirectPost)throw new Error('Trang cũ đã có request; chờ chuyển trang hoặc bắt đầu lượt mới, không gửi lặp.');
+  delete document.documentElement.dataset.hanuDirectStopped;
+}
+
+// Only used on the upload section: Google must commit its own file/draft state.
+// Other sections continue to use prepared HTTP data without filling controls.
+export function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):{done?:boolean;x?:number;y?:number} {
+  const norm=(s:string)=>s.normalize('NFC').replace(/\s+/g,' ').trim();
+  const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
+  const roots=[...document.querySelectorAll<HTMLElement>('[role="listitem"],[data-item-id]')];
+  const matches=roots.filter(e=>e.dataset.itemId===input.questionId||[...e.querySelectorAll('[role="heading"],h3')].some(h=>norm(h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
+  const cards=matches.filter(e=>!matches.some(other=>other!==e&&e.contains(other)));
+  if(cards.length!==1)throw new Error(`Không xác định duy nhất câu upload: ${input.label}`);
+  const card=cards[0];
+  const point=(e:HTMLElement)=>{e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();if(!visible(e))throw new Error('Điều khiển chưa hiển thị.');return {x:r.x+r.width/2,y:r.y+r.height/2};};
+  const named=card.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[name="entry.${input.entryId}"]`);
+  if(['text','textarea'].includes(input.kind)){
+    const field=card.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea');
+    if(!field)throw new Error('Không có ô nhập cho câu upload.');
+    if(field.value!==input.value){const proto=field instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value')!.set!.call(field,input.value);field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));}
+    return {done:field.value===input.value};
+  }
+  if(input.kind==='radio'||input.kind==='checkbox'){
+    const option=[...card.querySelectorAll<HTMLElement>('[role="radio"],[role="checkbox"]')].filter(e=>norm(e.getAttribute('data-value')??e.getAttribute('aria-label')??e.textContent??'')===norm(input.value));
+    if(option.length!==1)throw new Error('Không khớp duy nhất lựa chọn tại trang upload.');
+    return option[0].getAttribute('aria-checked')==='true'?{done:true}:point(option[0]);
+  }
+  if(input.kind==='dropdown'){
+    if(named?.value===input.value)return {done:true};
+    const options=[...card.querySelectorAll<HTMLElement>('[role="option"]')].filter(e=>visible(e)&&norm(e.getAttribute('data-value')??e.textContent??'')===norm(input.value));
+    if(options.length===1)return options[0].getAttribute('aria-selected')==='true'?{done:true}:point(options[0]);
+    const list=card.querySelector<HTMLElement>('[role="listbox"]');if(!list)throw new Error('Không có danh sách tại trang upload.');return point(list);
+  }
+  throw new Error('Chưa hỗ trợ kiểu câu tại trang upload.');
 }

@@ -19,6 +19,9 @@ export class DirectPageDialogs {
     await chrome.debugger.sendCommand(this.source,'Page.enable');
     await chrome.debugger.sendCommand(this.source,'Emulation.setFocusEmulationEnabled',{enabled:true});
   }
+  async click(x:number,y:number){
+    for(const type of ['mousePressed','mouseReleased']){if(this.signal.aborted)throw new Error('Đã dừng.');await chrome.debugger.sendCommand(this.source,'Input.dispatchMouseEvent',{type,x,y,button:'left',clickCount:1});}
+  }
   posting(value:boolean){this.pending=value;}
   async close(){
     this.pending=false;

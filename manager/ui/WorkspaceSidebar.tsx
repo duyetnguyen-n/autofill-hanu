@@ -11,7 +11,7 @@ export type WorkspaceNavItem = {
 };
 
 export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=false, items, email, logout, connected, local=false}: {
-  page: 'forms' | 'chinesetest' | 'hcmue';
+  page: 'google-direct' | 'forms' | 'chinesetest' | 'hcmue';
   chinesetestEnabled?: boolean;
   hcmueEnabled?: boolean;
   items: WorkspaceNavItem[];
@@ -20,8 +20,10 @@ export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=f
   connected: boolean;
   local?: boolean;
 }) {
+  const forms=page==='forms'||page==='google-direct';
   const products = [
     {id:'forms', label:'Google Forms', href:'/', icon:<Browsers size={20}/>},
+    {id:'google-direct',label:'Google Forms thử nghiệm',href:'/google-direct',icon:<Browsers size={20}/>},
     ...(chinesetestEnabled ? [{id:'chinesetest', label:'ChineseTest', href:'/chinesetest', icon:<Exam size={20}/>}] : []),
     ...(hcmueEnabled ? [{id:'hcmue', label:'HSK HCMUE', href:'/hcmue', icon:<Exam size={20}/>}] : []),
   ];
@@ -44,10 +46,10 @@ export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=f
         <button key={item.label} type="button" onClick={item.onClick} className={`ws-nav-item ${item.active?'is-selected':''}`} aria-pressed={item.active}>{content}</button>;
     })}</nav>
     <div className="ws-sidebar-bottom">
-      {page==='forms'&&!local&&<a className="ws-runner-link" href="/extension-downloads/index.html"><span>Tải extension<small>Cài đặt, kết nối và mở lại</small></span><ArrowUpRight size={17}/></a>}
-      {page!=='forms'&&<a className="ws-runner-link" href={`/${page==='chinesetest'?'chinesetest':'hcmue'}-downloads/index.html`} target="_blank" rel="noreferrer"><span>Tải {page==='chinesetest'?'ChineseTest':'HCMUE'} Runner<small>{page==='chinesetest'?'Tải runner và hướng dẫn kết nối':'Cài đặt trên máy chạy của bạn'}</small></span><ArrowUpRight size={17}/></a>}
-      <div className="ws-privacy"><ShieldCheck size={19}/><p><strong>{local?'Dữ liệu trên máy bạn':'Không gian riêng của bạn'}</strong><span>{page==='forms'?(local?'Hồ sơ và ảnh được lưu cục bộ.':'Hồ sơ được lưu theo tài khoản.'):'Phiên đăng nhập mã hóa trên máy.'}</span></p></div>
-      <div className="ws-server-status"><span className={`ws-status-dot ${connected?'is-connected':''}`}/>{connected?(page==='forms'?'Bộ điều phối hoạt động':'Máy chạy đã kết nối'):(page==='forms'?'Đang kết nối quản lý':'Chưa kết nối máy chạy')}</div>
+      {forms&&!local&&<a className="ws-runner-link" href="/extension-downloads/index.html"><span>Tải extension<small>Cài đặt, kết nối và mở lại</small></span><ArrowUpRight size={17}/></a>}
+      {!forms&&<a className="ws-runner-link" href={`/${page==='chinesetest'?'chinesetest':'hcmue'}-downloads/index.html`} target="_blank" rel="noreferrer"><span>Tải {page==='chinesetest'?'ChineseTest':'HCMUE'} Runner<small>{page==='chinesetest'?'Tải runner và hướng dẫn kết nối':'Cài đặt trên máy chạy của bạn'}</small></span><ArrowUpRight size={17}/></a>}
+      <div className="ws-privacy"><ShieldCheck size={19}/><p><strong>{local?'Dữ liệu trên máy bạn':'Không gian riêng của bạn'}</strong><span>{forms?(local?'Hồ sơ và ảnh được lưu cục bộ.':'Hồ sơ được lưu theo tài khoản.'):'Phiên đăng nhập mã hóa trên máy.'}</span></p></div>
+      <div className="ws-server-status"><span className={`ws-status-dot ${connected?'is-connected':''}`}/>{connected?(forms?'Bộ điều phối hoạt động':'Máy chạy đã kết nối'):(forms?'Đang kết nối quản lý':'Chưa kết nối máy chạy')}</div>
       {email&&<div className="ws-user"><span className="ws-user-initial">{email.slice(0,1).toUpperCase()}</span><span title={email}><strong>Tài khoản của bạn</strong><small>{email}</small></span>{logout&&<button type="button" onClick={logout} aria-label="Đăng xuất" title="Đăng xuất"><SignOut size={18}/></button>}</div>}
     </div>
   </aside>;

@@ -1,6 +1,12 @@
 // Research-only parser for Google's responder-page metadata. This is not a
 // documented Google API; fail closed when its shape changes. Never eval it.
 export const DIRECT_LAB_FORM_ID = '1FAIpQLScRrul5GFZkLQD21oVlarFeb1AbomeKoqOJGVsnW3k3XbMtIA';
+export const DIRECT_LAB_FORM_IDS = [DIRECT_LAB_FORM_ID,'1FAIpQLSevBk_8863gvlRtkeaKONg6H7y4teYgGU11SBQgg3LSAJNhlw'] as const;
+export function directLabFormId(url:string):string {
+  const u=new URL(url),id=u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/e\/([^/]+)\/(?:viewform|formResponse)$/)?.[1];
+  if(u.origin!=='https://docs.google.com'||!id||!(DIRECT_LAB_FORM_IDS as readonly string[]).includes(id))throw new Error('Gửi thử nghiệm hiện chỉ hỗ trợ hai form LAB đã đối chiếu.');
+  return id;
+}
 export const DIRECT_LAB_URL = `https://docs.google.com/forms/d/e/${DIRECT_LAB_FORM_ID}/viewform`;
 
 export type DirectKind = 'text' | 'textarea' | 'radio' | 'dropdown' | 'checkbox' | 'file' | 'unsupported';
@@ -60,4 +66,10 @@ export function parseDirectSchema(script: string): DirectSchema {
   }
   const email = form[10]?.[6];
   return {title:form[8], sections, emailCollection:email === 2 ? 'verified' : email === 1 ? 'input' : email == null || email === 0 ? 'none' : 'unknown'};
+}
+
+// Forms can shuffle choices independently on every page load. Order is not a
+// schema change; choice value, Other flag and branching destination still are.
+export function directSchemaFingerprint(schema:DirectSchema):string {
+  return JSON.stringify({...schema,sections:schema.sections.map(s=>({...s,questions:s.questions.map(q=>({...q,options:[...q.options].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}))}))});
 }

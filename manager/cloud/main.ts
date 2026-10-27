@@ -350,7 +350,7 @@ export async function serveCloud(options: {
           if (value.replaceSessionId !== undefined && typeof value.replaceSessionId !== 'string') throw new CloudError('Profile liên kết lại không hợp lệ.');
           return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
         }
-        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId)); }
+        if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId,undefined,undefined,value.engine)); }
         if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req,16384);return json(res,await coordinator.assignHsk(b.ids,b.level));}
         if(path==='/api/registration-schedule'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,b.mode);return json(res,await coordinator.scheduler.arm(b));}
         if(path==='/api/registration-schedule/cancel'&&req.method==='POST'){await body(req,1024);return json(res,await coordinator.scheduler.cancel());}
@@ -429,7 +429,7 @@ export async function serveCloud(options: {
         res.setHeader('Content-Length',archive.length);
         return res.end(archive);
       }
-      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
+      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', '/google-direct', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');

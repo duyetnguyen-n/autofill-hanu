@@ -4,11 +4,11 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
 import {DirectExecutor} from '../src/google-direct/executor';
 import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../src/google-direct/schema';
-import {readExecutionPage,postExecutionPage,inspectExecutionUpload,type ExecutionPage,type PagePost} from '../src/google-direct/execute-page';
+import {readExecutionPage,postExecutionPage,inspectExecutionUpload,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from '../src/google-direct/execute-page';
 import {DirectPageDialogs} from '../src/google-direct/dialogs';
 
 const script = `var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
-afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectDocument;delete document.documentElement.dataset.hanuDirectPost;});
+afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectDocument;delete document.documentElement.dataset.hanuDirectPost;delete document.documentElement.dataset.hanuDirectStopped;sessionStorage.clear();});
 function profile(){const p=emptyProfile();p.values={...p.values,fullName:'NGHIEN CUU LAB',identityType:'CCCD',identityNumber:'000000000000',gender:'Nam',birthDate:'2000-01-01',nationality:'Việt Nam',motherTongue:'Tiếng Việt',email:'hanu.lab.request@gmail.com',phone:'0000000000',chineseStudyDuration:'1 năm',paymentMethod:'E-BANKING',bankAccountNumber:'0',bankAccountHolder:'NGHIEN CUU LAB',bankName:'BIDV',firstCommitment:'true',termsCommitment:'true'};return p;}
 function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:boolean;priorPending?:boolean;validationReturn?:boolean}={}){
   let index=0,submitted=false;
@@ -20,6 +20,9 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
   const confirmation:ExecutionPage={...pages[0],documentKey:'confirmed',script:undefined,history:[],account:'',hasForm:false,hasNext:false,hasSubmit:false,text:options.uncertain?'Thank you':'Câu trả lời của bạn đã được ghi lại'};
   const executeScript=vi.fn(async({func,args}:any)=>{
     if(func===readExecutionPage)return [{result:submitted?confirmation:pages[index]??confirmation}];
+    if(func===prepareUploadAnswer)return [{result:{done:true}}];
+    if(func===resetExecutionPage)return [{result:undefined}];
+    if(func===beginExecutionSession){index++;return [{result:true}];}
     if(func===inspectExecutionUpload)return [{result:{state:'ready'}}];
     if(func===postExecutionPage){posts.push(args[0]);if(args[0].final){submitted=true;return [{result:{scheduled:true,finalResult:{status:200,received:!options.uncertain,message:options.uncertain?'Chưa nhận được xác nhận.':'Google xác nhận đã ghi lại phản hồi.'}}}];}else if(options.validationReturn&&index===2)pages[index]={...pages[index],documentKey:'validation-return'};else index++;return [{result:{scheduled:true}}];}
     throw new Error('Unexpected injection');
@@ -31,10 +34,10 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
 }
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
   vi.useFakeTimers();const f=fixture();const promise=f.run();await vi.runAllTimersAsync();
-  expect(await promise).toMatchObject({status:'received',postCount:5});
-  expect(f.posts.map(p=>p.final)).toEqual([false,false,false,false,true]);
-  expect(f.posts.at(-1)!.entries).toContainEqual(['entry.78959346','000000000000']);
-  expect(f.posts.at(-1)!.entries).toContainEqual(['entry.260703157','']); // clear optional saved draft
+  expect(await promise).toMatchObject({status:'received',postCount:6});
+  expect(f.posts.map(p=>p.final)).toEqual([false,false,false,false,false,true]);
+  expect(f.posts.find(p=>p.entries.some(e=>e[0]==='entry.78959346'))!.entries).toContainEqual(['entry.78959346','000000000000']);
+  expect(f.posts.find(p=>p.entries.some(e=>e[0]==='entry.260703157'))!.entries).toContainEqual(['entry.260703157','']); // clear optional saved draft
   expect(f.posts.at(-1)!.entries.some(e=>e[0]==='entry.1511537540')).toBe(false);
   expect(f.posts.at(-1)!.uploadEntries).toEqual(['1365092776']);
   expect(f.posts.at(-1)!.history).toEqual([0,1,2,3,5,6,7,8]);
@@ -50,11 +53,11 @@ it.each([{lease:true},{priorPending:true}])('does not dispatch when the legacy e
 });
 it('stops before another request if Google account changes after navigation',async()=>{
   vi.useFakeTimers();const f=fixture({accountChanged:true});const promise=f.run();await vi.runAllTimersAsync();
-  expect(await promise).toMatchObject({status:'failed',postCount:1,message:expect.stringContaining('Tài khoản Google')});
+  expect(await promise).toMatchObject({status:'failed',postCount:0,message:expect.stringContaining('Tài khoản Google')});
 });
 it('does not post twice when Google returns the same page with validation errors',async()=>{
   vi.useFakeTimers();const f=fixture({validationReturn:true});const promise=f.run();await vi.runAllTimersAsync();
-  expect(await promise).toMatchObject({status:'failed',postCount:3,message:expect.stringContaining('trả lại trang')});
+  expect(await promise).toMatchObject({status:'failed',postCount:2,message:expect.stringContaining('trả lại trang')});
 });
 it('uses a fresh foreground tab for every explicitly started run',async()=>{
   vi.useFakeTimers();const f=fixture();
@@ -87,7 +90,8 @@ it('overrides stale draft text without modifying uploaded-file references or ses
   document.querySelector<HTMLInputElement>('input[name="partialResponse"]')!.value=JSON.stringify([[[null,2075638650,['OLD DRAFT'],0],[null,1365092776,null,0,[[['GOOGLE_FILE_ID','fixture.png','image/png']]]]],null,'session-only']);
   await postExecutionPage(request);const body=new URLSearchParams(posted);
   const partial=JSON.parse(String(body.get('partialResponse')));
-  expect(partial[0]).toContainEqual([null,2075638650,['NGHIEN CUU LAB'],0]);
+  expect(partial[0]).toContainEqual([null,2075638650,['OLD DRAFT'],0]);
+  expect(body.get('entry.2075638650')).toBe('NGHIEN CUU LAB');
   expect(partial[0]).toContainEqual([null,1365092776,null,0,[[['GOOGLE_FILE_ID','fixture.png','image/png']]]]);
   expect(partial[2]).toBe('session-only');expect(body.get('dlut')).toBe('old-draft-timestamp');
   await vi.runAllTimersAsync();
@@ -117,16 +121,16 @@ it('rejects final submission without a Google file reference and preserves a gen
   expect(JSON.parse(String(body.get('partialResponse')))[0]).toContainEqual([null,1365092776,null,0,[[['GOOGLE_FILE_ID','fixture.png','image/png']]]]);expect(body.has('continue')).toBe(false);
   await vi.runAllTimersAsync();expect(fetch).toHaveBeenCalledOnce();
 });
-it('commits the current Google upload JSON to the observed file-answer slot before a direct final POST',async()=>{
-  const request={...form(),final:true,uploadEntries:['1365092776'],history:[0,1,2,3,5,6,7,8]};
+it('preserves current Google upload JSON without fabricating a partialResponse row',async()=>{
+  const request={...form(),final:true,uploadEntries:['1365092776'],history:[0]};
   const files=[[['GOOGLE_FILE_ID','fixture.png','image/png']]];
   const input=document.createElement('input');input.name='entry.1365092776';input.value=JSON.stringify(files);document.querySelector('form')!.append(input);
   document.querySelector<HTMLInputElement>('input[name="partialResponse"]')!.value=JSON.stringify([[[null,78959346,['000000000000'],0]],null,'session-only',null,null,null,'draft-state',123]);
   let posted='';vi.stubGlobal('fetch',vi.fn(async(_url,options)=>{posted=String(options.body);return {status:200,ok:true,text:async()=>'<html><body>Your response has been recorded</body></html>'};}));
   expect(await postExecutionPage(request)).toMatchObject({finalResult:{received:true}});
   const body=new URLSearchParams(posted),partial=JSON.parse(String(body.get('partialResponse')));
-  expect(partial[0]).toContainEqual([null,1365092776,null,0,files]);expect(partial[6]).toBe('draft-state');expect(partial[7]).toBe(123);
-  expect(body.get('pageHistory')).toBe('0,1,2,3,5,6,7,8');
+  expect(partial[0]).toHaveLength(1);expect(body.get('entry.1365092776')).toBe(JSON.stringify(files));expect(partial[6]).toBe('draft-state');expect(partial[7]).toBe(123);
+  expect(body.get('pageHistory')).toBe('0');
 });
 it('does not classify a HTTP 200 returned form as a received response',async()=>{
   const request={...form(),final:true};
@@ -136,4 +140,49 @@ it('does not classify a HTTP 200 returned form as a received response',async()=>
 it('releases only an explicitly reconciled pending run, retaining its audit metadata',async()=>{
   const f=fixture({priorPending:true});await new DirectExecutor().resolveNotReceived('prior');expect(f.data[f.key]).toMatchObject({runId:'prior',status:'not_received'});
   await expect(new DirectExecutor().resolveNotReceived('other')).rejects.toThrow('Không còn đúng khóa');
+});
+
+it('rejects a fabricated final-page history before any request',async()=>{
+  const request={...form(),final:true,history:[0,1,2,3,5,6,7,8]};const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+  await expect(postExecutionPage(request)).rejects.toThrow('nhảy qua');expect(fetch).not.toHaveBeenCalled();
+});
+it('Stop cancels a queued native navigation before it can dispatch',async()=>{
+  vi.useFakeTimers();const submit=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{});
+  await postExecutionPage(form());cancelExecutionPage();await vi.runAllTimersAsync();expect(submit).not.toHaveBeenCalled();
+});
+it('explicit Test mode traverses to the actual final page and never invokes the final grant or POST',async()=>{
+  vi.useFakeTimers();const f=fixture(),beforeSubmit=vi.fn();
+  const promise=new DirectExecutor().run({tabId:42,mode:'test',profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),beforeSubmit});
+  await vi.runAllTimersAsync();expect(await promise).toMatchObject({status:'ready'});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.every(p=>!p.final)).toBe(true);expect(f.data[f.key]).toBeUndefined();
+});
+
+it('recognizes Google’s decomposed Vietnamese Gửi label on the final page',()=>{
+  form();document.querySelector('form')!.insertAdjacentHTML('beforeend','<div role="button">Gửi</div>');
+  vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({width:90,height:30} as DOMRect);
+  expect(readExecutionPage()).toMatchObject({hasSubmit:true,hasNext:false});
+});
+it('keeps HTTP transitions in the Google document, preserving the new server state without navigation',async()=>{
+  const request={...form(),http:true,route:[0,1],history:[0]};
+  const partial=JSON.stringify([[[null,2075638650,['SERVER VALUE'],0]],null,'server-session']);
+  const attr=(s:string)=>s.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,text:async()=>`<form action="/formResponse"><input type="hidden" name="token" value="next-token"><input type="hidden" name="fbzx" value="server-session"><input type="hidden" name="pageHistory" value="0,1"><input type="hidden" name="partialResponse" value="${attr(partial)}"></form><script>${script}</script>`})));
+  const submit=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{});
+  expect(await postExecutionPage(request)).toEqual({scheduled:true});expect(submit).not.toHaveBeenCalled();
+  expect(readExecutionPage()).toMatchObject({history:[0,1],hasSubmit:true,hasNext:false});
+  const stored=new FormData(document.querySelector<HTMLFormElement>('#hanuDirectState')!);
+  expect(stored.get('partialResponse')).toBe(partial);expect(stored.get('token')).toBe('next-token');expect(stored.get('fbzx')).toBe('server-session');
+});
+it('stops a HTTP transition that returns the same page instead of marking it ready to send',async()=>{
+  const request={...form(),http:true,route:[0,1],history:[0]};
+  vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,status:200,text:async()=>'<form action="/formResponse"><input type="hidden" name="pageHistory" value="0"></form>'})));
+  expect(await postExecutionPage(request)).toMatchObject({error:expect.stringContaining('chưa xác nhận')});expect(document.querySelector('#hanuDirectState')).toBeNull();
+});
+it('captures the draft revision generated by Google on native upload Next rather than inventing one',()=>{
+  form();document.querySelector<HTMLInputElement>('[name="pageHistory"]')!.value='0,1,2,3,5';
+  const dlut=document.createElement('input');dlut.name='dlut';document.querySelector('form')!.append(dlut);
+  const button=document.createElement('div');button.setAttribute('role','button');button.textContent='Tiếp';document.querySelector('form')!.append(button);
+  const submit=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{});
+  button.addEventListener('click',()=>{dlut.value='GOOGLE-UPLOAD-REVISION';document.querySelector('form')!.submit();});
+  beginExecutionSession(DIRECT_LAB_FORM_ID);
+  expect(JSON.parse(sessionStorage.getItem(`hanu-direct-draft:${DIRECT_LAB_FORM_ID}`)!)).toEqual({dlut:'GOOGLE-UPLOAD-REVISION'});expect(submit).toHaveBeenCalledOnce();
 });
