@@ -11,6 +11,32 @@ const stores:Store[]=[],dirs:string[]=[];
 afterEach(()=>{for(const store of stores)try{store.close();}catch{}for(const dir of dirs)rmSync(dir,{recursive:true,force:true});stores.length=dirs.length=0;});
 function setup(count=2){const dir=mkdtempSync(join(tmpdir(),'hanu-store-'));dirs.push(dir);const path=join(dir,'db.sqlite');const store=new Store(path);stores.push(store);const members=Array.from({length:count},(_,i)=>`session-${i}`);for(const id of members){const token=store.pair(id,store.pairCode());expect(store.authenticate(id,token)).toBe(true);const s=store.session(id);s.profile=emptyProfile();s.profile.values.fullName=id;s.expectedEmail=`${id}@example.com`;s.synced=true;s.run={runId:'group',sessionId:id,managed:true,formId:'form',tabId:1,mode:'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',eventSeq:0};store.saveSession(s);}store.saveGroup({id:'group',url:'https://docs.google.com/forms/d/e/form/viewform',mode:'live',members,paused:false,createdAt:''});return {store,path,members};}
 describe('durable coordinator state',()=>{
+  it('stops every active profile across separate HSK groups and reports a failed member without hiding it',async()=>{
+    const {store,members}=setup(3),c=new Coordinator(store),calls:string[]=[];
+    for(const id of members){const s=store.session(id);s.run!.runId=id;store.saveGroup({...store.group('group'),id,members:[id]});store.saveSession(s);}
+    c.command=async(id,kind)=>{expect(kind).toBe('STOP_PROFILE');calls.push(id);if(id===members[1])throw new Error('Mất kết nối');return {execution:null};};
+    const result=await c.stopAll();expect(calls.sort()).toEqual([...members].sort());
+    expect(result).toContainEqual({id:members[1],ok:false,error:'Mất kết nối'});
+    expect(store.session(members[0]).run?.status).toBe('idle');expect(store.session(members[2]).run?.status).toBe('idle');
+    expect(store.session(members[1]).run?.status).toBe('running');
+    const stopped=store.session(members[0]).run!;
+    expect(store.acceptProgress(members[0],{...stopped,eventSeq:999,status:'running'})).toBe(false);
+  });
+  it('does not let a slow Stop hold back the other profile Stop commands',async()=>{
+    const {store,members}=setup(3),c=new Coordinator(store),calls:string[]=[];let release!:()=>void;
+    c.command=async(id)=>{calls.push(id);if(id===members[0])await new Promise<void>(resolve=>release=resolve);return {execution:null};};
+    const stopping=c.stopAll();try{await vi.waitFor(()=>expect(calls).toHaveLength(3));expect(store.session(members[2]).run?.status).toBe('idle');}finally{release();}
+    expect((await stopping).every(r=>r.ok)).toBe(true);
+  });
+  it('cancels a Start still writing its run before it can open a form',async()=>{
+    const {store,members}=setup(1),id=members[0],c=new Coordinator(store),commands=vi.fn(async()=>({}));c.command=commands;c.peers.set(id,{} as any);
+    const s=store.session(id);s.run!.status='idle';store.saveSession(s);
+    const begin=store.beginGroup.bind(store);let release!:()=>void;
+    vi.spyOn(store,'beginGroup').mockImplementation((async(g:any,sessions:any[],append?:boolean)=>{if(sessions.length)await new Promise<void>(r=>release=r);return begin(g,sessions,append);}) as any);
+    const starting=c.start([id],store.group('group').url,'test');await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+    expect(await c.stopAll()).toEqual([]);release();await expect(starting).rejects.toThrow('Đã dừng trước khi mở form');
+    expect(commands).not.toHaveBeenCalled();expect(store.session(id).run?.status).toBe('idle');
+  });
   it('invalidates cached sessions after rollback and does not expose mutable cache references',()=>{
     const {store,members}=setup(1),id=members[0],before=store.session(id).name;
     expect(()=>store.transaction(()=>{const s=store.session(id);s.name='rollback';store.saveSession(s);throw new Error('rollback');})).toThrow('rollback');
@@ -211,6 +237,18 @@ describe('verification answers isolated by scheduled HSK',()=>{
     c.command=async(id,kind,payload)=>{calls.push({id,kind,payload});if(kind==='RESUME')return {...store.session(id).run,status:'running',blockingIssue:undefined,eventSeq:(store.session(id).run?.eventSeq??0)+1};return {};};
     return {store,members,c,calls,plan};
   }
+  it('sends Stop to all scheduled members before waiting for pending launches to settle',async()=>{
+    const f=await scheduled();const settle=vi.spyOn(f.c.scheduler,'settleLaunches').mockImplementation(()=>new Promise<void>(()=>{}));
+    const result=await f.c.stopScheduledRuns(f.plan.id);
+    expect(f.calls.filter(c=>c.kind==='STOP_PROFILE').map(c=>c.id)).toEqual(f.members);expect(f.c.scheduler.value?.status).toBe('cancelled');
+    expect(result.every(r=>r.ok)).toBe(true);expect(settle).not.toHaveBeenCalled();
+  });
+  it('keeps confirmed submissions and their locks intact when stopping the remaining schedule',async()=>{
+    const f=await scheduled(),id=f.members[0];f.store.acquireSubmit(id,'group','form');f.store.resolve(id,'group','received');
+    const result=await f.c.stopScheduledRuns(f.plan.id);
+    expect(result).toContainEqual({id,ok:true,skipped:true});expect(f.calls.filter(c=>c.kind==='STOP_PROFILE').map(c=>c.id)).toEqual([f.members[1]]);
+    expect(f.store.session(id).run?.status).toBe('completed');expect(f.store.blocked(id,'form')).toBe(true);
+  });
   it('stores each answer separately, resumes only matching verification, and applies to a later arrival',async()=>{
     const f=await scheduled(),q4={label:'Tên trường?',value:'HANU',formId:'form'},q5={label:'Năm thi?',value:'2026',formId:'form'};
     await f.c.scheduledAnswer('4',q4);await f.c.scheduledAnswer('5',q5);expect(f.calls).toEqual([]);
@@ -225,6 +263,37 @@ describe('verification answers isolated by scheduled HSK',()=>{
     await f.c.scanVerification(f.members[0]);expect(command).toHaveBeenCalledWith(f.members[0],'SCAN_FORM',{verificationOnly:true},'group',2000);
     command.mockRejectedValue(new Error('Profile chưa xác nhận SCAN_FORM.'));
     await expect(f.c.scanVerification(f.members[0])).rejects.toThrow('trong 2 giây');
+  });
+  it('applies the saved answer on arrival at the live HSK fee question, scoped to its entry',async()=>{
+    const f=await scheduled();await f.c.scheduledAnswer('4',{value:'1234567'});
+    const id=f.members[0],run=f.store.session(id).run!,label='Lệ phí thi HSK4+HSK Khẩu ngữ Trung cấp năm 2026 là bao nhiêu? *';
+    await f.c.acceptState(id,{...run,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'verification',questionLabel:label,message:'Cần đáp án',question:{id:'fee',targetId:'entry.40',label,kind:'text',required:true,filled:false,options:[],verification:true}}});
+    await vi.waitFor(()=>expect(f.calls.some(c=>c.kind==='RESUME')).toBe(true));
+    expect(f.calls.filter(c=>c.kind==='SET_FINAL_QUESTION')).toEqual([{id,kind:'SET_FINAL_QUESTION',payload:{finalQuestion:{value:'1234567',label,formId:'form',questionId:'entry.40',kind:'text'}}}]);
+    expect(f.calls.every(c=>c.id===id)).toBe(true);
+  });
+  it('reads an older unknown blocker without auto-answering, then resumes only after an exact explicit choice',async()=>{
+    const f=await scheduled(),id=f.members[0],label='Câu mới chưa biết *';await f.c.scheduledAnswer('4',{value:'HANU'});
+    const run=f.store.session(id).run!;
+    await f.c.acceptState(id,{...run,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'unknown_required',questionId:'new',questionLabel:label,message:'Cần xử lý'}});
+    await new Promise(r=>setImmediate(r));expect(f.calls).toEqual([]);
+    const question={id:'new',targetId:'entry.40',label,kind:'text' as const,required:true,filled:false,options:[],verification:false};
+    const command=f.c.command;f.c.command=async(id,kind,payload,...rest)=>kind==='SCAN_FORM'?{formId:'form',runId:'group',questions:[question]}:command(id,kind,payload,...rest);
+    await f.c.scanVerification(id);
+    expect(f.store.session(id).run?.blockingIssue).toMatchObject({reason:'unknown_required',question});expect(f.calls).toEqual([]);
+    await f.c.scheduledAnswer('4',{label,value:'HANU',formId:'form',questionId:'entry.other',kind:'text'});
+    await new Promise(r=>setImmediate(r));expect(f.calls).toEqual([]);
+    await f.c.scheduledAnswer('4',{label,value:'HANU',formId:'form',questionId:'entry.40',kind:'text'});
+    await vi.waitFor(()=>expect(f.calls.some(c=>c.kind==='RESUME')).toBe(true));
+    expect(f.calls.map(c=>[c.id,c.kind])).toEqual([[id,'SET_FINAL_QUESTION'],[id,'RESUME']]);
+  });
+  it.each(['cancelled','expired','paused'] as const)('does not resume a selected unknown question while its schedule is %s',async state=>{
+    const f=await scheduled(),id=f.members[0],label='Câu mới *';
+    const q={label,value:'HANU',formId:'form',questionId:'entry.40',kind:'text' as const};
+    if(state==='paused')f.c.scheduler.value!.pausedAt=new Date().toISOString();else f.c.scheduler.value!.status=state;
+    const run=f.store.session(id).run!;
+    await f.c.acceptState(id,{...run,status:'waiting_manual',eventSeq:1,blockingIssue:{reason:'unknown_required',questionId:'new',questionLabel:label,message:'Chờ',question:{id:'new',targetId:'entry.40',label,kind:'text',required:true,filled:false,options:[],verification:false}}});
+    await f.c.scheduledAnswer('4',q);await new Promise(r=>setImmediate(r));expect(f.calls).toEqual([]);
   });
   it('accepts value-only answers and binds different questions to each HSK only on arrival',async()=>{
     const f=await scheduled();await f.c.scheduledAnswer('4',{value:'HANU'});await f.c.scheduledAnswer('5',{value:'2026'});

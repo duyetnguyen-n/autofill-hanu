@@ -120,7 +120,7 @@ export class PostgresStore implements DataStore {
         const ack=result?.run??(result?.runId===runId?result:undefined);
         s.run.autoContinue=false;
         s.run.submitAttempted=!!(s.run.submitAttempted||ack?.submitAttempted&&(ack.submissionRetries??0)===(s.run.submissionRetries??0));
-        s.run.status=s.run.submitAttempted?'submit_uncertain':'idle';s.run.recoveryRequired=false;s.run.activity=undefined;
+        s.run.status=s.run.status==='completed'?'completed':s.run.submitAttempted?'submit_uncertain':'idle';s.run.recoveryRequired=false;s.run.activity=undefined;
         if(s.run.recovery)s.run.recovery.automatic=false;
         if(!s.run.submitAttempted)s.run.blockingIssue=undefined;
         s.run.eventSeq=Math.max(s.run.eventSeq??0,ack?.eventSeq??0);s.run.updatedAt=new Date().toISOString();

@@ -44,3 +44,15 @@ it('rejects another owner, unassigned HSK, invalid URLs and denied Live before a
   expect(await a.store.registrationSchedule()).toBeUndefined();
   await f.db.exec('SET ROLE authenticated');try{await expect(f.db.query('SELECT * FROM hanu.registration_schedules')).rejects.toThrow();}finally{await f.db.exec('RESET ROLE');}
 },20000);
+it('stops only profiles in the authenticated account and reports disconnected members truthfully',async()=>{
+ const f=await httpFixture();cleanups.push(f.close);const a=await f.pair(),b=await f.pair(users[1]);
+ for(const fixture of [a,b]){
+  const s=await fixture.store.session(fixture.sessionId),id='run-'+fixture.sessionId;
+  await fixture.store.beginGroup({id,mode:'test',url:'https://docs.google.com/forms/d/e/fixture/viewform',members:[s.id],paused:false,createdAt:new Date().toISOString()},[]);
+  s.run={runId:id,sessionId:s.id,managed:true,tabId:1,formId:'fixture',mode:'test',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:new Date().toISOString()};await fixture.store.saveSession(s);
+ }
+ const response=await f.api('stop-all',0,{});expect(response.status).toBe(200);
+ const result=await response.json();expect(result.map((r:any)=>r.id)).toEqual([a.sessionId]);expect(result[0].ok).toBe(false);
+ expect((await b.store.session(b.sessionId)).run?.status).toBe('running');
+ expect((await b.store.group('run-'+b.sessionId)).paused).toBe(false);
+},20000);

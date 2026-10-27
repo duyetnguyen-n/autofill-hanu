@@ -363,6 +363,7 @@ export async function serveCloud(options: {
         if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req,65536);assertLive(account,coordinator.scheduler.value?.mode??'test');return json(res,await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req,8192);return json(res,await coordinator.scheduler.manual(b.level,b.url));}
         if (path === '/api/final-question' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.setFinalQuestion(value.ids, value.finalQuestion, value.resume === true)); }
+        if(path==='/api/stop-all'&&req.method==='POST'){await body(req);return json(res,await coordinator.stopAll());}
         const group = path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);
         if (group && req.method === 'POST') { await body(req); return json(res, await coordinator.groupControl(group[1], group[2].toUpperCase() as 'PAUSE' | 'RESUME' | 'STOP')); }
         const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);

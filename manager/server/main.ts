@@ -60,6 +60,7 @@ export async function serve(options:{dir?:string;port?:number;uiDir?:string;laun
         if(path==='/api/registration-schedule/answer'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduledAnswer(b.level,b.finalQuestion));}
         if(path==='/api/registration-schedule/link'&&req.method==='POST'){const b=await body(req);return json(await coordinator.scheduler.manual(b.level,b.url));}
         if(path==='/api/final-question'&&req.method==='POST'){const b=await body(req);return json(await coordinator.setFinalQuestion(b.ids,b.finalQuestion,b.resume===true));}
+        if(path==='/api/stop-all'&&req.method==='POST'){await body(req);return json(await coordinator.stopAll());}
         const group=path.match(/^\/api\/groups\/([^/]+)\/(pause|resume|stop)$/);if(group&&req.method==='POST')return json(await coordinator.groupControl(group[1],group[2].toUpperCase() as 'PAUSE'|'RESUME'|'STOP'));
         const session=path.match(/^\/api\/sessions\/([^/]+)(?:\/(.*))?$/);
         if(session){const id=session[1],action=session[2];

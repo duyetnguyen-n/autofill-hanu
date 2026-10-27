@@ -1,3 +1,4 @@
+import {Notice} from './Notice';
 import React,{useEffect,useState,useRef} from 'react';
 import {Button,Field,Input,Select,Textarea} from '@fluentui/react-components';
 import type {SessionView} from '../../src/protocol';
@@ -54,7 +55,7 @@ export function FinalQuestionEditor({url,sessions,busy,onChange,scan,apply}:{url
       </Field>
     </div>
     <div className="final-question-footer"><span>{sourceSession?`Đọc từ ${sourceSession.name}.`:'Chọn ít nhất một profile đang kết nối.'} {hasRuns?`${waiting}/${sessions.length} profile đã tới câu hỏi này. Profile còn lại giữ nguyên, có thể áp dụng sau. Test dừng trước Gửi; Live tiếp tục theo chế độ của lượt.`:sourceRunning?'Tạm dừng lượt trước khi đọc.':'Đáp án sẽ áp dụng khi bắt đầu lượt.'}</span>{hasRuns&&<Button appearance="primary" disabled={busy||!enabled||!valid||!waiting} onClick={()=>apply(draft)}>Áp dụng và tiếp tục {waiting} profile đã tới câu cuối</Button>}</div>
-    {error&&<p className="final-question-error" role="alert">{error}</p>}
+    {error&&<Notice intent="error" onDismiss={()=>setError('')}>{error}</Notice>}
     <details className="final-question-options"><summary>Chọn câu khác / nhập trước</summary><div className="final-question-fields">
       <Field label="Profile để đọc câu hỏi"><Select value={sourceId??''} disabled={!connected.length||reading} onChange={e=>setSource(e.target.value)}>{!connected.length&&<option value="">Chọn profile đang kết nối</option>}{connected.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
       <Field label="Nội dung chính xác của câu hỏi cuối"><Textarea value={draft.label} placeholder="Nhập nội dung nếu bạn đã biết trước" onChange={(_,d)=>setDraft(old=>({...old,label:d.value,questionId:undefined,formId:undefined}))}/></Field>

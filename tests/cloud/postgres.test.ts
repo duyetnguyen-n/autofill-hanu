@@ -62,6 +62,13 @@ it('starts all profiles and grants submit only once, including two simultaneous 
   expect(await members[1].store.blocked(members[1].sessionId, 'fixture-form')).toBe(false);
   await expect(a.store.acquireSubmit(a.sessionId, group.id, 'different-form')).rejects.toThrow('khóa');
 });
+it('preserves confirmed submissions when a profile-wide Stop is acknowledged',async()=>{
+ const f=await setup(),{members,group}=await start(f),a=members[0];
+ await a.store.acquireSubmit(a.sessionId,group.id,'fixture-form');await a.store.resolve(a.sessionId,group.id,'received');
+ await a.store.acknowledgeStop(a.sessionId,group.id,{execution:null});
+ expect((await a.store.session(a.sessionId)).run).toMatchObject({status:'completed',submitAttempted:true});
+ expect(await a.store.blocked(a.sessionId,'fixture-form')).toBe(true);
+});
 
 it('persists locks and pauses unfinished runs after recovery; relinking preserves the profile ID', async () => {
   const f = await setup(), { members, group } = await start(f), a = members[0];

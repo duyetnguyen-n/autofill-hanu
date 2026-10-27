@@ -4,12 +4,12 @@ import type { WebSocket } from 'ws';
 import type { DataStore } from './data-store';
 import type {FacebookAccessStatus} from '../../src/protocol';
 import { currentExecution, sameExecution, CHUNK_BYTES, PROTOCOL_VERSION, allowedFormUrl, canonicalFormId, canStartSeparateTest, validateProfile, type Command, type CommandKind, type ProfileDocument, type SessionView, type ControlReceipt } from '../../src/protocol';
-import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode,type FormQuestionSummary} from '../../src/shared';
+import {canApplyFinalQuestion, validateFinalQuestion, type FinalQuestion, type RunState, type RunMode} from '../../src/shared';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recovery';
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 import {RegistrationScheduler} from './registration-scheduler';
-import {bindHskAnswer,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
+import {bindHskAnswer,hskVerificationCandidates,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
   readonly scheduler:RegistrationScheduler;
@@ -267,12 +267,38 @@ export class Coordinator {
   async assignHsk(ids:string[],level:unknown){if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length||level!==null&&!isHskLevel(level))throw new Error('Chọn profile và cấp độ HSK hợp lệ.');return Promise.all(ids.map(async id=>{try{await this.edit(id,{hskLevel:level});return {id,ok:true};}catch(e){return {id,ok:false,error:(e as Error).message};}}));}
   async stopScheduledRuns(expectedId?:string){
     const schedule=await this.scheduler.cancel(expectedId);if(!schedule)return [];
-    await this.scheduler.settleLaunches();
+    // Fence every member immediately. Do not wait behind a slow START before
+    // sending priority STOP_PROFILE to members already running.
+    for(const m of schedule.members)this.intents.set(m.id,(this.intents.get(m.id)??0)+1);
+    // START checks both the schedule fence and per-member intent again after
+    // its durable write. An undispatched launch cancels itself; an already
+    // dispatched launch is visible here and receives priority STOP_PROFILE.
+    return this.stopScheduleMembers(schedule);
+  }
+  private async stopScheduleMembers(schedule:import('../../src/registration-schedule').RegistrationSchedule){
     return Promise.all(schedule.members.map(async m=>{try{
       const s=await this.store.session(m.id),g=this.store.groupForRequest?await this.store.groupForRequest(m.requestId):undefined;
       if(!s.run?.runId||s.run.runId!==(m.runId??g?.id))return {id:m.id,ok:true,skipped:true};
+      if(s.run.status==='completed'&&!s.execution)return {id:m.id,ok:true,skipped:true};
+      const gate=await this.store.group(s.run.runId);gate.paused=true;gate.stopped=true;
+      this.runBuffer?.haltGroup(gate.id);this.runBuffer?.groupGate(gate);await this.store.saveGroup(gate);this.changed();
       await this.control(m.id,'STOP',s.run.runId);return {id:m.id,ok:true};
     }catch(e){return {id:m.id,ok:false,error:(e as Error).message};}}));
+  }
+  async stopAll(){
+    // Scoped store contains only this account. Snapshot the run IDs so a later
+    // manually started run cannot receive a stale Stop from this request.
+    const sessions=await this.store.sessions();
+    for(const s of sessions)this.intents.set(s.id,(this.intents.get(s.id)??0)+1);
+    const targets=sessions.filter(s=>s.linked!==false&&(!!s.execution||!!s.run&&!['idle','completed','ready_to_submit'].includes(s.run.status)));
+    const cancel=this.scheduler.cancel();
+    const gates=new Map<string,Promise<void>>();
+    for(const s of targets)if(s.run?.runId&&!gates.has(s.run.runId)){
+      const id=s.run.runId;this.runBuffer?.haltGroup(id);
+      gates.set(id,(async()=>{const g=await this.store.group(id);g.paused=true;g.stopped=true;this.runBuffer?.groupGate(g);await this.store.saveGroup(g);this.changed();})());
+    }
+    const stopped=Promise.all(targets.map(async s=>{try{await(s.run?.runId?gates.get(s.run.runId):undefined);await this.control(s.id,'STOP',s.run?.runId);return {id:s.id,ok:true};}catch(e){return {id:s.id,ok:false,error:(e as Error).message};}}));
+    await cancel;return stopped;
   }
   async scheduledControl(expectedId:string,kind:'PAUSE'|'RESUME'){
     if(typeof expectedId!=='string'||!expectedId)throw new Error('Thiếu mã lịch cần điều khiển.');this.scheduler.assertSchedule(expectedId);if(!this.scheduler.value)throw new Error('Chưa có lịch.');
@@ -293,7 +319,7 @@ export class Coordinator {
     const s=this.scheduler.value,m=s?.members.find(m=>m.id===id&&m.runId===run.runId);
     const configured=m&&(s?.finalQuestions?.[m.level]??(s?.rehearsal?s.rehearsalAnswer:undefined));
     const q=configured&&bindHskAnswer(configured,run);
-    if(!m||m.status!=='started'||!s||!!s.pausedAt||['cancelled','expired'].includes(s.status)||!q||run.status!=='waiting_manual'||run.blockingIssue?.reason!=='verification'||!canApplyFinalQuestion(run,q)||this.answering.has(id))return;
+    if(!m||m.status!=='started'||!s||!!s.pausedAt||['cancelled','expired'].includes(s.status)||!q||!run.blockingIssue||!canApplyFinalQuestion(run,q)||this.answering.has(id))return;
     const key=JSON.stringify([run.runId,run.blockingIssue.questionLabel,q]);if(this.answerAttempts.get(id)===key)return;
     this.answerAttempts.set(id,key);this.answering.add(id);
     // Do not block the extension's STATE/command queue on its own SET response.
@@ -306,11 +332,18 @@ export class Coordinator {
     await this.runBuffer?.flush(id);const current=await this.store.session(id);
     if(current.run?.runId!==s.run?.runId||result.runId&&result.runId!==s.run?.runId)throw new Error('Lượt đã thay đổi trong lúc đọc. Bấm lấy lại câu xác thực.');
     if(current.run?.formId&&result.formId!==current.run.formId)throw new Error('Câu hỏi đọc được thuộc form khác. Kiểm tra lại profile.');
-    const candidates=(Array.isArray(result.questions)?result.questions:[]).filter((q:FormQuestionSummary)=>q.verification&&q.kind!=='file'&&q.kind!=='unknown') as FormQuestionSummary[];
+    const candidates=hskVerificationCandidates(Array.isArray(result.questions)?result.questions:[],current.run?.blockingIssue);
     // Repair an incomplete blocker only from the exact current form's readable verification.
     if(current.run?.status==='waiting_manual'&&current.run.blockingIssue?.reason==='verification'&&!current.run.blockingIssue.questionLabel&&candidates.length===1){
       const q=candidates[0];current.run.blockingIssue={...current.run.blockingIssue,questionId:q.id,questionLabel:q.label,question:q};
       await this.store.saveRun(id,current.run);await this.store.saveSession(current);this.runBuffer?.refresh(id,current);this.changed();this.queueScheduledAnswer(id,current.run);
+    }
+    // Older extensions omit the summary for unknown fields. A read may add its
+    // exact identity, but must not silently turn it into verification.
+    const issue=current.run?.blockingIssue;
+    if(current.run?.status==='waiting_manual'&&issue?.reason==='unknown_required'){
+      const blocked=candidates.filter(q=>q.id===issue.questionId&&q.label===issue.questionLabel);
+      if(blocked.length===1&&!isDeepStrictEqual(issue.question,blocked[0])){current.run.blockingIssue={...issue,question:blocked[0]};await this.store.saveRun(id,current.run);await this.store.saveSession(current);this.runBuffer?.refresh(id,current);this.changed();}
     }
     return result;
   }
@@ -452,9 +485,10 @@ export class Coordinator {
     if(kind!=='RESUME')await this.attention.cancel(id);
     if(kind==='STOP'){
       const result=await this.command(id,'STOP_PROFILE',{},s.run?.runId);
+      if(result?.execution)throw new Error('Profile vẫn báo còn lượt giữ cửa sổ. Chưa xác nhận dừng; hãy thử Dừng lại.');
       if(this.store.acknowledgeStop){await this.runBuffer?.flush(id);const current=await this.store.acknowledgeStop(id,s.run?.runId,result);this.runBuffer?.refresh(id,current);this.changed();return result;}
       const current=await this.store.session(id);
-      if(current.run?.runId===s.run?.runId){if(current.run){current.run.autoContinue=false;current.run.status=current.run.submitAttempted?'submit_uncertain':'idle';current.run.blockingIssue=current.run.submitAttempted?current.run.blockingIssue:undefined;current.run.eventSeq=Math.max(current.run.eventSeq??0,result?.run?.runId===current.run.runId?(result.run.eventSeq??0):0);current.run.updatedAt=new Date().toISOString();current.run.logs.push({at:current.run.updatedAt,level:'info',message:'Đã dừng mọi lượt trong profile. Có thể bắt đầu lượt mới khi chưa khóa gửi.'});await this.store.saveRun(id,current.run);}current.error=undefined;current.execution=result?.execution??null;await this.store.saveSession(current);this.changed();}
+      if(current.run?.runId===s.run?.runId){if(current.run){current.run.autoContinue=false;current.run.status=current.run.status==='completed'?'completed':current.run.submitAttempted?'submit_uncertain':'idle';current.run.blockingIssue=current.run.submitAttempted?current.run.blockingIssue:undefined;current.run.eventSeq=Math.max(current.run.eventSeq??0,result?.run?.runId===current.run.runId?(result.run.eventSeq??0):0);current.run.updatedAt=new Date().toISOString();current.run.logs.push({at:current.run.updatedAt,level:'info',message:'Đã dừng mọi lượt trong profile. Có thể bắt đầu lượt mới khi chưa khóa gửi.'});await this.store.saveRun(id,current.run);}current.error=undefined;current.execution=result?.execution??null;await this.store.saveSession(current);this.changed();}
       this.runBuffer?.refresh(id,current);return result;
     }
     if(!s.run?.runId)throw new Error('Chưa có lượt chạy.');

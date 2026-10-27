@@ -1,0 +1,6 @@
+.app-notice{min-width:0;width:100%;box-sizing:border-box;border-radius:8px;margin:12px 0;font-size:13px;line-height:1.65;box-shadow:none}
+.app-notice .fui-MessageBarBody{min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.app-notice .fui-MessageBarActions{min-width:0;flex-wrap:wrap;gap:8px}
+.app-notice p{margin:0}.app-notice p+p{margin-top:6px}
+.app-notice button{white-space:nowrap;flex-shrink:0}
+@media(max-width:600px){.app-notice{font-size:12px}.app-notice .fui-MessageBarActions{grid-column:1/-1;justify-content:flex-start}.app-notice button{min-height:40px}}

@@ -40,3 +40,14 @@ it('validates nonempty answers, supported types and form-scoped IDs',()=>{for(co
 it('reports the actual verification title, stable entry and field kind without a separate scan',async()=>{
  const f=await run(card());expect(f.events.at(-1)).toMatchObject({type:'block',issue:{reason:'verification',questionLabel:label+' *',question:{targetId:'entry.123',kind:'text',verification:true}}});
 });
+
+it.each(['Lệ phí thi HSK4+HSK Khẩu ngữ Trung cấp năm 2026 là bao nhiêu?','Lệ phí thi HSK 5 năm 2027 là bao nhiêu?'])('recognizes the live HSK fee verification: %s',async title=>{
+ const f=await run(card(title));
+ expect(f.events.at(-1)).toMatchObject({type:'block',issue:{reason:'verification',questionLabel:title+' *',question:{targetId:'entry.123',kind:'text',verification:true}}});
+ expect(f.submit).not.toHaveBeenCalled();
+});
+it.each(['Số tiền lệ phí đã chuyển khoản','Lệ phí thi HSK4','Lệ phí thi khác là bao nhiêu?','Mã giao dịch chuyển khoản'])('keeps unrelated required fields unrecognized: %s',async title=>{
+ const f=await run(card(title));
+ expect(f.events.at(-1)).toMatchObject({type:'block',issue:{reason:'unknown_required',question:{targetId:'entry.123',kind:'text',verification:false}}});
+ expect(document.querySelector('input')!.value).toBe('');expect(f.submit).not.toHaveBeenCalled();
+});

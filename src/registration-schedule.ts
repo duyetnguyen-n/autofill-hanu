@@ -1,5 +1,5 @@
 import {allowedFormUrl} from './protocol';
-import {canApplyFinalQuestion,validateFinalQuestion,type FinalQuestion,type RunMode,type RunState} from './shared';
+import {canApplyFinalQuestion,matchesFinalQuestionLabel,validateFinalQuestion,type BlockingIssue,type FormQuestionSummary,type FinalQuestion,type RunMode,type RunState} from './shared';
 
 export const HSK_LEVELS=['1','2','3','4','5','6'] as const;
 export type HskLevel=typeof HSK_LEVELS[number];
@@ -15,12 +15,28 @@ export function validateHskAnswer(value:unknown):asserts value is HskVerificatio
 }
 export function bindHskAnswer(answer:HskVerificationAnswer,run:RunState):FinalQuestion|undefined {
   const issue=run.blockingIssue;
-  if(run.status!=='waiting_manual'||issue?.reason!=='verification'||!issue.questionLabel?.trim()||!run.formId)return;
+  if(run.status!=='waiting_manual'||!issue?.questionLabel?.trim()||!run.formId)return;
   const detected=issue.question;
+  // An unknown required field needs an explicit choice of its exact form/entry.
+  // Never guess a destination for an answer entered before seeing the question.
+  const selectedUnknown=issue.reason==='unknown_required'&&!!answer.label&&answer.formId===run.formId
+    &&!!answer.questionId&&answer.questionId===detected?.targetId&&!!answer.kind&&answer.kind===detected.kind;
+  if(issue.reason!=='verification'&&!selectedUnknown)return;
   const q:FinalQuestion=answer.label?{...answer,label:answer.label}:{value:answer.value,label:issue.questionLabel,formId:run.formId,
     ...(detected?.targetId?{questionId:detected.targetId}:{}),
     ...(detected&&detected.kind!=='unknown'&&detected.kind!=='file'?{kind:detected.kind}:{})};
   return canApplyFinalQuestion(run,q)?q:undefined;
+}
+/** Include an unrecognized blocker for explicit selection, never other fields. */
+export function hskVerificationCandidates(questions:FormQuestionSummary[],issue?:BlockingIssue):FormQuestionSummary[] {
+  return questions.filter(q=>{
+    if(q.kind==='file'||q.kind==='unknown')return false;
+    if(q.verification===true)return true;
+    if(issue?.reason==='verification')return q.id===issue.questionId||!!issue.questionLabel&&matchesFinalQuestionLabel(q.label,issue.questionLabel);
+    if(issue?.reason!=='unknown_required'||!q.required)return false;
+    if(!issue.questionLabel||!matchesFinalQuestionLabel(q.label,issue.questionLabel))return false;
+    return issue.question?.targetId?q.targetId===issue.question.targetId:!!issue.questionId&&q.id===issue.questionId;
+  });
 }
 export function initialHskQuestion(s:RegistrationSchedule,level:HskLevel):FinalQuestion|undefined {
   const q=s.finalQuestions?.[level]??(s.rehearsal?s.rehearsalAnswer:undefined);

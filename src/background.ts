@@ -107,11 +107,15 @@ async function enablePageRendering(tabId:number,token:string,foreground=false){
 }
 async function disablePageRendering(tabId:number,token:string){
   const guard=renderGuards.get(tabId);if(guard?.token!==token)return;
-  guard.cancelled=true;await guard.ready;
+  guard.cancelled=true;
   if(renderGuards.get(tabId)!==guard)return;
   renderGuards.delete(tabId);
-  await chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});
-  await chrome.debugger.detach({tabId}).catch(()=>{});
+  // Cancellation cannot wait for a hung layout command. A late attachment is
+  // cleaned by enablePageRendering's cancellation check and catch handler.
+  if(guard.attached){guard.attached=false;await Promise.allSettled([
+    observePage(chrome.debugger.sendCommand({tabId},'Emulation.setFocusEmulationEnabled',{enabled:false})),
+    observePage(chrome.debugger.detach({tabId}))
+  ]);}
 }
 async function prepareFormWindow(tabId:number,focused=false){
   const tab=await chrome.tabs.get(tabId);
@@ -123,6 +127,8 @@ async function prepareFormWindow(tabId:number,focused=false){
 }
 async function releasePageAttention(tabId:number,token?:string){
   const lease=pageAttention.get(tabId);if(!lease||token&&lease.token!==token){await attentionReleasing.get(tabId);return;}
+  const acquiring=attentionAcquiring.get(tabId);
+  if(acquiring?.epoch===lease.epoch&&acquiring.runId===lease.run.runId)attentionAcquiring.delete(tabId);
   pageAttention.delete(tabId);clearInterval(lease.timer);
   const previous=attentionReleasing.get(tabId);
   const releasing=(async()=>{
@@ -145,7 +151,8 @@ async function acquirePageAttentionOnce(message:Extract<ExtensionMessage,{type:'
   const tabId=sender.tab?.id;
   if(tabId===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab?.url))throw new Error('Trang không hợp lệ.');
   let run=await getRun(tabId);
-  const valid=(r?:RunState)=>r?.status==='running'&&!r.submitAttempted&&r.runId===message.runId&&r.contentEpoch===message.epoch&&(!cloudOrigin()||r.managed)&&(!r.managed||native.isConnected()&&!interruptedRuns.has(r.runId!));
+  const epoch=interruptEpoch;
+  const valid=(r?:RunState)=>epoch===interruptEpoch&&r?.status==='running'&&!r.submitAttempted&&r.runId===message.runId&&r.contentEpoch===message.epoch&&(!cloudOrigin()||r.managed)&&(!r.managed||native.isConnected()&&!interruptedRuns.has(r.runId!));
   if(!valid(run))throw new Error('Lượt/trang đã dừng; không mở cửa sổ.');
   const old=pageAttention.get(tabId);if(old?.epoch===message.epoch)return {ok:true,token:old.token};
   await releasePageAttention(tabId);
@@ -544,6 +551,7 @@ async function startRun(tabId: number, mode: RunMode): Promise<RunState> {
 
 async function haltRun(tabId:number,status:'idle'|'paused'):Promise<RunState|undefined>{
   interruptEpoch++;
+  attentionAcquiring.delete(tabId);
   storedPickerUploads.cancel(tabId);
   const run=await writeState(async()=>{
     const current=await getRun(tabId);if(!current||current.status==='completed')return current;
@@ -985,7 +993,7 @@ async function parkManaged(reconnect=false){
     run.activity=run.status==='waiting_manual'?{phase:'waiting_user',message:run.blockingIssue?.message??'Cần kiểm tra form trước khi tiếp tục.',at:now()}:{phase:'reconnecting',message:run.transportRecovery?'Đang nối lại; sẽ tự đối chiếu và tiếp tục lượt chưa gửi.':native.isConnected()?'Đã kết nối. Bấm Tiếp tục để đối chiếu trang trước khi chạy.':'Mất kết nối bộ điều phối. Đang nối lại; lượt được giữ để đối chiếu.',at:now()};
     run.recoveryRequired=true;await writeRunNow(run);return run;
   });
-  if(run?.tabId!==undefined&&run.tabId>=0){await haltDocument(run.tabId);await releasePageAttention(run.tabId);}
+  if(run?.tabId!==undefined&&run.tabId>=0){attentionAcquiring.delete(run.tabId);await haltDocument(run.tabId);await releasePageAttention(run.tabId);}
 }
 const reconnectingRuns=new Set<string>();
 async function reconcileManaged(){
@@ -1020,11 +1028,14 @@ async function stopProfile(expectedRunId?:string){
  if(expectedRunId&&managed?.runId&&managed.runId!==expectedRunId&&!endedExecution(managed))throw new Error('Lệnh Dừng thuộc lượt cũ; giữ nguyên lượt mới.');
  const runs=new Map<string,RunState>();for(const [key,value]of Object.entries(data)){const run=value as RunState;if(key.startsWith(RUN_PREFIX)&&run?.runId&&!endedExecution(run)){const old=runs.get(run.runId);if(!old||(old.eventSeq??0)<(run.eventSeq??0))runs.set(run.runId,run);}}
  if(managed?.runId&&managed.status!=='completed')runs.set(managed.runId,managed);
- for(const run of runs.values()){
-   interruptedRuns.add(run.runId!);cancelRecovery(run.runId);
+ interruptEpoch++;
+ for(const run of runs.values()){interruptedRuns.add(run.runId!);cancelRecovery(run.runId);storedPickerUploads.cancel(run.tabId);}
+ const results=await Promise.allSettled([...runs.values()].map(async run=>{
    if(await getRun(run.tabId))await stopRun(run.tabId);
    else {const next=addLog({...run,status:run.submitAttempted?'submit_uncertain':'idle',activity:undefined,recovery:undefined,recoveryRequired:false},'info','Đã dừng lượt không còn tab. Giữ khóa gửi để đối chiếu.');await saveRun(next);}
- }
+ }));
+ const failed=results.filter((r):r is PromiseRejectedResult=>r.status==='rejected');
+ if(failed.length)throw new Error(`Chưa xác nhận dừng ${failed.length} tab: ${failed.map(r=>String(r.reason?.message??r.reason)).join(' · ')}`);
  return {run:await getManaged(),execution:await executionSnapshot()};
 }
 function isPreparedTab(tab:chrome.tabs.Tab|undefined):tab is chrome.tabs.Tab{const url=chrome.runtime.getURL('ready.html');return !!tab&&(tab.pendingUrl?tab.pendingUrl===url:tab.url===url&&tab.status!=='loading');}

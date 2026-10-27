@@ -3,6 +3,7 @@ import React,{act,useEffect,useState} from 'react';
 import {createRoot,type Root} from 'react-dom/client';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 vi.mock('@fluentui/react-components',()=>({Button:({children,...props}:any)=><button {...props}>{children}</button>}));
+vi.mock('../manager/ui/Notice',()=>({Notice:({intent,children}:any)=><div role={intent==='error'?'alert':'status'}>{children}</div>}));
 vi.mock('../manager/ui/AccountPage',()=>({AccountPage:({logout,refresh}:any)=> <div>Account restricted<button onClick={()=>void logout()}>Logout</button><button onClick={()=>void refresh()}>Refresh</button></div>}));
 import {CloudGate} from '../manager/ui/CloudLogin';
 let root:Root,host:HTMLDivElement,mounts=0;

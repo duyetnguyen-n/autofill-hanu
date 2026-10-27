@@ -75,6 +75,27 @@ it('Stop during renderer setup detaches the pending debugger and prevents a late
  const stopped=f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});await new Promise(r=>setTimeout(r,0));resolve({cssLayoutViewport:{clientWidth:0,clientHeight:0}});
  expect(await acquired).toMatchObject({ok:false,error:expect.stringContaining('dừng')});await stopped;expect(detach).toHaveBeenCalledOnce();expect(f.update).not.toHaveBeenCalledWith(1,{focused:true});
 });
+it('acknowledges renderer release without waiting for a hung layout response',async()=>{
+ const f=await fixture();let resolve!:(v:any)=>void;
+ const detach=vi.fn(async()=>{}),sendCommand=vi.fn(async(_t:any,method:string)=>method==='Page.getLayoutMetrics'?await new Promise(r=>resolve=r):{});
+ Object.assign(chrome,{debugger:{attach:vi.fn(async()=>{}),detach,sendCommand}});
+ native.request.mockImplementation(async(kind:string)=>kind==='ATTENTION_ACQUIRE'?{token:'lease',mode:'background'}:{renewed:true});
+ const acquired=f.ask(f.acquire);await vi.waitFor(()=>expect(resolve).toBeTypeOf('function'));
+ await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease'});expect(detach).toHaveBeenCalledOnce();
+ resolve({cssLayoutViewport:{clientWidth:0,clientHeight:0}});expect(await acquired).toMatchObject({ok:false});
+ expect(f.update).not.toHaveBeenCalledWith(1,{focused:true});
+});
+it('allows a fresh renderer request after releasing a hung acquisition',async()=>{
+ const f=await fixture();let resolve!:(v:any)=>void,reads=0,leases=0;
+ const sendCommand=vi.fn(async(_t:any,method:string)=>method==='Page.getLayoutMetrics'&&++reads===1?await new Promise(r=>resolve=r):{});
+ Object.assign(chrome,{debugger:{attach:vi.fn(async()=>{}),detach:vi.fn(async()=>{}),sendCommand}});
+ native.request.mockImplementation(async(kind:string)=>kind==='ATTENTION_ACQUIRE'?{token:'lease-'+(++leases),mode:'background'}:{renewed:true});
+ const old=f.ask(f.acquire);await vi.waitFor(()=>expect(resolve).toBeTypeOf('function'));
+ await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease-1'});
+ expect(await f.ask(f.acquire)).toMatchObject({ok:true,token:'lease-2'});
+ resolve({cssLayoutViewport:{clientWidth:0,clientHeight:0}});expect(await old).toMatchObject({ok:false});
+ await f.ask({type:'PAGE_ATTENTION_RELEASE',token:'lease-2'});
+});
 it.each([false,true])('Start restores the window and waits for an occluded account header (occluded=%s)',async occluded=>{const f=await fixture();f.data['run:7'].status='idle';f.data.managedRun.status='idle';f.data.profile={values:{},customFields:[],attachments:{},mappings:{}};f.data.profileRevision=1;vi.mocked(chrome.tabs.get).mockResolvedValue({id:7,windowId:1,url:f.sender.url,status:'complete'} as any);Object.assign(chrome.windows,{getLastFocused:vi.fn(async()=>({id:1,state:'minimized'}))});Object.assign(chrome.tabs,{create:vi.fn(async()=>({id:7,windowId:1})),sendMessage:vi.fn(async(_id,m:any)=>m.type==='PAGE_ACCOUNT'&&!occluded?{email:'fixture@example.test'}:{ok:true})});native.request.mockImplementation(async(kind:string)=>{if(kind==='ATTENTION_FOCUSED'){occluded=false;return {focused:true};}return {token:'lease'};});const result=await adapter.start({type:'COMMAND',protocol:1,sessionId:'session',commandId:'command',runId:'new-run',kind:'START',payload:{url:f.sender.url,mode:'test',revision:1,expectedEmail:'fixture@example.test'}},'session');expect(result.status).toBe('running');expect(chrome.windows.getLastFocused).toHaveBeenCalledWith({windowTypes:['normal']});expect(f.update).toHaveBeenCalledWith(1,{state:'normal',focused:false});expect(f.update.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(chrome.tabs.create).mock.invocationCallOrder[0]);});
 
 it('rejects trusted input from a stale document or a stopped run before touching Chrome',async()=>{

@@ -281,7 +281,10 @@ function hasUnsatisfiedCaptcha(): boolean {
 }
 
 function isVerificationQuestion(question: Question): boolean {
-  return /câu hỏi xác thực|verification|captcha|robot|bot|năm nay là năm bao nhiêu|今年是哪一年/i.test(`${question.label}\n${question.element.innerText}`);
+  if (/câu hỏi xác thực|verification|captcha|robot|bot|năm nay là năm bao nhiêu|今年是哪一年/i.test(`${question.label}\n${question.element.innerText ?? question.element.textContent ?? ''}`)) return true;
+  // The live HSK form asks for the exam fee without calling it verification.
+  // Match the fee question, not fee/payment fields or informational paragraphs.
+  return /\ble phi thi\b.*\bhsk\s*[1-6]?\b.*\bbao nhieu\b/.test(normalize(question.label));
 }
 
 function compatible(rule: FieldRule, kind: Question["kind"]): boolean {
@@ -851,7 +854,7 @@ function manualIssue(question: Question, reason: BlockingIssue["reason"], messag
   question.element.style.outlineOffset = "3px";
   question.element.scrollIntoView({ behavior: "smooth", block: "center" });
   if(reason==='file_upload'||reason==='unknown_required'||reason==='unsupported'&&['radio','checkbox','dropdown'].includes(question.kind))armAutoResume(question);
-  return { reason, message, questionId: question.id, questionLabel: question.label, candidates: suggestedRules(question.label),...(reason==='verification'?{question:summarizeQuestion(question)}:{}) };
+  return { reason, message, questionId: question.id, questionLabel: question.label, candidates: suggestedRules(question.label),...(['verification','unknown_required'].includes(reason)?{question:summarizeQuestion(question)}:{}) };
 }
 
 function answerFingerprint(question:Question):string{
