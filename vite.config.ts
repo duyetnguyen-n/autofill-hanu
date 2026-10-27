@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
     build: {
       emptyOutDir: true,
       outDir: common.outDir,
-      rollupOptions: { input: [resolve(__dirname, "sidepanel.html"),resolve(__dirname, "connection.html")] }
+      rollupOptions: { input: [resolve(__dirname, "sidepanel.html"),resolve(__dirname, "connection.html"),resolve(__dirname, "google-direct.html")] }
     }
   };
 });
