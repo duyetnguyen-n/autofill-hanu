@@ -1,3 +1,4 @@
+import {hasUnsatisfiedCaptcha} from './captcha';
 import { HSK_RULES, getRule } from "./rules";
 import { BlockingIssue, ControlKind, ExtensionMessage, FieldRule, FormEvent, FormQuestionSummary, Profile, RunMode, RunState, decideNextAction, hasExactAlias, mappingKey, normalize, matchesFinalQuestionLabel } from "./shared";
 import {classifyPage,pageReadyResumeAllowed,returnedSubmissionAllowed,type PageHealth} from './recovery';
@@ -273,12 +274,6 @@ function isFilled(question: Question): boolean {
   return false;
 }
 
-function hasUnsatisfiedCaptcha(): boolean {
-  const frame = document.querySelector('iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i]');
-  if (!frame) return false;
-  const response = document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"], textarea[name="h-captcha-response"]');
-  return !response?.value.trim();
-}
 
 function isVerificationQuestion(question: Question): boolean {
   if (/câu hỏi xác thực|verification|captcha|robot|bot|năm nay là năm bao nhiêu|今年是哪一年/i.test(`${question.label}\n${question.element.innerText ?? question.element.textContent ?? ''}`)) return true;

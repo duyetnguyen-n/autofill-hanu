@@ -70,7 +70,7 @@ export function armDirectManualSubmit():void{
     for(const [key,value]of new FormData(form))if(typeof value==='string'){const field=document.createElement('input');field.type='hidden';field.name=key;field.value=value;ready.append(field);}
     document.getElementById(ready.id)?.remove();document.body.append(ready);
     root.dataset.hanuDirectManualPending='1';form.inert=true;
-    if(!root.dataset.hanuDirectAutoPreparing)document.dispatchEvent(new Event('hanu-direct-manual-submit-ready'));
+    if(root.dataset.hanuDirectAutoPreparing!=='1')document.dispatchEvent(new Event('hanu-direct-manual-submit-ready'));
   };
 }
 export function disarmDirectManualSubmit():void{
@@ -84,8 +84,25 @@ export function directManualReady(documentKey:string):boolean{
 
 /** Run Google's own client validation without sending anything. Its prepared
  * native POST is held until the executor obtains the durable final grant. */
-export async function prepareDirectNativeSubmit(documentKey:string):Promise<{ready:boolean;message?:string}>{
+export async function prepareDirectNativeSubmit(documentKey:string):Promise<{ready:boolean;message?:string;reason?:'captcha'}>{
+  function hasUnsatisfiedCaptcha():boolean {
+    const visible=(element:Element)=>{
+      const rect=element.getBoundingClientRect();if(rect.width<=0||rect.height<=0)return false;
+      for(let node:Element|null=element;node;node=node.parentElement){const style=getComputedStyle(node);if(node.hasAttribute('hidden')||node.getAttribute('aria-hidden')==='true'||style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return false;}
+      return true;
+    };
+    return [...document.querySelectorAll<HTMLIFrameElement>('iframe[src*="recaptcha" i],iframe[src*="hcaptcha" i]')].some(frame=>{
+      if(!visible(frame))return false;
+      const url=new URL(frame.src,location.href),challenge=/\/bframe(?:\/|$)/i.test(url.pathname)||url.searchParams.get('frame')==='challenge';
+      // A visible image challenge wins over an expired/stale response field.
+      if(challenge)return true;
+      if(url.searchParams.get('size')==='invisible'||frame.closest('.grecaptcha-badge,[data-size="invisible"]'))return false;
+      const name=/hcaptcha/i.test(frame.src)?'h-captcha-response':'g-recaptcha-response';
+      return ![...document.querySelectorAll<HTMLInputElement|HTMLTextAreaElement>(`[name="${name}"]`)].some(field=>field.value.trim());
+    });
+  }
   const root=document.documentElement;
+  if(root.dataset.hanuDirectStopped)throw new Error('Đã dừng lượt Direct.');
   if(root.dataset.hanuDirectDocument!==documentKey||document.getElementById('hanuDirectState'))throw new Error('Trang đã thay đổi trước khi kiểm tra dữ liệu.');
   const form=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');if(!form?.dataset.hanuDirectManualArmed)throw new Error('Chưa cài bộ giữ request Gửi.');
   const submit=[...form.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(b=>/^(gửi|submit)$/i.test(b.textContent?.normalize('NFC').trim()??'')&&b.getBoundingClientRect().width>0);
@@ -94,7 +111,9 @@ export async function prepareDirectNativeSubmit(documentKey:string):Promise<{rea
   try{
     submit[0].click();const deadline=Date.now()+6000;
     while(Date.now()<deadline){
+      if(root.dataset.hanuDirectStopped)throw new Error('Đã dừng lượt Direct.');
       if(document.querySelector<HTMLFormElement>('#hanuDirectManualReady')?.dataset.document===documentKey)return {ready:true};
+      if(hasUnsatisfiedCaptcha())return {ready:false,reason:'captcha',message:'Google yêu cầu xác thực. Hoàn tất CAPTCHA trên tab hiện tại rồi bấm Tiếp tục.'};
       const errors=[...form.querySelectorAll<HTMLElement>('[role="alert"],[id^="i.err."]')].filter(e=>e.getBoundingClientRect().width>0).map(e=>e.textContent?.trim()).filter(Boolean);
       if(errors.length)return {ready:false,message:errors.join(' · ').slice(0,600)};
       await new Promise(resolve=>setTimeout(resolve,100));

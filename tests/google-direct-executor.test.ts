@@ -38,8 +38,8 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
 }
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
   vi.useFakeTimers();const f=fixture();const promise=f.run();await vi.runAllTimersAsync();
-  expect(await promise).toMatchObject({status:'received',postCount:4});
-  expect(f.posts.map(p=>p.final)).toEqual([false,false,false,true]);
+  expect(await promise).toMatchObject({status:'received',postCount:6});
+  expect(f.posts.map(p=>p.final)).toEqual([false,false,false,false,false,true]);
   expect(f.posts.find(p=>p.entries.some(e=>e[0]==='entry.78959346'))!.entries).toContainEqual(['entry.78959346','000000000000']);
   expect(f.posts.find(p=>p.entries.some(e=>e[0]==='entry.260703157'))!.entries).toContainEqual(['entry.260703157','']); // clear optional saved draft
   expect(f.posts.at(-1)!.entries.some(e=>e[0]==='entry.1511537540')).toBe(false);
@@ -286,4 +286,53 @@ it('uses the exact Google-validated manual body, even when configured verificati
   vi.useFakeTimers();const f=fixture({finalPage:true}),beforeSubmit=vi.fn();
   const running=new DirectExecutor().run({tabId:42,resume:true,manualFinal:'doc-7',profile:profile(),overrides:{'982814777':'WRONG CONFIGURED VALUE'},file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},beforeSubmit,signal:new AbortController().signal,onProgress:vi.fn()});
   await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});expect(beforeSubmit).toHaveBeenCalledOnce();expect(f.posts).toHaveLength(1);expect(f.posts[0]).toMatchObject({final:true,manualReady:true,entries:[]});
+});
+
+it('posts bank and commitment sections after upload without filling their DOM controls',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,prepared:string[]=[];
+  f.executeScript.mockImplementation(async request=>{if(request.func===prepareUploadAnswer)prepared.push(request.args[0].entryId);return original(request);});
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});
+  expect(prepared).not.toContain('720104655');expect(prepared).not.toContain('212161877');
+  expect(f.posts.find(p=>p.entries.some(([key])=>key==='entry.720104655'))).toMatchObject({final:false});
+  expect(f.posts.find(p=>p.entries.some(([key])=>key==='entry.212161877'))).toMatchObject({final:false});
+});
+it('hands off immediately on an explicit validation response without another POST',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  f.executeScript.mockImplementation(async request=>{
+    const result=await original(request);
+    if(request.func===readExecutionPage&&f.posts.length===4)result[0].result={...result[0].result,validationErrors:['Số tài khoản chưa hợp lệ']};
+    return result;
+  });
+  const started=Date.now(),running=f.run();await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'waiting',postCount:4,issue:{reason:'validation'}});
+  expect(Date.now()-started).toBeLessThan(1000);expect(f.posts.some(p=>p.final)).toBe(false);expect(f.data[f.key]).toBeUndefined();
+});
+it.each([false,true])('preserves CAPTCHA and focuses the real tab (after final POST: %s)',async afterFinal=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,update=vi.fn(async()=>({windowId:7})),focus=vi.fn(async()=>({}));
+  Object.assign(chrome,{tabs:{update},windows:{update:focus}});
+  f.executeScript.mockImplementation(async request=>{
+    const result=await original(request);
+    if(request.func===readExecutionPage&&(afterFinal?f.posts.some(p=>p.final):f.posts.length===1))result[0].result={...result[0].result,blocked:true,issue:{reason:'captcha',message:'Google yêu cầu xác thực.'}};
+    return result;
+  });
+  const running=f.run();await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:afterFinal?'uncertain':'waiting',issue:{reason:'captcha'}});
+  expect(update).toHaveBeenLastCalledWith(42,{active:true});expect(focus).toHaveBeenLastCalledWith(7,{focused:true});
+  expect(f.posts.filter(p=>p.final)).toHaveLength(afterFinal?1:0);
+  expect(f.data[f.key]?.status).toBe(afterFinal?'pending':undefined);
+});
+it.each([
+  ['https://www.google.com/sorry/index','captcha'],
+  ['https://accounts.google.com/ServiceLogin','account'],
+] as const)('recognizes external redirect %s even when script injection is denied',async(url,reason)=>{
+  const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  Object.assign(chrome,{tabs:{get:vi.fn(async()=>({url}))}});
+  f.executeScript.mockImplementation(async request=>{if(request.func===readExecutionPage)throw new Error('Cannot access contents of url');return original(request);});
+  expect(await f.run()).toMatchObject({status:'waiting',issue:{reason},postCount:0});
+});
+it('does not reserve a submit grant when native validation opens CAPTCHA',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  f.executeScript.mockImplementation(async request=>request.func===prepareDirectNativeSubmit?[{result:{ready:false,reason:'captcha',message:'Hoàn tất CAPTCHA'}}]:original(request));
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'waiting',issue:{reason:'captcha'}});
+  expect(f.posts.some(p=>p.final)).toBe(false);expect(f.data[f.key]).toBeUndefined();
 });

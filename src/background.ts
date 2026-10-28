@@ -347,10 +347,21 @@ class PageProblem extends Error {
   constructor(public health:PageHealth){super(health.issue?.message??'Không đọc được trạng thái Google Forms.');}
 }
 
+// Release renderer/desktop ownership before showing a human challenge. A late
+// ATTENTION_RELEASE must not restore another window over the CAPTCHA.
+async function focusCaptchaRun(run:RunState){
+  await releasePageAttention(run.tabId);
+  const current=await getRun(run.tabId);
+  if(!current||current.runId!==run.runId||current.blockingIssue?.reason!=='captcha'||!['waiting_manual','submit_uncertain'].includes(current.status))return;
+  await prepareFormWindow(run.tabId,true);
+}
+
 async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,expectedEpoch?:string):Promise<RunState|undefined>{
+  let newCaptcha=false;
   const result=await writeState(async()=>{
     const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!(['running','submitting','submit_uncertain'].includes(current.status)||pageReadyResumeAllowed(current))||interruptedRuns.has(runId)&&!current.submitAttempted)return;
     if(expectedEpoch!==undefined&&current.contentEpoch!==expectedEpoch)return;
+    newCaptcha=health.issue?.reason==='captcha'&&current.blockingIssue?.reason!=='captcha';
     if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt này chưa thể kết luận chưa gửi. Giữ nguyên trang để kiểm tra; nếu lượt cho phép thử lại, extension tự tiếp tục khi đúng form sẵn sàng trở lại.`};current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;}
     else if(health.retryable&&health.issue&&['network','server_error','navigation'].includes(health.issue.reason)){
       const next=transientState(current,health.issue.reason as 'network'|'server_error'|'navigation',health.issue.message);await writeRunNow(next);return next;
@@ -360,7 +371,7 @@ async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,exp
     }
     await writeRunNow(current);return current;
   });
-  if(result){scheduleRecovery(result);await haltDocument(result.tabId,true);}
+  if(result){scheduleRecovery(result);await haltDocument(result.tabId,true);if(newCaptcha)await focusCaptchaRun(result).catch(()=>{});}
   return result;
 }
 
@@ -645,7 +656,8 @@ async function autoResumePage(message:Extract<ExtensionMessage,{type:'AUTO_RESUM
 }
 
 async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:string;epoch?:string}): Promise<void> {
-  return writeState(async()=>{
+  let captchaRun:RunState|undefined;
+  await writeState(async()=>{
   const current = await getRun(tabId);
   if (!current || current.status === "idle" || current.status === "paused") throw new Error('Lượt đã dừng hoặc tạm dừng; bỏ thao tác trang cũ.');
   if(current.runId&&(scope?.runId!==current.runId||scope?.epoch!==current.contentEpoch))throw new Error('Sự kiện thuộc lượt/trang cũ.');
@@ -663,6 +675,7 @@ async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:
     if (event.filled && !run.filled.includes(event.filled)) run.filled = [...run.filled, event.filled];
     if (event.skipped && !run.skipped.includes(event.skipped)) run.skipped = [...run.skipped, event.skipped];
   } else if (event.type === "block") {
+    if(event.issue.reason==='captcha'&&current.blockingIssue?.reason!=='captcha')captchaRun=current;
     run = addLog({ ...run, status: run.submitAttempted?"submit_uncertain":"waiting_manual", blockingIssue: event.issue,activity:{phase:'waiting_user',message:event.issue.message,at:now()},recovery:run.recovery?{...run.recovery,automatic:false}:undefined }, "warning", event.issue.message);
   } else if (event.type === "ready_to_submit") {
     run = addLog({ ...run, status: "ready_to_submit",activity:undefined,recovery:undefined }, "success", "Đã điền xong. Chế độ Test dừng trước nút Gửi.");
@@ -681,6 +694,7 @@ async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:
   if(event.type==='page_advanced')cancelNavigationWatch(tabId);
   if(event.type==='transient_error')scheduleRecovery(run);
   });
+  if(captchaRun)await focusCaptchaRun(captchaRun).catch(()=>{});
 }
 
 async function activeTabId(): Promise<number | undefined> {

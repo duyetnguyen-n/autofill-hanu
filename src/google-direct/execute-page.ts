@@ -1,3 +1,5 @@
+import type {BlockingIssue} from '../shared';
+
 export interface ExecutionPage {
   url: string;
   documentKey: string;
@@ -9,6 +11,8 @@ export interface ExecutionPage {
   hasSubmit: boolean;
   text: string;
   blocked: boolean;
+  issue?: BlockingIssue;
+  validationErrors?: string[];
   draftRefresh?: boolean;
   draftUpdated?: boolean;
 }
@@ -16,7 +20,24 @@ export interface ExecutionPage {
 // These functions are serialized into the responder tab by chrome.scripting.
 // Session field VALUES remain in that document, never in storage or logs.
 export function readExecutionPage(): ExecutionPage {
-  const allowed = location.origin === 'https://docs.google.com' && /^\/forms\/(?:u\/\d+\/)?d\/e\/[^/]+\/(?:viewform|formResponse)$/.test(location.pathname);
+  function hasUnsatisfiedCaptcha():boolean {
+    const visible=(element:Element)=>{
+      const rect=element.getBoundingClientRect();if(rect.width<=0||rect.height<=0)return false;
+      for(let node:Element|null=element;node;node=node.parentElement){const style=getComputedStyle(node);if(node.hasAttribute('hidden')||node.getAttribute('aria-hidden')==='true'||style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return false;}
+      return true;
+    };
+    return [...document.querySelectorAll<HTMLIFrameElement>('iframe[src*="recaptcha" i],iframe[src*="hcaptcha" i]')].some(frame=>{
+      if(!visible(frame))return false;
+      const url=new URL(frame.src,location.href),challenge=/\/bframe(?:\/|$)/i.test(url.pathname)||url.searchParams.get('frame')==='challenge';
+      // A visible image challenge wins over an expired/stale response field.
+      if(challenge)return true;
+      if(url.searchParams.get('size')==='invisible'||frame.closest('.grecaptcha-badge,[data-size="invisible"]'))return false;
+      const name=/hcaptcha/i.test(frame.src)?'h-captcha-response':'g-recaptcha-response';
+      return ![...document.querySelectorAll<HTMLInputElement|HTMLTextAreaElement>(`[name="${name}"]`)].some(field=>field.value.trim());
+    });
+  }
+
+  const allowed = location.origin === 'https://docs.google.com' && /^\/forms\/(?:u\/\d+\/)?d\/e\/[^/]+\/(?:viewform|formResponse|closedform)$/.test(location.pathname);
   if (!allowed) throw new Error('Tab đã rời Google Form. Kiểm tra đăng nhập trước khi tiếp tục.');
   const form = document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
   const script = document.getElementById('hanuDirectSchema')?.textContent??[...document.scripts].find(s => /^\s*(?:var\s+)?FB_PUBLIC_LOAD_DATA_\s*=/.test(s.textContent ?? ''))?.textContent ?? undefined;
@@ -30,12 +51,16 @@ export function readExecutionPage(): ExecutionPage {
   // A random document key avoids confusing two pages with the same pathname.
   const html = document.documentElement;
   if (!html.dataset.hanuDirectDocument) html.dataset.hanuDirectDocument = crypto.randomUUID();
+  let issue:BlockingIssue|undefined;
+  if(hasUnsatisfiedCaptcha())issue={reason:'captcha',message:'Google yêu cầu xác thực. Giữ nguyên tab, hoàn tất CAPTCHA trên Google rồi bấm Tiếp tục.'};
+  else if(location.pathname.endsWith('/closedform')||/không còn chấp nhận|không còn nhận câu trả lời|no longer accepting|form (?:is )?closed/i.test(text))issue={reason:'form_closed',message:'Google Form đã ngừng nhận phản hồi.'};
+  else if(/too many requests|unusual traffic|quá nhiều yêu cầu/i.test(text))issue={reason:'server_error',message:'Google đang giới hạn truy cập. Giữ nguyên trang để kiểm tra.'};
+  const validationErrors=[...document.querySelectorAll<HTMLElement>('[role="alert"],[id^="i.err."],[aria-invalid="true"]')].filter(visible).map(e=>e.getAttribute('aria-invalid')==='true'?'Có trường chưa hợp lệ. Kiểm tra các câu được Google đánh dấu.':e.textContent?.trim()??'').filter(Boolean).slice(0,10).map(t=>t.slice(0,300));
   return {url:location.href, documentKey:html.dataset.hanuDirectDocument,
     script, history:/^\d+(?:,\d+)*$/.test(history) ? history.split(',').map(Number) : [], account,
     hasForm:!!form, hasNext:current?.id==='hanuDirectState'?current.dataset.next==='true':buttons.some(t => /^(tiếp|next)$/i.test(t)),hasSubmit:current?.id==='hanuDirectState'?current.dataset.final==='true':buttons.some(t => /^(gửi|submit)$/i.test(t)),
     draftRefresh:/bản nháp mới hơn|more recent draft|newer draft/i.test(text),
-    text:text.slice(0,60000), blocked:[...document.querySelectorAll('iframe[src*="recaptcha"],iframe[src*="hcaptcha"]')].some(f=>visible(f)&&f.getBoundingClientRect().height>50)
-      || /không còn chấp nhận|no longer accepting|too many requests|unusual traffic/i.test(text)};
+    text:text.slice(0,60000), blocked:!!issue,issue,validationErrors};
 }
 
 export interface PagePost {

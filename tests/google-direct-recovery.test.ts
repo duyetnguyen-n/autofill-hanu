@@ -67,3 +67,25 @@ it('refuses recovery after the document changes and clears only non-final stoppe
   const f=fixture();expect(()=>restoreDirectNativePage({formId:DIRECT_LAB_FORM_ID,documentKey:'stale'})).toThrow('Trang đã thay đổi');expect(f.native).not.toHaveBeenCalled();
   document.documentElement.dataset.hanuDirectStopped='1';document.documentElement.dataset.hanuDirectPost='non-final';expect(restoreDirectNativePage({formId:DIRECT_LAB_FORM_ID,documentKey:'doc-final'})).toBe(false);expect(document.documentElement.dataset.hanuDirectPost).toBeUndefined();expect(document.documentElement.dataset.hanuDirectStopped).toBeUndefined();
 });
+
+it('hands off a visible CAPTCHA during native validation immediately, leaving the form editable',async()=>{
+  const f=fixture();f.google.mockImplementation(()=>{const frame=document.createElement('iframe');frame.src='https://www.google.com/recaptcha/api2/bframe?size=invisible';document.body.append(frame);});
+  expect(await prepareDirectNativeSubmit('doc-final')).toMatchObject({ready:false,reason:'captcha'});
+  expect(document.querySelector<HTMLFormElement>('form')!.inert).toBe(false);expect(f.native).not.toHaveBeenCalled();expect(f.send).not.toHaveBeenCalled();
+});
+it('does not mistake an invisible badge for CAPTCHA during native validation',async()=>{
+  fixture();const frame=document.createElement('iframe');frame.src='https://www.google.com/recaptcha/api2/anchor?size=invisible';document.body.append(frame);
+  expect(await prepareDirectNativeSubmit('doc-final')).toEqual({ready:true});
+});
+it('allows a late Google callback after human verification to cross the manual grant bridge',async()=>{
+  const f=fixture();f.google.mockImplementation(()=>{const frame=document.createElement('iframe');frame.src='https://www.google.com/recaptcha/api2/bframe';document.body.append(frame);});
+  expect(await prepareDirectNativeSubmit('doc-final')).toMatchObject({reason:'captcha'});
+  document.querySelector('iframe')!.remove();document.querySelector('form')!.submit();
+  await vi.waitFor(()=>expect(f.send).toHaveBeenCalledOnce());expect(f.native).not.toHaveBeenCalled();expect(directManualReady('doc-final')).toBe(true);
+});
+it('honors Stop while waiting for Google validation rather than waiting out six seconds',async()=>{
+  vi.useFakeTimers();const f=fixture();f.google.mockImplementation(()=>{});
+  const running=prepareDirectNativeSubmit('doc-final'),checked=expect(running).rejects.toThrow('Đã dừng');
+  document.documentElement.dataset.hanuDirectStopped='1';await vi.advanceTimersByTimeAsync(100);await checked;
+  expect(f.native).not.toHaveBeenCalled();expect(document.querySelector<HTMLFormElement>('form')!.inert).toBe(false);vi.useRealTimers();
+});

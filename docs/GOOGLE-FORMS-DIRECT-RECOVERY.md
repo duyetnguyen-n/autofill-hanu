@@ -1,13 +1,15 @@
 # Tiếp tục đăng ký khi Google Forms Direct cần xử lý
 
-Áp dụng từ bản Online 1.9.9. Engine Direct vẫn tách riêng, hiện chỉ mở cho
+Áp dụng từ bản Online 1.9.10. Engine Direct vẫn tách riêng, hiện chỉ mở cho
 hai form LAB trong allowlist. Không thay engine Google Forms cũ.
 
 ## Luồng dự phòng
 
-Từ trang upload trở đi, tool dùng trang Google thật để điền và bấm Tiếp.
-Vì vậy khi chờ câu xác thực, người dùng nhìn thấy đúng câu hỏi và ô nhập,
-không còn giao diện ở trang 7 trong khi dữ liệu ẩn đã tới trang 9.
+Trang upload dùng Google Picker và nút Tiếp gốc để ghi nhận ảnh cùng các ô
+cùng trang. Các trang thường sau upload dùng POST có chuyển trang thật,
+đưa dữ liệu chuẩn bị sẵn tới Google mà không thao tác từng điều khiển. Trang
+cuối vẫn điền và chạy kiểm tra của Google trước khi xin quyền Gửi. Khi có lỗi
+hoặc chờ câu xác thực, người dùng nhìn thấy đúng trang và ô nhập của Google.
 
 Khi cần nhập tay:
 
@@ -76,3 +78,19 @@ Git bỏ qua: `recovery-test-editable.png`, `recovery-live-wrong-answer.png`,
 
 Đây là kiểm tra chức năng trên LAB, một profile; chưa đo tải nhiều profile,
 không thể suy ra tỉ lệ thành công thực tế hoặc bảo đảm Google không hết suất.
+
+## Bổ sung 1.9.10
+
+- Phân biệt challenge CAPTCHA đang hiển thị với badge invisible/iframe ẩn;
+  kiểm tra nhiều iframe, phản hồi đã hoàn tất và challenge xuất hiện lại.
+- Direct nhận diện CAPTCHA ngay khi kiểm tra Gửi và khi Google chuyển sang
+  `/sorry`; giữ tab, dữ liệu và khóa gửi nếu đã bắt đầu Gửi. Đăng nhập và
+  form đóng có thông báo riêng. Không giải hoặc bỏ qua CAPTCHA.
+- Callback Google đến sau khi chờ CAPTCHA vẫn đi qua quyền Gửi thủ công.
+  Trạng thái Test/Dừng và khóa chống gửi lặp vẫn được kiểm tra.
+- Classic đưa tab CAPTCHA ra trước sau khi nhường quyền cửa sổ xong; không
+  tiếp tục giành focus khi nhận lại cùng lỗi, không kéo tab lên sau Dừng.
+- Lỗi validation rõ ràng trên bước chuyển trang được báo ngay. Không tự
+  gửi lại request cuối hoặc hủy một request còn đang chờ chỉ để chạy nhanh.
+
+Đo LAB và giới hạn kiểm chứng: [QA 1.9.10](GOOGLE-FORMS-RECOVERY-QA-1.9.10.md).

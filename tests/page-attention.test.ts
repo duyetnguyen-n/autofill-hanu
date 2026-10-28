@@ -149,3 +149,20 @@ it('reads the verification from a running form without focusing, pausing or acqu
  expect(f.data.managedRun.status).toBe('running');
  await expect(adapter.control({kind:'SCAN_FORM',runId:'stale',payload:{verificationOnly:true}})).rejects.toThrow('Lượt đã thay đổi');
 });
+it('reveals a classic CAPTCHA after releasing desktop attention, without repeated focus or a new popup',async()=>{
+ const f=await fixture();await f.ask(f.acquire);f.update.mockClear();vi.mocked(chrome.tabs.update).mockClear();
+ const event={type:'FORM_EVENT' as const,runId:'run',epoch:'document',event:{type:'block' as const,issue:{reason:'captcha' as const,message:'Google yêu cầu xác thực'}}};
+ expect(await f.ask(event)).toMatchObject({ok:true});
+ expect(native.request).toHaveBeenCalledWith('ATTENTION_RELEASE',expect.objectContaining({runId:'run'}),{token:'lease'});
+ expect(f.update).toHaveBeenLastCalledWith(1,{focused:true});expect(chrome.tabs.update).toHaveBeenCalledWith(7,{active:true});expect(chrome.windows.create).not.toHaveBeenCalled();
+ const count=f.update.mock.calls.length;await f.ask(event);expect(f.update).toHaveBeenCalledTimes(count);
+});
+it('does not bring a CAPTCHA tab back after Stop arrives during attention release',async()=>{
+ const f=await fixture();await f.ask(f.acquire);f.update.mockClear();let released!:(v:object)=>void;
+ native.request.mockImplementation(async(kind:string)=>kind==='ATTENTION_RELEASE'?await new Promise(r=>released=r):{});
+ const event=f.ask({type:'FORM_EVENT',runId:'run',epoch:'document',event:{type:'block',issue:{reason:'captcha',message:'Google yêu cầu xác thực'}}});
+ await vi.waitFor(()=>expect(released).toBeTypeOf('function'));
+ // Another control can update state while release awaits the desktop bridge.
+ f.data['run:7'].status='idle';f.data.managedRun.status='idle';released({});await event;
+ expect(f.update).not.toHaveBeenCalled();
+});

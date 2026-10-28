@@ -12,6 +12,7 @@ import {directManualReady,armDirectManualSubmit,prepareDirectNativeSubmit} from 
 export interface DirectRunResult {runId:string;status:'received'|'failed'|'uncertain'|'stopped'|'ready'|'waiting';issue?:BlockingIssue;message:string;postCount:number}
 export interface DirectRunInput {tabId:number;profile:Profile;overrides:Record<string,string>;expectedScript?:string;url?:string;mode?:'test'|'live';runId?:string;expectedEmail?:string;resume?:boolean;managed?:boolean;onTab?:(tabId:number)=>Promise<void>;onSchema?:(tabId:number)=>Promise<Record<string,string>>;beforeSubmit?:()=>Promise<void>;assertActive?:()=>Promise<void>;file?:{name:string;type:string;blob:Blob};onProgress:(text:string)=>void|Promise<void>;manualFinal?:string;signal:AbortSignal}
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+class DirectPageProblem extends Error {constructor(readonly issue:BlockingIssue){super(issue.message);}}
 
 export class DirectExecutor {
   async run(input:DirectRunInput):Promise<DirectRunResult> {
@@ -34,10 +35,19 @@ export class DirectExecutor {
       };
       const read=async()=>{
         await guard();
-        const results=await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage});
+        let results:chrome.scripting.InjectionResult<ExecutionPage>[];
+        try{results=await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage});}
+        catch(error){
+          // Injection can fail on Google's account/CAPTCHA redirects. Inspect
+          // only the tab URL; no new permissions or session data are needed.
+          const tab=await chrome.tabs?.get?.(tabId).catch(()=>undefined),url=tab?.url??'';
+          if(/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(url))throw new DirectPageProblem({reason:'captcha',message:'Google yêu cầu xác thực lưu lượng. Giữ nguyên tab để xử lý CAPTCHA.'});
+          if(/^https:\/\/accounts\.google\.com\//i.test(url))throw new DirectPageProblem({reason:'account',message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản trên tab hiện tại rồi bấm Tiếp tục.'});
+          throw error;
+        }
         let page=results[0]?.result;
         if(results.length!==1||!page||!page.url.includes(`/d/e/${formId}/`))throw new Error('Executor Lab chỉ chạy trên đúng form test đã cung cấp.');
-        if(page.blocked)throw new Error('Google đang yêu cầu xác thực hoặc form không nhận phản hồi.');
+        if(page.blocked)throw new DirectPageProblem(page.issue??{reason:'captcha',message:'Google đang yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'});
         if(page.draftRefresh&&!attempted){
           await input.onProgress('Google có bản nháp mới hơn. Tool đang đối chiếu lại trước khi áp dụng snapshot hồ sơ.');
           await chrome.scripting.executeScript({target:{tabId},func:refreshExecutionDraft});
@@ -49,16 +59,21 @@ export class DirectExecutor {
           }
           if(page.draftRefresh)throw new Error('Google chưa cập nhật xong bản nháp mới hơn. Chưa gửi form.');
         }
+        if(page.blocked)throw new DirectPageProblem(page.issue??{reason:'navigation',message:'Google chưa sẵn sàng sau khi cập nhật bản nháp.'});
         if(account&&page.hasForm&&page.account.toLowerCase()!==account.toLowerCase())throw new Error('Tài khoản Google đã đổi trong lúc chạy.');
         return page;
       };
       const changed=async(before:ExecutionPage)=>{
         const deadline=Date.now()+35000;
         while(Date.now()<deadline){
-          await delay(250);await guard();
+          await guard();
           let page:ExecutionPage;
-          try{page=await read();}catch(e){if(/Cannot access|removed|frame was|context was destroyed|Frame with ID/i.test((e as Error).message))continue;throw e;}
-          if(page.documentKey!==before.documentKey&&(!page.hasForm||page.script&&page.history.length))return page;
+          try{page=await read();}catch(e){if(/Cannot access|removed|frame was|context was destroyed|Frame with ID/i.test((e as Error).message)){await delay(100);continue;}throw e;}
+          const newDocument=page.documentKey!==before.documentKey;
+          const errors=page.validationErrors?.filter(message=>newDocument||!before.validationErrors?.includes(message));
+          if(errors?.length)throw new DirectPageProblem({reason:'validation',message:`Google báo dữ liệu chưa hợp lệ: ${errors.join(' · ')}`});
+          if(newDocument&&(!page.hasForm||page.script&&page.history.length))return page;
+          await delay(100);
         }
         throw new Error('Google chưa chuyển trang/trả kết quả trong 35 giây. Không tự gửi request lần hai.');
       };
@@ -196,16 +211,10 @@ export class DirectExecutor {
             page=await changed(page);dialogs.posting(false);committedUpload=true;continue;
           }
           const final=!page.hasNext&&page.hasSubmit;
-          // After upload, let Google commit its own draft and navigate the real
-          // page. Waiting/error states are therefore usable without the tool.
-          if(committedUpload){
-            if(!input.manualFinal)await prepareNativeSection(section);
-            if(!final){
-              await guard();dialogs.posting(true);
-              await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:beginExecutionSession,args:[formId]});
-              page=await changed(page);dialogs.posting(false);continue;
-            }
-          }
+          // Ordinary sections use a real POST/navigation even after upload.
+          // Google therefore renders validation and the current page itself.
+          // Upload and final submission still run Google's own client logic.
+          if(committedUpload&&final&&!input.manualFinal)await prepareNativeSection(section);
           if(final&&input.mode==='test'){
             await input.onProgress('Xong Test: đã chuẩn bị dữ liệu, dừng trước Gửi.');
             return {runId,status:'ready',message:'Chế độ Test không gửi phản hồi.',postCount:posts};
@@ -215,6 +224,7 @@ export class DirectExecutor {
             await guard();await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:armDirectManualSubmit});
             const checked=(await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:prepareDirectNativeSubmit,args:[page.documentKey]}))[0]?.result;
             if(!checked?.ready){
+              if(checked?.reason==='captcha')throw new DirectPageProblem({reason:'captcha',message:checked.message??'Google yêu cầu xác thực trên tab hiện tại.'});
               const q=section.questions[0],summary=q&&directQuestionSummary(q);
               return {runId,status:'waiting',postCount:posts,message:checked?.message??'Google chưa kiểm tra xong dữ liệu.',issue:{reason:summary?.verification?'verification':'validation',message:checked?.message??'Kiểm tra trực tiếp trên Google Form.',questionId:q?.id,questionLabel:q?.label,question:summary}};
             }
@@ -254,7 +264,12 @@ export class DirectExecutor {
         throw new Error('Vượt số bước dự kiến của form.');
       }catch(error){
         const message=(error as Error).message;
-        return {runId,status:attempted?'uncertain':input.signal.aborted?'stopped':'failed',message,postCount:posts};
+        const issue=error instanceof DirectPageProblem?error.issue:undefined;
+        if(issue?.reason==='captcha'&&!input.signal.aborted){
+          const tab=await chrome.tabs?.update?.(tabId,{active:true}).catch(()=>undefined);
+          if(tab?.windowId!==undefined)await chrome.windows?.update?.(tab.windowId,{focused:true}).catch(()=>undefined);
+        }
+        return {runId,status:attempted?'uncertain':input.signal.aborted?'stopped':issue?'waiting':'failed',issue,message,postCount:posts};
       }finally{removeStop();uploads.cancel(tabId);await dialogs?.close();if(!input.managed){const lease=(await chrome.storage.local.get('googleDirectLease')).googleDirectLease;if(lease?.runId===runId)await chrome.storage.local.set({googleDirectLease:{...lease,active:false}});}}
     });
   }
