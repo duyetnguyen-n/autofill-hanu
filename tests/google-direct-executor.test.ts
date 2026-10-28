@@ -142,12 +142,44 @@ it('recognizes a dropdown value committed in a hidden input outside its card',()
   document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox"></div></div><input type="hidden" name="entry.123" value="Nam"></form>';
   expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({done:true});
 });
+it('emits the Enter character needed by a menu keypress commit handler',async()=>{
+  document.body.innerHTML='<div role="listbox" tabindex="0"></div><input name="entry.123" value="">';
+  const menu=document.querySelector<HTMLElement>('[role="listbox"]')!;
+  const answer=document.querySelector<HTMLInputElement>('input')!;
+  menu.addEventListener('keypress',event=>{if((event as KeyboardEvent).key==='Enter')answer.value='Nam';});
+  const sendCommand=vi.fn(async(_source:unknown,_method:string,params:any)=>{
+    if(params.type==='keyDown'&&params.text==='\r')menu.dispatchEvent(new KeyboardEvent('keypress',{key:params.key}));
+  });
+  vi.stubGlobal('chrome',{debugger:{sendCommand}});
+  await new DirectPageDialogs(42,new AbortController().signal).keys(['Home','ArrowDown','Enter']);
+  expect(answer.value).toBe('Nam');
+  expect(sendCommand.mock.calls.filter(([, ,p])=>p.type==='keyUp').map(([, ,p])=>p.key)).toEqual(['Home','ArrowDown','Enter']);
+});
 it('commits the requested menu row by keyboard and does not treat a highlighted row as a committed answer',()=>{
   document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox" aria-expanded="true"><div role="option" data-value="">Choose</div><div role="option" data-value="Nam" aria-selected="true">Nam</div></div></div><input name="entry.123" value=""></form>';
   const option=document.querySelector<HTMLElement>('[role="option"]')!;
   option.scrollIntoView=vi.fn();vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:40} as DOMRect);
-  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({keys:['Home','ArrowDown','Enter']});
+  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({keys:['ArrowUp','ArrowDown','Enter']});
   expect(option.scrollIntoView).not.toHaveBeenCalled();
+});
+it('chooses the same dropdown row from any previous highlight without relying on Home',async()=>{
+  const values=['Choose','Under six months','One year','Two years','Three years'];
+  document.body.innerHTML=`<form><div role="listitem" data-item-id="duration"><h3>Duration</h3><div role="listbox" aria-expanded="true">${values.map(v=>`<div role="option" data-value="${v}">${v}</div>`).join('')}</div></div><input name="entry.123" value=""></form>`;
+  vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:40} as DOMRect);
+  const choice=prepareUploadAnswer({questionId:'duration',entryId:'123',label:'Duration',kind:'dropdown',value:'One year'});
+  for(let start=0;start<values.length;start++){
+    let selected=start,committed='';
+    vi.stubGlobal('chrome',{debugger:{sendCommand:async(_source:unknown,_method:string,p:any)=>{
+      if(p.type!=='keyDown')return;
+      // Like Google's animation-frame update, the next key must not read the
+      // previous highlight while this one is still queued.
+      if(p.key==='ArrowUp'){const next=Math.max(0,selected-1);setTimeout(()=>{selected=next;},10);}
+      if(p.key==='ArrowDown'){const next=Math.min(values.length-1,selected+1);setTimeout(()=>{selected=next;},10);}
+      if(p.text==='\r')committed=values[selected];
+    }}});
+    await new DirectPageDialogs(42,new AbortController().signal).keys(choice.keys!);
+    expect(committed).toBe('One year');
+  }
 });
 it('rejects final submission without a Google file reference and preserves a genuine serialized reference',async()=>{
   vi.useFakeTimers();let posted='';const fetch=vi.fn(async(_url,options)=>{posted=String(options.body);return {status:200,ok:true,text:async()=>'<html><body>Câu trả lời của bạn đã được ghi lại</body></html>'};});vi.stubGlobal('fetch',fetch);

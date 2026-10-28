@@ -33,10 +33,15 @@ export class DirectPageDialogs {
   async keys(keys:string[]){
     for(const key of keys){
       if(this.signal.aborted)throw new Error('Đã dừng.');
-      const windowsVirtualKeyCode=key==='Home'?36:key==='ArrowDown'?40:key==='Enter'?13:0;
+      const windowsVirtualKeyCode=key==='Home'?36:key==='ArrowUp'?38:key==='ArrowDown'?40:key==='Enter'?13:0;
       if(!windowsVirtualKeyCode)throw new Error('Phím lựa chọn không hợp lệ.');
-      await chrome.debugger.sendCommand(this.source,'Input.dispatchKeyEvent',{type:'keyDown',key,code:key,windowsVirtualKeyCode});
+      // Google's Material menu commits from keypress. CDP needs Enter's
+      // character to emit it; keyDown/keyUp alone can leave only a highlight.
+      await chrome.debugger.sendCommand(this.source,'Input.dispatchKeyEvent',{type:'keyDown',key,code:key,windowsVirtualKeyCode,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
       await chrome.debugger.sendCommand(this.source,'Input.dispatchKeyEvent',{type:'keyUp',key,code:key,windowsVirtualKeyCode});
+      // Google applies each arrow's highlight on an animation frame. Sending
+      // the next key in the same frame can reuse the previous index.
+      if(!this.signal.aborted)await new Promise(resolve=>setTimeout(resolve,40));
     }
   }
   async close(){

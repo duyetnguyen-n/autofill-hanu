@@ -1,5 +1,8 @@
 # Google Forms thử nghiệm — 27/10/2026
 
+Kiểm tra Chrome Windows và sửa dropdown trong bản 1.9.5: xem
+[báo cáo ngày 28/10/2026](GOOGLE-FORMS-DIRECT-QA-20261028.md).
+
 ## Cách dùng và phạm vi
 
 Mở **Google Forms thử nghiệm** trong thanh điều hướng trang quản lý, đường dẫn

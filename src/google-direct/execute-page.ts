@@ -253,9 +253,10 @@ export function prepareUploadAnswer(input:{questionId:string;entryId:string;labe
     if(list.getAttribute('aria-expanded')==='true'&&options.length===1){
       const option=options[0],siblings=[...option.parentElement!.children].filter(e=>e.matches('[role="option"]')&&e.getAttribute('aria-disabled')!=='true'&&visible(e));
       const offset=siblings.indexOf(option);if(offset<0)throw new Error('Không xác định được thứ tự lựa chọn tại trang upload.');
-      // aria-selected in an open Material menu is only the highlighted row.
-      // Commit with its native keyboard handler, then verify the hidden value.
-      option.focus();return {keys:['Home',...Array.from({length:offset},()=> 'ArrowDown'),'Enter']};
+      // Google handles Up/Down but ignores Home. Reset to the first row with
+      // clamped Up presses, then choose the exact offset and commit. A mere
+      // aria-selected highlight is still not a committed hidden input value.
+      option.focus();return {keys:[...Array.from({length:siblings.length-1},()=> 'ArrowUp'),...Array.from({length:offset},()=> 'ArrowDown'),'Enter']};
     }
     return point(list.querySelector<HTMLElement>('[jsname="LgbsSe"],[role="button"],button')??list);
   }
