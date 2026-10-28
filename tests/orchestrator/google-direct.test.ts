@@ -80,3 +80,12 @@ it('changes/repeats a scheduled LAB link after a completed Live run without aski
  await vi.waitFor(()=>expect(f.store.session('one').run?.runId).not.toBe(first));
  expect(f.store.session('one').run).toMatchObject({engine:'direct',mode:'live',status:'running',submitAttempted:false});
 });
+it('carries a value-only HSK answer into Direct Start without binding it to a guessed label',async()=>{
+ const f=fixture();await f.c.scheduler.arm({ids:['one'],mode:'test',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL},finalQuestions:{'4':{value:'1350000'}}});await f.c.scheduler.tick();
+ await vi.waitFor(()=>expect(f.command.mock.calls.some(c=>c[1]==='START')).toBe(true));
+ const start=f.command.mock.calls.find(c=>c[1]==='START')!;expect(start[2]).toMatchObject({engine:'direct',preparedFinalAnswer:'1350000'});expect(start[2].finalQuestion).toBeUndefined();expect(f.store.session('one').run?.preparedFinalAnswer).toBe('1350000');
+});
+it('does not reuse a Direct request ID with a different prepared answer',async()=>{
+ const f=fixture();await f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,'prepared-answer-intent',undefined,undefined,'direct','1350000');
+ await expect(f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,'prepared-answer-intent',undefined,undefined,'direct','1620000')).rejects.toThrow('thao tác khác');
+});

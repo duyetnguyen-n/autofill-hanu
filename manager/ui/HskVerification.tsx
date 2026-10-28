@@ -1,4 +1,4 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useId,useRef,useState} from 'react';
 import {Button,Field,Input,Select} from '@fluentui/react-components';
 import type {SessionView} from '../../src/protocol';
 import type {FinalQuestion,FormQuestionSummary} from '../../src/shared';
@@ -10,6 +10,7 @@ type ReadForm={formId:string;runId?:string;questions:FormQuestionSummary[]};
 /** Answers may be entered before the question is known; identity comes from the actual form. */
 export function HskVerification({level,sessions,saved,scope,busy,onDraft,save,scan,shared=false,currentRunIds}:{level:HskLevel;sessions:SessionView[];saved?:HskVerificationAnswer;scope:string;busy:boolean;shared?:boolean;currentRunIds?:Record<string,string>;onDraft:(q:HskVerificationAnswer|undefined,valid:boolean)=>void;save?:(q:HskVerificationAnswer|undefined)=>Promise<unknown>;scan:(id:string)=>Promise<ReadForm>}){
   const [draft,setDraft]=useState<HskVerificationAnswer>(saved??{value:''}),[detected,setDetected]=useState<FinalQuestion>(),[choices,setChoices]=useState<{formId:string;questions:FormQuestionSummary[]}>(),[error,setError]=useState(''),[working,setWorking]=useState(false),[message,setMessage]=useState('');
+  const hintId=useId();
   const generation=useRef(0),edited=useRef(false);
   useEffect(()=>{generation.current++;edited.current=false;setDraft(saved??{value:''});setDetected(undefined);setChoices(undefined);setMessage('');setError('');setWorking(false);},[scope]);
   useEffect(()=>{if(saved&&!edited.current)setDraft(saved);},[saved]);
@@ -70,11 +71,12 @@ export function HskVerification({level,sessions,saved,scope,busy,onDraft,save,sc
     <div className="hsk-question-preview" role="status">{actual?.label||(unknown?'Câu đang chặn cần được xác nhận bên dưới.':'Chưa tới câu xác thực. Bạn có thể nhập sẵn đáp án ngay bên dưới.')}</div>
     {unknown&&<Notice intent="warning" actions={<Button disabled={busy||working||!valid} onClick={()=>void read(true)}>Dùng câu này & tiếp tục</Button>}>Chưa nhận diện câu bắt buộc: <strong>{unknown.run!.blockingIssue!.questionLabel}</strong></Notice>}
     {(error||missing)&&<Notice intent="error" onDismiss={error?()=>setError(''):undefined}>{error||missing}</Notice>}
-    <div className="hsk-answer-line"><Field label={answerLabel} hint="Biết đáp án thì nhập trước. Không cần nhập nội dung câu hỏi.">
-      {options.length&&['radio','dropdown','checkbox'].includes(actual?.kind??'')?<Select value={draft.value} onChange={e=>edit(e.target.value)}><option value="">Chọn đáp án</option>{draft.value&&!options.includes(draft.value)&&<option value={draft.value}>{draft.value}</option>}{options.map(o=><option key={o} value={o}>{o}</option>)}</Select>:<Input value={draft.value} placeholder="Nhập sẵn đáp án · Enter để lưu" onChange={(_,d)=>edit(d.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void apply();}}}/>}</Field>
-      {save&&<Button appearance="primary" disabled={busy||working||!valid} onClick={()=>void apply()}>{working?'Đang xử lý…':actual?'Lưu & tự tiếp tục':'Lưu đáp án trước'}</Button>}
-      <Button appearance={missing||error?'primary':'subtle'} disabled={busy||working} onClick={()=>void read()}>{working?'Đang lấy câu…':'Lấy câu xác thực'}</Button>
+    <div className="hsk-answer-line"><Field label={answerLabel}>
+      {options.length&&['radio','dropdown','checkbox'].includes(actual?.kind??'')?<Select aria-describedby={hintId} value={draft.value} onChange={e=>edit(e.target.value)}><option value="">Chọn đáp án</option>{draft.value&&!options.includes(draft.value)&&<option value={draft.value}>{draft.value}</option>}{options.map(o=><option key={o} value={o}>{o}</option>)}</Select>:<Input aria-describedby={hintId} value={draft.value} placeholder="Nhập sẵn đáp án · Enter để lưu" onChange={(_,d)=>edit(d.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void apply();}}}/>}</Field>
+      <div className="hsk-answer-actions">{save&&<Button appearance="primary" disabled={busy||working||!valid} onClick={()=>void apply()}>{working?'Đang xử lý…':actual?'Lưu & tự tiếp tục':'Lưu đáp án trước'}</Button>}
+      <Button appearance={missing||error?'primary':'subtle'} disabled={busy||working} onClick={()=>void read()}>{working?'Đang lấy câu…':'Lấy câu xác thực'}</Button></div>
     </div>
+    <p className="hsk-answer-hint" id={hintId}>Nhập sẵn đáp án. Tool tự áp dụng khi gặp đúng câu hỏi.</p>
     {choices&&(choices.questions.length>1||choices.questions.some(q=>!q.verification))&&<Field label="Chọn câu xác thực trên form"><Select disabled={busy||working} value={actual?choices.questions.find(q=>actual.questionId?q.targetId===actual.questionId:q.label===actual.label)?.id??'':''} onChange={e=>{const q=choices.questions.find(q=>q.id===e.target.value);if(q){setWorking(true);void select(q,choices.formId).catch(e=>setError(e.message)).finally(()=>setWorking(false));}}}><option value="">Chọn đúng câu</option>{choices.questions.map(q=><option key={q.id} value={q.id}>{q.label}</option>)}</Select></Field>}
     {save&&saved&&<Button appearance="subtle" size="small" disabled={busy||working} onClick={()=>{setWorking(true);void save(undefined).then(()=>{edited.current=false;setDraft({value:''});setMessage('Đã xóa đáp án.');}).catch(e=>setError(e.message)).finally(()=>setWorking(false));}}>Xóa đáp án {shared?'form thử':`HSK ${level}`}</Button>}
     {message&&<Notice intent="success" onDismiss={()=>setMessage('')}>{message}</Notice>}

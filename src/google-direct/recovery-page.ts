@@ -124,7 +124,8 @@ export async function prepareDirectNativeSubmit(documentKey:string):Promise<{rea
 
 /** Explicit recovery of 1.9.7's hidden state. Back is non-final and uses only
  * Google's own current fields; it does not invent a history, file ID or revision. */
-export function restoreDirectNativePage(input:{formId:string;documentKey:string}):boolean{
+export function restoreDirectNativePage(input:{formId:string;documentKey:string;automatic?:boolean}):boolean{
+  if(input.automatic&&document.documentElement.dataset.hanuDirectStopped)throw new Error('Đã dừng lượt Direct; không chuyển trang.');
   if(location.origin!=='https://docs.google.com'||!location.pathname.includes(`/d/e/${input.formId}/`)||document.documentElement.dataset.hanuDirectDocument!==input.documentKey)throw new Error('Trang đã thay đổi; kiểm tra lại trước khi tiếp quản.');
   const state=document.querySelector<HTMLFormElement>('#hanuDirectState');
   document.getElementById('hanuDirectManualReady')?.remove();delete document.documentElement.dataset.hanuDirectManualPending;delete document.documentElement.dataset.hanuDirectAutoPreparing;

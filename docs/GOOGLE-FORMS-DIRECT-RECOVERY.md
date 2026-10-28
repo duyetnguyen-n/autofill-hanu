@@ -1,15 +1,19 @@
 # Tiếp tục đăng ký khi Google Forms Direct cần xử lý
 
-Áp dụng từ bản Online 1.9.10. Engine Direct vẫn tách riêng, hiện chỉ mở cho
+Áp dụng từ bản Online 1.9.11. Engine Direct vẫn tách riêng, hiện chỉ mở cho
 hai form LAB trong allowlist. Không thay engine Google Forms cũ.
 
 ## Luồng dự phòng
 
 Trang upload dùng Google Picker và nút Tiếp gốc để ghi nhận ảnh cùng các ô
-cùng trang. Các trang thường sau upload dùng POST có chuyển trang thật,
-đưa dữ liệu chuẩn bị sẵn tới Google mà không thao tác từng điều khiển. Trang
-cuối vẫn điền và chạy kiểm tra của Google trước khi xin quyền Gửi. Khi có lỗi
-hoặc chờ câu xác thực, người dùng nhìn thấy đúng trang và ô nhập của Google.
+cùng trang. Ở Live, nếu toàn bộ câu còn lại đã có đáp án hợp lệ, các trang
+sau upload dùng request tuần tự lấy trạng thái thật Google cấp. Request cuối
+gửi đáp án bằng POST chuyển trang thật, không đợi điền điều khiển lệ phí.
+Không nhảy qua trạng thái trang hoặc tự dựng pageHistory/partialResponse.
+Test, câu chưa biết và luồng dự phòng vẫn dùng trang Google thật; trang cuối
+được điền và kiểm tra bằng Google trước Gửi. Request chuyển nhanh bị từ chối
+sẽ khôi phục trang Google từ trạng thái đã nhận và tiếp tục theo luồng cũ
+một lần, trước khi có request Gửi. Request Gửi chưa rõ kết quả không tự lặp.
 
 Khi cần nhập tay:
 

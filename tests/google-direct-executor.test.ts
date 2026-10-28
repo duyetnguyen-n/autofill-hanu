@@ -2,11 +2,11 @@
 import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
-import {DirectExecutor} from '../src/google-direct/executor';
+import {DirectExecutor,type DirectRunInput} from '../src/google-direct/executor';
 import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../src/google-direct/schema';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from '../src/google-direct/execute-page';
 import {DirectPageDialogs} from '../src/google-direct/dialogs';
-import {armDirectManualSubmit,prepareDirectNativeSubmit,directManualReady} from '../src/google-direct/recovery-page';
+import {armDirectManualSubmit,prepareDirectNativeSubmit,directManualReady,restoreDirectNativePage} from '../src/google-direct/recovery-page';
 
 const script = `var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectDocument;delete document.documentElement.dataset.hanuDirectPost;delete document.documentElement.dataset.hanuDirectStopped;sessionStorage.clear();});
@@ -33,7 +33,7 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
   });
   vi.stubGlobal('chrome',{scripting:{executeScript},storage:{local:{get:vi.fn(async(keys:any)=>keys===null?{...data}:typeof keys==='string'?{[keys]:data[keys]}:Object.fromEntries(keys.map((k:string)=>[k,data[k]]))),set:vi.fn(async(values:any)=>Object.assign(data,values))}}});
   Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_name:any,options:any,callback:any)=>(callback??options)({name:'fixture-lock'})}});
-  const run=()=>new DirectExecutor().run({tabId:42,profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn()});
+  const run=(extra:Partial<DirectRunInput>={})=>new DirectExecutor().run({tabId:42,profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),...extra});
   return {posts,data,key,run,executeScript};
 }
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
@@ -335,4 +335,69 @@ it('does not reserve a submit grant when native validation opens CAPTCHA',async(
   f.executeScript.mockImplementation(async request=>request.func===prepareDirectNativeSubmit?[{result:{ready:false,reason:'captcha',message:'Hoàn tất CAPTCHA'}}]:original(request));
   const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'waiting',issue:{reason:'captcha'}});
   expect(f.posts.some(p=>p.final)).toBe(false);expect(f.data[f.key]).toBeUndefined();
+});
+
+it('consumes the prepared waiting tab for a fresh Direct run instead of creating another tab',async()=>{
+  vi.useFakeTimers();const f=fixture();f.data.preparedFormTab=77;
+  const create=vi.fn(async()=>({id:99})),update=vi.fn(async(id:number)=>({id}));
+  Object.assign(chrome,{runtime:{getURL:()=> 'chrome-extension://fixture/ready.html'},tabs:{create,update,get:vi.fn(async()=>({id:77,url:'chrome-extension://fixture/ready.html',status:'complete'}))}});
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});
+  expect(create).not.toHaveBeenCalled();expect(update).toHaveBeenCalledWith(77,{url:DIRECT_LAB_URL,active:true});
+  expect(f.data.preparedFormTab).toBeNull();expect(f.executeScript.mock.calls.every(([r])=>r.target.tabId===77)).toBe(true);
+});
+it('does not overwrite a prepared tab that the user has since navigated elsewhere',async()=>{
+  vi.useFakeTimers();const f=fixture();f.data.preparedFormTab=77;
+  const create=vi.fn(async()=>({id:99})),update=vi.fn(async(id:number)=>({id}));
+  Object.assign(chrome,{runtime:{getURL:()=> 'chrome-extension://fixture/ready.html'},tabs:{create,update,get:vi.fn(async()=>({id:77,url:'https://example.test/user-page'}))}});
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});
+  expect(create).toHaveBeenCalledWith({url:DIRECT_LAB_URL,active:true});expect(update.mock.calls.some(([id])=>id===77)).toBe(false);
+});
+it('commits known post-upload sections with ordered requests and sends the final answer without filling the DOM',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,prepared:string[]=[];
+  f.executeScript.mockImplementation(async r=>{if(r.func===prepareUploadAnswer)prepared.push(r.args[0].entryId);return original(r);});
+  const beforeSubmit=vi.fn(),running=f.run({mode:'live',fastSubmit:true,beforeSubmit});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'received',postCount:6});expect(beforeSubmit).toHaveBeenCalledOnce();
+  expect(f.posts.filter(p=>p.http).map(p=>p.history?.at(-1))).toEqual([6,7]);
+  expect(f.posts.at(-1)).toMatchObject({final:true,navigate:true,native:false,manualReady:false,history:[0,1,2,3,5,6,7,8]});
+  expect(f.posts.at(-1)!.entries).toEqual([['entry.1045827748','2026']]);
+  expect(prepared).not.toContain('720104655');expect(prepared).not.toContain('1045827748');expect(f.data[f.key].status).toBe('received');
+});
+it('navigates to an unanswered question instead of speculatively sending the prepared finish',async()=>{
+  vi.useFakeTimers();const f=fixture(),beforeSubmit=vi.fn(),running=f.run({mode:'live',fastSubmit:true,overrides:{},beforeSubmit});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'waiting',issue:{reason:'verification'}});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.every(p=>!p.final&&!p.navigate)).toBe(true);
+});
+it('Test always stops on the editable final page even when prepared finish is enabled',async()=>{
+  vi.useFakeTimers();const f=fixture(),beforeSubmit=vi.fn(),running=f.run({mode:'test',fastSubmit:true,beforeSubmit});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'ready'});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.every(p=>!p.final&&!p.navigate)).toBe(true);
+});
+it('dispatches a prepared final body as real navigation, preserving actual history and refusing a duplicate',async()=>{
+  vi.useFakeTimers();const request={...form(),final:true,navigate:true,history:[0],route:[0],entries:[['entry.720104655','1111111111'],['entry.1045827748','1350000']] as [string,string][]};
+  document.querySelector<HTMLInputElement>('[name="partialResponse"]')!.value=JSON.stringify([[[null,42,['EARLIER_FIXTURE'],0]],null,'PRIVATE_REVISION',null]);
+  const native=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{}),fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+  expect(await postExecutionPage({...request,validateOnly:true})).toEqual({scheduled:true});expect(native).not.toHaveBeenCalled();
+  await postExecutionPage(request);await vi.runAllTimersAsync();expect(fetch).not.toHaveBeenCalled();expect(native).toHaveBeenCalledOnce();
+  const post=native.mock.instances[0] as HTMLFormElement,body=new FormData(post);expect(post.target).toBe('_self');expect(body.get('pageHistory')).toBe('0');expect(body.get('submit')).toBe('Submit');expect(body.has('continue')).toBe(false);expect(body.get('entry.1045827748')).toBe('1350000');
+  await expect(postExecutionPage(request)).rejects.toThrow('không gửi lặp');
+});
+it('retains the durable lock when an early prepared finish has no positive acknowledgement',async()=>{
+  vi.useFakeTimers();const f=fixture({uncertain:true}),running=f.run({mode:'live',fastSubmit:true});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'uncertain',postCount:6});expect(f.data[f.key].status).toBe('pending');expect(f.posts.filter(p=>p.final)).toHaveLength(1);
+});
+it('does not send a prepared answer that fails the actual form validation',async()=>{
+  vi.useFakeTimers();const f=fixture(),beforeSubmit=vi.fn(),running=f.run({mode:'live',fastSubmit:true,overrides:{'982814777':'INVALID FIXTURE'},beforeSubmit});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'waiting',issue:{reason:'verification'}});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.some(p=>p.final)).toBe(false);
+});
+it('restores the native page before any final grant when a fast transition is rejected',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,beforeSubmit=vi.fn();let rejected=false;
+  f.executeScript.mockImplementation(async r=>{
+    if(r.func===postExecutionPage&&r.args[0].http&&!rejected){rejected=true;return [{result:{scheduled:true,error:'Google báo validation'}}];}
+    if(r.func===restoreDirectNativePage)return [{result:false}];
+    return original(r);
+  });
+  const running=f.run({mode:'live',fastSubmit:true,beforeSubmit});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});
+  expect(beforeSubmit).toHaveBeenCalledOnce();expect(f.posts.filter(p=>p.final)).toHaveLength(1);expect(f.posts.at(-1)).toMatchObject({native:true,manualReady:true,navigate:false});
+});
+it('refuses an early final POST even with known answers when Google has not issued the complete section history',async()=>{
+  const request={...form(),final:true,navigate:true,history:[0],route:[0,1,2]},submit=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{});
+  await expect(postExecutionPage({...request,validateOnly:true})).rejects.toThrow('Chưa hoàn tất trạng thái');expect(submit).not.toHaveBeenCalled();
 });

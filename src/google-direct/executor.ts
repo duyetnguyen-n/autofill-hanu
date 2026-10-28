@@ -7,10 +7,10 @@ import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL,directLabFormId,directSchemaFingerprin
 import {buildDirectPlan} from './plan';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,refreshExecutionDraft,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from './execute-page';
 import {DirectPageDialogs} from './dialogs';
-import {directManualReady,armDirectManualSubmit,prepareDirectNativeSubmit} from './recovery-page';
+import {directManualReady,armDirectManualSubmit,prepareDirectNativeSubmit,restoreDirectNativePage} from './recovery-page';
 
 export interface DirectRunResult {runId:string;status:'received'|'failed'|'uncertain'|'stopped'|'ready'|'waiting';issue?:BlockingIssue;message:string;postCount:number}
-export interface DirectRunInput {tabId:number;profile:Profile;overrides:Record<string,string>;expectedScript?:string;url?:string;mode?:'test'|'live';runId?:string;expectedEmail?:string;resume?:boolean;managed?:boolean;onTab?:(tabId:number)=>Promise<void>;onSchema?:(tabId:number)=>Promise<Record<string,string>>;beforeSubmit?:()=>Promise<void>;assertActive?:()=>Promise<void>;file?:{name:string;type:string;blob:Blob};onProgress:(text:string)=>void|Promise<void>;manualFinal?:string;signal:AbortSignal}
+export interface DirectRunInput {tabId:number;profile:Profile;overrides:Record<string,string>;expectedScript?:string;url?:string;mode?:'test'|'live';runId?:string;expectedEmail?:string;resume?:boolean;managed?:boolean;onTab?:(tabId:number)=>Promise<void>;onSchema?:(tabId:number)=>Promise<Record<string,string>>;beforeSubmit?:()=>Promise<void>;assertActive?:()=>Promise<void>;file?:{name:string;type:string;blob:Blob};onProgress:(text:string)=>void|Promise<void>;manualFinal?:string;fastSubmit?:boolean;signal:AbortSignal}
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 class DirectPageProblem extends Error {constructor(readonly issue:BlockingIssue){super(issue.message);}}
 
@@ -81,9 +81,15 @@ export class DirectExecutor {
         await guard();
         if(!input.managed)await navigator.locks.request('hanu-profile-start',async()=>{await guard();await chrome.storage.local.set({googleDirectLease:{runId,tabId,active:true}});});
         if(!input.resume&&chrome.tabs?.create){
-          const fresh=await chrome.tabs.create({url,active:true});
-          if(fresh.id===undefined)throw new Error('Không mở được tab form mới.');
+          const prepared=(await chrome.storage.local.get('preparedFormTab')).preparedFormTab;
+          const candidate=typeof prepared==='number'?await chrome.tabs.get?.(prepared).catch(()=>undefined):undefined;
+          const readyUrl=chrome.runtime?.getURL?.('ready.html');
+          const usable=!!readyUrl&&candidate?.id!==undefined&&(candidate.pendingUrl?candidate.pendingUrl===readyUrl:candidate.url===readyUrl&&candidate.status!=='loading');
+          await guard();
+          const fresh=usable?await chrome.tabs.update(candidate!.id!,{url,active:true}):await chrome.tabs.create({url,active:true});
+          if(fresh?.id===undefined)throw new Error('Không mở được tab form.');
           tabId=fresh.id;
+          if(usable)await chrome.storage.local.set({preparedFormTab:null});
         }
         await input.onTab?.(tabId);
         const stop=()=>{void chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:cancelExecutionPage}).catch(()=>{});};
@@ -156,6 +162,7 @@ export class DirectExecutor {
           page=await changed(page);dialogs.posting(false);
         }
         let committedUpload=!!input.resume&&fileQuestion!==undefined&&plan.pageHistory.indexOf(page.history.at(-1)!)>plan.pageHistory.indexOf(schema.sections.findIndex(s=>s.questions.some(q=>q.id===fileQuestion.id)));
+        let fastRequestsAvailable=true;
         const seen=new Map<number,number>();
         for(let step=0;step<schema.sections.length*3+1;step++){
           await guard();
@@ -210,17 +217,20 @@ export class DirectExecutor {
             await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:beginExecutionSession,args:[formId]});
             page=await changed(page);dialogs.posting(false);committedUpload=true;continue;
           }
+          const remaining=plan.pageHistory.slice(plan.pageHistory.indexOf(index)).flatMap(i=>schema.sections[i].questions);
+          const preparedFlow=fastRequestsAvailable&&input.fastSubmit===true&&input.mode==='live'&&committedUpload&&!input.manualFinal&&remaining.length>0&&remaining.every(q=>q.kind!=='file'&&!!plan.answers.find(a=>a.questionId===q.id&&!a.issue));
           const final=!page.hasNext&&page.hasSubmit;
-          // Ordinary sections use a real POST/navigation even after upload.
-          // Google therefore renders validation and the current page itself.
-          // Upload and final submission still run Google's own client logic.
-          if(committedUpload&&final&&!input.manualFinal)await prepareNativeSection(section);
+          const preparedFinish=preparedFlow&&final;
+          // Fully resolved Live sections advance with Google's issued state.
+          // Unknown answers, Test and recovery keep real Google pages, with
+          // Google's client validation before the ordinary final submission.
+          if(committedUpload&&final&&!input.manualFinal&&!preparedFinish)await prepareNativeSection(section);
           if(final&&input.mode==='test'){
             await input.onProgress('Xong Test: đã chuẩn bị dữ liệu, dừng trước Gửi.');
             return {runId,status:'ready',message:'Chế độ Test không gửi phản hồi.',postCount:posts};
           }
           if(!page.hasNext&&!final)throw new Error('Chưa thấy bước Tiếp hoặc Gửi của Google.');
-          if(final&&committedUpload&&!input.manualFinal){
+          if(final&&committedUpload&&!input.manualFinal&&!preparedFinish){
             await guard();await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:armDirectManualSubmit});
             const checked=(await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:prepareDirectNativeSubmit,args:[page.documentKey]}))[0]?.result;
             if(!checked?.ready){
@@ -229,16 +239,18 @@ export class DirectExecutor {
               return {runId,status:'waiting',postCount:posts,message:checked?.message??'Google chưa kiểm tra xong dữ liệu.',issue:{reason:summary?.verification?'verification':'validation',message:checked?.message??'Kiểm tra trực tiếp trên Google Form.',questionId:q?.id,questionLabel:q?.label,question:summary}};
             }
           }
-          const current=plan.answers.filter(a=>section.questions.some(q=>q.id===a.questionId));
+          const sending=section.questions;
+          const current=plan.answers.filter(a=>sending.some(q=>q.id===a.questionId));
           const request:PagePost={formId,documentKey:page.documentKey,account,requestId:`${runId}:${index}`,final,
             entries:input.manualFinal?[]:current.filter(a=>!a.issue&&!fileQuestions.some(q=>q.id===a.questionId)).flatMap(a=>(a.values.length?a.values:['']).map(v=>[`entry.${a.entryId}`,v] as [string,string])),
-            sentinels:section.questions.filter(q=>['checkbox','radio','dropdown'].includes(q.kind)).map(q=>q.entryId!),
+            sentinels:sending.filter(q=>['checkbox','radio','dropdown'].includes(q.kind)).map(q=>q.entryId!),
             uploadEntries:fileQuestions.filter(q=>q.kind==='file'&&(q.required||!!file?.blob)&&plan.pageHistory.indexOf(index)>=plan.pageHistory.indexOf(schema.sections.findIndex(s=>s.questions.some(item=>item.id===q.id)))).map(q=>q.entryId!),
-            history:page.history,native:final&&committedUpload,manualReady:final&&committedUpload,route:plan.pageHistory,questionLabels:Object.fromEntries(section.questions.map(q=>[q.id,q.label]))};
+            history:page.history,native:final&&committedUpload&&!preparedFinish,manualReady:final&&committedUpload&&!preparedFinish,navigate:preparedFinish,http:preparedFlow&&!final,route:plan.pageHistory,questionLabels:Object.fromEntries(sending.map(q=>[q.id,q.label]))};
           if(final){
             await guard();
             const verified=(await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:postExecutionPage,args:[{...request,validateOnly:true}]}))[0]?.result;
             if(!verified?.scheduled||verified.error)throw new Error(verified?.error??'Chưa xác nhận được dữ liệu Gửi.');
+            if(preparedFinish)await input.onProgress('Google đã xác nhận dữ liệu các trang trước. Đang gửi đáp án cuối bằng request…');
             await input.beforeSubmit?.();await guard();attempted=true;
             await chrome.storage.local.set({[lockKey]:{runId,status:'pending',at:new Date().toISOString()}});
             await input.onProgress('Đã khóa gửi. Đang gửi request cuối tới Google…');
@@ -248,9 +260,17 @@ export class DirectExecutor {
           const posted=await chrome.scripting.executeScript({target:{tabId},world:final||committedUpload?'MAIN':'ISOLATED',func:postExecutionPage,args:[request]});
           const injectionError=(posted[0] as {error?:unknown})?.error;
           if(injectionError)throw new Error(`Không thực thi được request trong trang Google: ${typeof injectionError==='object'&&injectionError&&'message' in injectionError?String(injectionError.message):String(injectionError)}`);
-          if(posted[0]?.result?.error)throw new Error(posted[0].result.error);
+          if(posted[0]?.result?.error){
+            if(!request.http)throw new Error(posted[0].result.error);
+            // No final submit has been sent. Restore Google's real page from
+            // its own last accepted state, then continue once via the UI path.
+            fastRequestsAvailable=false;await guard();
+            await input.onProgress('Google chưa chấp nhận bước chuyển nhanh. Đang mở lại trang để kiểm tra và tiếp tục.');
+            const restored:boolean|undefined=(await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:restoreDirectNativePage,args:[{formId,documentKey:page.documentKey,automatic:true}] as Parameters<typeof restoreDirectNativePage>}))[0]?.result;
+            page=restored?await changed(page):await read();seen.clear();dialogs.posting(false);continue;
+          }
           if(!posted[0]?.result?.scheduled)throw new Error('Google chưa xác nhận bộ gửi đã xử lý request; không tự gửi lại.');
-          if(final&&request.native){page=await changed(page);dialogs.posting(false);continue;}
+          if(final&&(request.native||request.navigate)){page=await changed(page);dialogs.posting(false);continue;}
           if(final){
             const result=posted[0]?.result?.finalResult;
             if(!result?.received)throw new Error(result?.message??'Chưa nhận được kết quả request Gửi. Giữ khóa để đối chiếu.');

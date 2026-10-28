@@ -77,6 +77,7 @@ export interface PagePost {
   route?:number[];
   questionLabels?:Record<string,string>;
   native?:boolean;
+  navigate?:boolean;
   manualReady?:boolean;
   validateOnly?:boolean;
 }
@@ -118,10 +119,11 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
     if (!/^entry\.\d+$/.test(key)) throw new Error('Tên trường request không hợp lệ.');
     body.append(key,value);
   }
-  // partialResponse belongs to the current Google response. Never merge or
-  // fabricate rows, pageHistory or draft revisions: entries encode THIS page.
+  // Keep Google's response rows, history and draft revision exactly as issued.
+  // Known later sections are committed by ordered non-final requests first.
   const actualHistory=String(source.get('pageHistory')??'');
   if(request.history&&request.history.join(',')!==actualHistory)throw new Error('Không được nhảy qua trang chưa được Google xác nhận.');
+  if(request.final&&request.navigate&&request.route?.join(',')!==actualHistory)throw new Error('Chưa hoàn tất trạng thái các trang của Google. Không gửi tắt qua câu chưa được ghi nhận.');
   const sessionKey=`hanu-direct-draft:${request.formId}`;
   const captured=JSON.parse(sessionStorage.getItem(sessionKey)??'{}');
   for(const name of ['dlut','fuIds']){
@@ -153,8 +155,8 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
     return {scheduled:true};
   }
   if(request.validateOnly)return {scheduled:true};
-  if(request.final||request.http){
-    if(request.final)body.set('submit','Submit');
+  if(request.final)body.set('submit','Submit');
+  if(request.final&&!request.navigate||request.http){
     // Same-origin fetch keeps Google's authenticated upload session but does
     // not trigger beforeunload/autosave navigation after the file is selected.
     document.documentElement.dataset.hanuDirectPost=request.requestId;

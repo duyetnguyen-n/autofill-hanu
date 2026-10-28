@@ -125,6 +125,8 @@ export interface RunState {
   recovery?:RecoveryPlan;
   corrections?:Record<string,ManualAnswer>;
   finalQuestion?: FinalQuestion;
+  /** Direct-only value entered before the actual verification identity is known. */
+  preparedFinalAnswer?:string;
   runId?: string;
   sessionId?: string;
   managed?: boolean;

@@ -1,7 +1,7 @@
 import type {Command,ExecutionView} from '../protocol';
 import {getProfile,getProfileRevision,getAttachment} from '../storage';
 import {sha256} from '../protocol';
-import {matchesFinalQuestionLabel,type RunState,validateFinalQuestion} from '../shared';
+import {matchesFinalQuestionLabel,type RunState,type FinalQuestion,validateFinalQuestion} from '../shared';
 import {directQuestionSummary} from './verification';
 import {DirectExecutor} from './executor';
 import {directLabFormId,parseDirectSchema} from './schema';
@@ -33,6 +33,8 @@ export class ManagedDirect {
   async start(c:Command,sessionId:string){
     if(!['test','live'].includes(String(c.payload.mode)))throw new Error('Chế độ chạy không hợp lệ.');
     const formId=directLabFormId(String(c.payload.url));validateFinalQuestion(c.payload.finalQuestion);
+    const preparedFinalAnswer=c.payload.preparedFinalAnswer;
+    if(preparedFinalAnswer!==undefined&&(typeof preparedFinalAnswer!=='string'||!preparedFinalAnswer.trim()||preparedFinalAnswer.length>10000))throw new Error('Đáp án chuẩn bị trước không hợp lệ.');
     if(!c.runId)throw new Error('Thiếu mã lượt thử nghiệm.');
     if(this.stopped.has(c.runId))throw new Error('Lượt đã bị Dừng trước khi bắt đầu.');
     const previous=await this.run();
@@ -42,7 +44,7 @@ export class ManagedDirect {
     const profile=await getProfile(),hashes=c.payload.attachmentHashes as Record<string,string>??{};
     for(const a of Object.values(profile.attachments))if(a){const blob=await getAttachment(a.id);if(!blob||blob.size!==a.size||await sha256(await blob.arrayBuffer())!==hashes[a.id])throw new Error('Ảnh chưa đồng bộ đầy đủ.');}
     const run:RunState={engine:'direct',runId:c.runId,sessionId,managed:true,profileSnapshot:structuredClone(profile),profileRevision:Number(c.payload.revision),expectedEmail:String(c.payload.expectedEmail),
-      url:String(c.payload.url),formId,tabId:-1,mode:c.payload.mode as 'test'|'live',status:'running',autoContinue:true,finalQuestion:c.payload.finalQuestion,
+      url:String(c.payload.url),formId,tabId:-1,mode:c.payload.mode as 'test'|'live',status:'running',autoContinue:true,finalQuestion:c.payload.finalQuestion,...(preparedFinalAnswer!==undefined?{preparedFinalAnswer}:{}),
       filled:[],skipped:[],logs:[],submitAttempted:false,eventSeq:0,startedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const saved=await navigator.locks.request('hanu-profile-start',async()=>{
       if(this.stopped.has(c.runId!))throw new Error('Lượt đã bị Dừng.');
@@ -65,14 +67,23 @@ export class ManagedDirect {
         // never infer the fee from a numeric validation expression.
         const resolveOverrides=async(tabId:number)=>{
           const page=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;
-          if(!page?.script||!r.finalQuestion)return;
+          if(!page?.script)return;
           const questions=parseDirectSchema(page.script).sections.flatMap(s=>s.questions);
+          if(!r.finalQuestion&&r.preparedFinalAnswer){
+            const candidates=questions.map(directQuestionSummary).filter(q=>q.required&&q.verification&&q.kind!=='unknown'&&q.kind!=='file');
+            if(candidates.length!==1)return;
+            const q=candidates[0];
+            // Identity comes from the actual form, never from the answer value
+            // or a validation regex. Ambiguous/new questions keep the old handoff.
+            r=await this.save({...r,finalQuestion:{label:q.label,value:r.preparedFinalAnswer,formId:r.formId,questionId:q.targetId,kind:q.kind as FinalQuestion['kind']}});
+          }
+          if(!r.finalQuestion)return;
           const matches=questions.filter(q=>r.finalQuestion?.questionId?[q.id,`entry.${q.entryId}`].includes(r.finalQuestion.questionId):matchesFinalQuestionLabel(q.label,r.finalQuestion!.label??''));
           if(matches.length!==1)throw new Error('Chưa ghép duy nhất câu xác thực đã khai báo.');
           overrides={[matches[0].id]:r.finalQuestion.value};
         };
         // Executor opens and waits for the responder before resolving its schema.
-        const result=await new DirectExecutor().run({tabId:r.tabId,url:r.url,runId:r.runId,mode:r.mode,resume,manualFinal,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
+        const result=await new DirectExecutor().run({tabId:r.tabId,url:r.url,runId:r.runId,mode:r.mode,resume,manualFinal,fastSubmit:true,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
           signal:controller.signal,assertActive:valid,
           onTab:async tabId=>{await valid();r=await this.save({...r,tabId});},
           onSchema:async(tabId)=>{await resolveOverrides(tabId);return overrides;},

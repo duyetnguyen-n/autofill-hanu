@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {readFileSync} from 'node:fs';
 import {emptyProfile} from '../src/rules';
 import {canApplyFinalQuestion} from '../src/shared';
 import {ManagedDirect} from '../src/google-direct/managed';
@@ -20,7 +21,7 @@ function fixture(){
   const bridge={connected:()=>true,state:vi.fn(),request:vi.fn(async(_kind?:string,..._rest:unknown[]):Promise<unknown>=>({ok:true}))};
   const direct=new ManagedDirect(bridge);
   const command=(kind:Command['kind'],runId='direct-one',payload:Record<string,unknown>={}):Command=>({type:'COMMAND',protocol:1,sessionId:'profile-one',commandId:crypto.randomUUID(),kind,runId,payload});
-  const start=()=>direct.start(command('START','direct-one',{engine:'direct',url:DIRECT_LAB_URL,mode:'test',revision:1,expectedEmail:'fixture@example.test'}),'profile-one');
+  const start=(extra:Record<string,unknown>={})=>direct.start(command('START','direct-one',{engine:'direct',url:DIRECT_LAB_URL,mode:'test',revision:1,expectedEmail:'fixture@example.test',...extra}),'profile-one');
   return {data,writes,bridge,direct,command,start};
 }
 it('uses separate run/lease storage and completes Test without granting submit or touching classic state',async()=>{
@@ -91,4 +92,20 @@ it('manual Send goes through coordinator Resume and the same durable final grant
 it('rejects stale document/account/run and classic ownership before allowing manual submit',async()=>{
   const f=await waitingLive();await expect(f.direct.manual('submit','direct-one','old-document',42)).rejects.toThrow('thay đổi');
   await expect(f.direct.manual('submit','other','real-final',42)).rejects.toThrow();f.data.executionLease={active:true};await expect(f.direct.manual('takeover','direct-one','real-final',42)).rejects.toThrow('giữ profile');expect(f.bridge.request).not.toHaveBeenCalled();expect(f.data.googleDirectManagedRun.submitAttempted).toBe(false);
+});
+it('binds a value-only scheduled answer from the actual initial schema before the executor builds its plan',async()=>{
+  const f=fixture(),script=`var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
+  vi.mocked(chrome.scripting.executeScript).mockResolvedValue([{result:{script}}] as any);
+  mocks.run.mockImplementation(async(input:DirectRunInput)=>{
+    expect(input.fastSubmit).toBe(true);expect(await input.onSchema?.(42)).toEqual({'982814777':'2026'});
+    return {status:'ready',message:'Prepared',postCount:0};
+  });
+  await f.start({preparedFinalAnswer:'2026'});await vi.waitFor(()=>expect(f.data.googleDirectManagedRun?.status).toBe('ready_to_submit'));
+  expect(f.data.googleDirectManagedRun.finalQuestion).toMatchObject({value:'2026',questionId:'entry.1045827748',formId:DIRECT_LAB_FORM_ID});expect(f.bridge.request).not.toHaveBeenCalled();
+});
+it('does not guess which verification receives a value-only answer when the schema is ambiguous',async()=>{
+  const f=fixture(),source=readFileSync('tests/fixtures/google-direct-lab.json','utf8'),script=`var FB_PUBLIC_LOAD_DATA_ = ${source.replace('GIỚI TÍNH | 性别','Câu hỏi xác thực thứ hai')};`;
+  expect(script).toContain('Câu hỏi xác thực thứ hai');vi.mocked(chrome.scripting.executeScript).mockResolvedValue([{result:{script}}] as any);
+  mocks.run.mockImplementation(async(input:DirectRunInput)=>{expect(await input.onSchema?.(42)).toEqual({});return {status:'waiting',message:'Cần xác nhận câu hỏi',postCount:0};});
+  await f.start({preparedFinalAnswer:'2026'});await vi.waitFor(()=>expect(f.data.googleDirectManagedRun?.status).toBe('waiting_manual'));expect(f.data.googleDirectManagedRun.finalQuestion).toBeUndefined();
 });

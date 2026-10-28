@@ -89,3 +89,7 @@ it('honors Stop while waiting for Google validation rather than waiting out six 
   document.documentElement.dataset.hanuDirectStopped='1';await vi.advanceTimersByTimeAsync(100);await checked;
   expect(f.native).not.toHaveBeenCalled();expect(document.querySelector<HTMLFormElement>('form')!.inert).toBe(false);vi.useRealTimers();
 });
+it('does not restore or clear a stopped document during automatic request fallback',()=>{
+  const f=fixture();document.documentElement.dataset.hanuDirectStopped='1';
+  expect(()=>restoreDirectNativePage({formId:DIRECT_LAB_FORM_ID,documentKey:'doc-final',automatic:true})).toThrow('Đã dừng');expect(f.native).not.toHaveBeenCalled();expect(document.documentElement.dataset.hanuDirectStopped).toBe('1');
+});
