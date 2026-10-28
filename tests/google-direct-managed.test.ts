@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
+import {canApplyFinalQuestion} from '../src/shared';
 import {ManagedDirect} from '../src/google-direct/managed';
 import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../src/google-direct/schema';
 import type {Command} from '../src/protocol';
+import {readExecutionPage} from '../src/google-direct/execute-page';
 import type {DirectRunInput} from '../src/google-direct/executor';
 const mocks=vi.hoisted(()=>({run:vi.fn(),resolve:vi.fn(),profile:vi.fn()}));
 vi.mock('../src/google-direct/executor',()=>({DirectExecutor:class {run=mocks.run;resolveNotReceived=mocks.resolve;}}));
@@ -13,9 +15,9 @@ afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 function fixture(){
   const data:Record<string,any>={profile:{keep:'classic profile'},'run:7':{keep:'classic run'},submissionLocks:{keep:'classic lock'}};
   const writes:Record<string,any>[]=[];
-  vi.stubGlobal('chrome',{storage:{local:{get:async(key:string)=>({[key]:structuredClone(data[key])}),set:async(value:any)=>{writes.push(structuredClone(value));Object.assign(data,structuredClone(value));}}},tabs:{get:async()=>({id:42}),update:async()=>({id:42,windowId:1})},windows:{update:vi.fn()},scripting:{executeScript:vi.fn(async()=>[{result:undefined}])}});
+  vi.stubGlobal('chrome',{storage:{local:{get:async(key:string|string[])=>Array.isArray(key)?Object.fromEntries(key.map(k=>[k,structuredClone(data[k])])):({[key]:structuredClone(data[key])}),set:async(value:any)=>{writes.push(structuredClone(value));Object.assign(data,structuredClone(value));}}},tabs:{get:async()=>({id:42}),update:async()=>({id:42,windowId:1})},windows:{update:vi.fn()},scripting:{executeScript:vi.fn(async()=>[{result:undefined}])}});
   Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_name:any,fn:any)=>fn()}});
-  const bridge={connected:()=>true,state:vi.fn(),request:vi.fn(async()=>({ok:true}))};
+  const bridge={connected:()=>true,state:vi.fn(),request:vi.fn(async(_kind?:string,..._rest:unknown[]):Promise<unknown>=>({ok:true}))};
   const direct=new ManagedDirect(bridge);
   const command=(kind:Command['kind'],runId='direct-one',payload:Record<string,unknown>={}):Command=>({type:'COMMAND',protocol:1,sessionId:'profile-one',commandId:crypto.randomUUID(),kind,runId,payload});
   const start=()=>direct.start(command('START','direct-one',{engine:'direct',url:DIRECT_LAB_URL,mode:'test',revision:1,expectedEmail:'fixture@example.test'}),'profile-one');
@@ -63,4 +65,30 @@ it('does not downgrade a confirmed response when Stop arrives afterward',async()
 it('recovers a worker restart as paused or uncertain and never auto-resubmits',async()=>{
   const f=fixture();f.data.googleDirectManagedRun={runId:'direct-one',engine:'direct',managed:true,mode:'live',formId:DIRECT_LAB_FORM_ID,tabId:42,status:'submitting',submitAttempted:true,logs:[],filled:[],skipped:[],updatedAt:'',eventSeq:4};
   expect(await f.direct.reconcile()).toMatchObject({run:{status:'submit_uncertain',recoveryRequired:true}});expect(mocks.run).not.toHaveBeenCalled();
+});
+
+async function waitingLive(){
+  const f=fixture();mocks.run.mockImplementation(async(input:DirectRunInput)=>{await input.onTab?.(42);return {status:'waiting',message:'Nhập đáp án',issue:{reason:'verification',message:'Nhập đáp án',questionLabel:'Fee'},postCount:3};});
+  await f.start();await vi.waitFor(()=>expect(f.data.googleDirectManagedRun?.status).toBe('waiting_manual'));f.data.googleDirectManagedRun.mode='live';
+  vi.mocked(chrome.scripting.executeScript).mockImplementation(async({func}:any)=>[{result:func===readExecutionPage?{url:DIRECT_LAB_URL,account:'fixture@example.test',documentKey:'real-final',hasNext:false,hasSubmit:true}:undefined}] as any);
+  return f;
+}
+it('takeover durably disables automatic answer application and resume, retaining the same run/profile',async()=>{
+  const f=await waitingLive();expect(canApplyFinalQuestion(f.data.googleDirectManagedRun,{label:'Fee'})).toBe(true);expect(await f.direct.manual('takeover','direct-one','real-final',42)).toEqual({ok:true});
+  expect(f.data.googleDirectManagedRun).toMatchObject({runId:'direct-one',status:'paused',manualTakeover:true,autoContinue:false,submitAttempted:false});expect(f.data.googleDirectLease.active).toBe(true);expect(canApplyFinalQuestion(f.data.googleDirectManagedRun,{label:'Fee'})).toBe(false);
+  await expect(f.direct.control(f.command('RESUME','direct-one',{automatic:true}))).rejects.toThrow('tiếp quản');
+  await expect(f.direct.control(f.command('SET_FINAL_QUESTION','direct-one',{finalQuestion:{label:'Fee',value:'stale'}}))).rejects.toThrow();
+  await f.direct.control(f.command('RESUME'));expect(f.data.googleDirectManagedRun.manualTakeover).toBe(false);
+});
+it('manual Send goes through coordinator Resume and the same durable final grant exactly once',async()=>{
+  const f=await waitingLive();
+  mocks.run.mockImplementation(async(input:DirectRunInput)=>{expect(input.manualFinal).toBe('real-final');await input.beforeSubmit?.();return {status:'received',message:'confirmed',postCount:1};});
+  f.bridge.request.mockImplementation(async(kind:any)=>kind==='CONTROL'?f.direct.control(f.command('RESUME')):{ok:true});
+  expect(await f.direct.manual('submit','direct-one','real-final',42)).toEqual({ok:true});await vi.waitFor(()=>expect(f.data.googleDirectManagedRun.status).toBe('completed'));
+  expect(f.bridge.request.mock.calls.map(args=>args[0])).toEqual(['CONTROL','SUBMIT']);expect(f.data.googleDirectManagedRun.submitAttempted).toBe(true);
+  await expect(f.direct.manual('submit','direct-one','real-final',42)).rejects.toThrow('khóa gửi');expect(f.bridge.request).toHaveBeenCalledTimes(2);
+});
+it('rejects stale document/account/run and classic ownership before allowing manual submit',async()=>{
+  const f=await waitingLive();await expect(f.direct.manual('submit','direct-one','old-document',42)).rejects.toThrow('thay đổi');
+  await expect(f.direct.manual('submit','other','real-final',42)).rejects.toThrow();f.data.executionLease={active:true};await expect(f.direct.manual('takeover','direct-one','real-final',42)).rejects.toThrow('giữ profile');expect(f.bridge.request).not.toHaveBeenCalled();expect(f.data.googleDirectManagedRun.submitAttempted).toBe(false);
 });

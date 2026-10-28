@@ -40,7 +40,7 @@ const native = createNativeClient({
     interruptEpoch++;if(c.runId)interruptedRuns.add(c.runId);await parkManaged();
   }
 });
-const direct = new ManagedDirect({connected:()=>native.isConnected(),state:r=>native.state(r),request:(kind,r)=>native.request(kind,r)});
+const direct = new ManagedDirect({connected:()=>native.isConnected(),state:r=>native.state(r),request:(kind,r,extra)=>native.request(kind,r,extra)});
 
 const facebookWatcher=new FacebookWatcher(()=>native.isConnected(),payload=>native.request('FACEBOOK_OBSERVATION',undefined,payload));
 chrome.permissions?.onAdded?.addListener(()=>void native.facebookChanged());
@@ -735,7 +735,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     void chrome.sidePanel.setOptions({ tabId, path: "sidepanel.html", enabled: true }).catch(() => undefined);
   }
   if(changeInfo.status==='loading')void armNavigationWatch(tabId).catch(()=>{});
-  if(changeInfo.status==='complete')void inspectLoadedDocument(tabId).catch(()=>{});
+  if(changeInfo.status==='complete'){void inspectLoadedDocument(tabId).catch(()=>{});void direct.pageLoaded(tabId).catch(()=>{});}
 });
 
 const documentInspections=new Map<number,Promise<void>>();
@@ -797,6 +797,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       if(message.type==='PAGE_ATTENTION_ACQUIRE')return acquirePageAttention(message,sender);
       await releasePageAttention(sender.tab.id,message.token);return {ok:true};
     })().then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
+  }
+  if(message.type==='DIRECT_MANUAL'){
+    if(sender.tab?.id===undefined||(sender.frameId??0)!==0||!isFormsUrl(sender.url??sender.tab.url)||!['takeover','resume','submit'].includes(message.action)){sendResponse({ok:false,error:'Trang tiếp quản không hợp lệ.'});return;}
+    void direct.manual(message.action,message.runId,message.documentKey,sender.tab.id).then(sendResponse).catch(e=>sendResponse({ok:false,error:(e as Error).message}));return true;
   }
   messageQueue=messageQueue.then(async () => {
     try {

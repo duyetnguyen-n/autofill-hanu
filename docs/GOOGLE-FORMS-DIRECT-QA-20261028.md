@@ -143,3 +143,33 @@ Không thay engine classic.
 Chưa tái hiện lỗi trang 7 sau ba lần chạy ảnh lớn. Không có bằng chứng để
 kết luận dung lượng ảnh là nguyên nhân; cần response diagnostic nếu tái diễn.
 Các giới hạn về nhiều profile đồng thời và phiên hết hạn vẫn còn.
+
+
+## Khắc phục đường tiếp quản, bản 1.9.8–1.9.9
+
+Thiết kế 1.9.7 giữ trạng thái các trang sau upload trong hidden form,
+nhưng giao diện Google vẫn ở trang ngân hàng. Khi dừng ở xác thực,
+người dùng không thể nhập tay ở đúng câu hỏi. Đây là thiếu sót chức năng
+khôi phục, dù các lượt đi hết bằng request vẫn có thể gửi thành công.
+
+Đã đổi phần từ upload trở đi sang trang Google thật, thêm Tiếp quản,
+ngăn đáp án theo lịch ghi đè thao tác thủ công, và đưa Google client
+validation lên trước khi xin quyền Gửi. Body Google đã chuẩn bị được
+kiểm tra trước grant và giữ nguyên để gửi đúng một lần. Có đường khôi
+phục hidden state cũ bằng Back không-final và trả lại submit gốc khi Dừng.
+
+Kiểm tra Chrome thực tế, ảnh giả 1.229.883 byte:
+
+- Khôi phục chính tab cũ bị kẹt trang 7; bấm Tiếp đi tới câu xác thực thật.
+- Test thiếu đáp án: tới trang xác thực thật, nhập được, Test chặn bấm Gửi.
+- Live tiếp quản: Google từ chối `123456`; sửa `1350000` và gửi trên cùng
+  lượt, không cần upload lại. Phía chủ form có đúng ảnh lớn và tên giả.
+- Live tự động: trang xác nhận gốc của Google, khoảng 36 giây cả lượt;
+  phía chủ form ghi đúng dữ liệu/ảnh/đáp án.
+- Đã xóa từng phản hồi thử sau đối chiếu, số phản hồi trở lại 0.
+
+Kiểm thử cuối: **97 file đạt, 887 bài đạt, 1 bài bỏ qua (888 tổng)**.
+Typecheck, build Online và build cloud-server thành công. Hướng dẫn,
+rào chắn và các giới hạn được ghi trong `GOOGLE-FORMS-DIRECT-RECOVERY.md`.
+Bản mới vẫn chỉ mở cho hai LAB, không thay engine cũ, không coi mẫu kiểm
+tra một profile là bằng chứng bảo đảm tỉ lệ thành công trên form thật.

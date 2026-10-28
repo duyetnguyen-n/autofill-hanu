@@ -6,16 +6,20 @@ import {directQuestionSummary} from './verification';
 import {DirectExecutor} from './executor';
 import {directLabFormId,parseDirectSchema} from './schema';
 import {readExecutionPage,cancelExecutionPage} from './execute-page';
+import {showDirectRecovery,restoreDirectNativePage,armDirectManualSubmit,disarmDirectManualSubmit} from './recovery-page';
+import {DirectPageDialogs} from './dialogs';
 
 const KEY='googleDirectManagedRun';
 const ended=(r:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(r.status);
-type Bridge={connected():boolean;state(r:RunState):void;request(kind:string,r:RunState):Promise<unknown>};
+type Bridge={connected():boolean;state(r:RunState):void;request(kind:string,r:RunState,extra?:Record<string,unknown>):Promise<unknown>};
 /** Separate executor/storage. The existing coordinator supplies profile/group/schedule controls. */
 export class ManagedDirect {
   private controller?:AbortController;
   private task?:Promise<void>;
   private writes=Promise.resolve();
   private stopped=new Set<string>();
+  private manualBusy=false;
+  private manualSubmission?:{runId:string;documentKey:string};
   constructor(private bridge:Bridge){}
   async run():Promise<RunState|undefined>{return (await chrome.storage.local.get(KEY))[KEY];}
   async owns(c?:Command){const r=await this.run();return !!r&&(!c?.runId||c.runId===r.runId);}
@@ -23,7 +27,7 @@ export class ManagedDirect {
     const work=this.writes.then(async()=>{
       r={...r,updatedAt:new Date().toISOString(),eventSeq:(r.eventSeq??0)+1};
       await chrome.storage.local.set({[KEY]:r,googleDirectLease:{runId:r.runId,active:!ended(r),tabId:r.tabId}});
-      this.bridge.state(r);return r;
+      this.bridge.state(r);void this.pageLoaded(r.tabId).catch(()=>{});return r;
     });this.writes=work.then(()=>{},()=>{});return work;
   }
   async start(c:Command,sessionId:string){
@@ -47,7 +51,7 @@ export class ManagedDirect {
     });
     this.launch(saved,false);return (await this.run())!;
   }
-  private launch(initial:RunState,resume:boolean){
+  private launch(initial:RunState,resume:boolean,manualFinal?:string){
     const controller=new AbortController();this.controller=controller;
     const work=(async()=>{
       let r=initial;
@@ -68,7 +72,7 @@ export class ManagedDirect {
           overrides={[matches[0].id]:r.finalQuestion.value};
         };
         // Executor opens and waits for the responder before resolving its schema.
-        const result=await new DirectExecutor().run({tabId:r.tabId,url:r.url,runId:r.runId,mode:r.mode,resume,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
+        const result=await new DirectExecutor().run({tabId:r.tabId,url:r.url,runId:r.runId,mode:r.mode,resume,manualFinal,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
           signal:controller.signal,assertActive:valid,
           onTab:async tabId=>{await valid();r=await this.save({...r,tabId});},
           onSchema:async(tabId)=>{await resolveOverrides(tabId);return overrides;},
@@ -86,7 +90,7 @@ export class ManagedDirect {
         const latest=await this.run();if(latest?.runId===r.runId)await this.save({...r,status:r.submitAttempted?'submit_uncertain':controller.signal.aborted?'paused':'failed',activity:undefined,logs:[...r.logs,{at:new Date().toISOString(),level:'error',message:(error as Error).message}]});
       }
     })();
-    this.task=work;void work.finally(()=>{if(this.task===work){this.task=undefined;this.controller=undefined;}});
+    this.task=work;void work.finally(()=>{if(this.task===work){this.task=undefined;this.controller=undefined;void this.run().then(r=>r&&this.pageLoaded(r.tabId)).catch(()=>{});}});
   }
   async interrupt(c?:Command){
     if(c?.runId)this.stopped.add(c.runId);
@@ -111,11 +115,13 @@ export class ManagedDirect {
     if(c.kind==='RESUME'){
       if(r.submitAttempted)throw new Error('Đã khóa gửi. Xác minh kết quả trước khi tiếp tục.');
       if(this.task)throw new Error('Lượt chưa dừng xong.');
-      this.stopped.delete(r.runId!);r=await this.save({...r,status:'running',autoContinue:true});this.launch(r,true);return r;
+      if(c.payload.automatic&&r.manualTakeover)throw new Error('Bạn đang tiếp quản; tool không tự tiếp tục.');
+      const manual=this.manualSubmission?.runId===r.runId?this.manualSubmission:undefined;this.manualSubmission=undefined;
+      this.stopped.delete(r.runId!);r=await this.save({...r,status:'running',manualTakeover:!!manual,autoContinue:!manual,recoveryRequired:false});this.launch(r,true,manual?.documentKey);return r;
     }
     if(c.kind==='SET_FINAL_QUESTION'){
       validateFinalQuestion(c.payload.finalQuestion);
-      if(!c.payload.finalQuestion||r.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(r.status))throw new Error('Chỉ đổi đáp án khi đang chờ và chưa gửi.');
+      if(!c.payload.finalQuestion||this.manualBusy||r.manualTakeover||r.submitAttempted||!['paused','waiting_manual','ready_to_submit'].includes(r.status))throw new Error('Chỉ đổi đáp án khi đang chờ và chưa gửi.');
       const question=c.payload.finalQuestion as RunState['finalQuestion'];if(question?.formId&&question.formId!==r.formId)throw new Error('Câu hỏi thuộc form khác.');
       r=await this.save({...r,finalQuestion:question});return r;
     }
@@ -131,7 +137,48 @@ export class ManagedDirect {
   async reconcile(){
     let r=await this.run();if(!r)return undefined;
     if(!this.task&&!ended(r))r=await this.save({...r,status:r.submitAttempted?'submit_uncertain':'paused',recoveryRequired:true,autoContinue:false});
-    this.bridge.state(r);return {run:r};
+    this.bridge.state(r);void this.pageLoaded(r.tabId).catch(()=>{});return {run:r};
+  }
+  async pageLoaded(tabId:number){
+    const r=await this.run();if(!r||r.tabId!==tabId)return;
+    const page=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;
+    if(!page||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase()||directLabFormId(page.url)!==r.formId)return;
+    const current=await this.run();if(!current||current.runId!==r.runId||current.eventSeq!==r.eventSeq)return;
+    await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:['idle','completed'].includes(r.status)?disarmDirectManualSubmit:armDirectManualSubmit});
+    await chrome.scripting.executeScript({target:{tabId},func:showDirectRecovery,args:[{runId:r.runId!,formId:r.formId,account:r.expectedEmail!,status:r.status,mode:r.mode,eventSeq:r.eventSeq,preservePrepared:this.manualBusy||!!this.task,manual:!!r.manualTakeover,message:r.blockingIssue?.message??r.activity?.message??r.logs.at(-1)?.message??'Giữ nguyên dữ liệu; có thể tiếp quản trên form.'}]});
+  }
+  async manual(action:'takeover'|'resume'|'submit',runId:string,documentKey:string,tabId:number){
+    if(this.manualBusy)throw new Error('Đang xử lý thao tác trước. Giữ nguyên form.');
+    this.manualBusy=true;
+    try{return await navigator.locks.request('hanu-profile-start',async()=>{
+      const leases=await chrome.storage.local.get(['executionLease','googleDirectLease']);
+      if(leases.executionLease?.active||leases.googleDirectLease?.active&&leases.googleDirectLease.runId!==runId)throw new Error('Một lượt khác đang giữ profile; chưa thể tiếp quản.');
+      let r=await this.run();
+      if(!r||r.runId!==runId||r.tabId!==tabId||r.submitAttempted||['idle','completed','submit_uncertain'].includes(r.status))throw new Error('Lượt đã đổi hoặc đã khóa gửi. Đối chiếu kết quả trước.');
+      const page=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;
+      if(!page||page.documentKey!==documentKey||directLabFormId(page.url)!==r.formId||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase())throw new Error('Trang hoặc tài khoản Google đã thay đổi.');
+      if(action==='takeover'){
+        await this.interrupt();await this.task;r=(await this.run())!;
+        if(r.runId!==runId||r.submitAttempted)throw new Error('Đã bắt đầu gửi; cần đối chiếu kết quả trước khi tiếp quản.');
+        r=await this.save({...r,status:'paused',manualTakeover:true,autoContinue:false,recoveryRequired:false,activity:undefined,logs:[...r.logs,{at:new Date().toISOString(),level:'info',message:'Bạn đã tiếp quản trên Google Form. Tool không tự điền hoặc tự tiếp tục.'}]});
+        const dialogs=new DirectPageDialogs(tabId,new AbortController().signal);
+        try{
+          await dialogs.connect();dialogs.posting(true);
+          const result=(await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:restoreDirectNativePage,args:[{formId:r.formId,documentKey}]}))[0]?.result;
+          if(result){const deadline=Date.now()+15000;while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,250));try{const next=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;if(next&&next.documentKey!==documentKey)break;}catch{}}}
+        }finally{await dialogs.close();}
+        await this.pageLoaded(tabId);return {ok:true};
+      }
+      if(this.task)throw new Error('Tool đang xử lý. Bấm Tiếp quản trước khi nhập tay.');
+      if(action==='submit'){
+        if(r.mode!=='live')throw new Error('Chế độ Test dừng trước Gửi.');
+        if(page.hasNext||!page.hasSubmit)throw new Error('Chưa tới trang Gửi của Google.');
+        r=await this.save({...r,manualTakeover:true,autoContinue:false});
+        this.manualSubmission={runId,documentKey};
+      }
+      try{await this.bridge.request('CONTROL',r,{action:'RESUME'});}catch(error){this.manualSubmission=undefined;throw error;}
+      return {ok:true};
+    });}finally{this.manualBusy=false;void this.pageLoaded(tabId).catch(()=>{});}
   }
   async execution():Promise<ExecutionView|null>{
     const r=await this.run();if(!r||ended(r))return null;

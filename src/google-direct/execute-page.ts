@@ -51,6 +51,9 @@ export interface PagePost {
   http?:boolean;
   route?:number[];
   questionLabels?:Record<string,string>;
+  native?:boolean;
+  manualReady?:boolean;
+  validateOnly?:boolean;
 }
 export interface FinalPostResult {status:number;received:boolean;message:string}
 export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult;error?:string}> {
@@ -63,7 +66,9 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
   const account = (document.querySelector('[role="checkbox"][aria-label*="@"]')?.getAttribute('aria-label') ?? original.innerText ?? original.textContent ?? '').match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? '';
   if (!request.account || account.toLowerCase() !== request.account.toLowerCase()) throw new Error('Tài khoản Google đã thay đổi.');
   if(document.documentElement.dataset.hanuDirectStopped)throw new Error('Đã dừng trước khi gửi request.');
-  const source = new FormData(document.querySelector<HTMLFormElement>('#hanuDirectState')??original), body = new URLSearchParams();
+  const prepared=request.manualReady?document.querySelector<HTMLFormElement>('#hanuDirectManualReady'):undefined;
+  if(request.manualReady&&prepared?.dataset.document!==request.documentKey)throw new Error('Không còn đúng câu trả lời vừa được Google kiểm tra.');
+  const source = new FormData(prepared??document.querySelector<HTMLFormElement>('#hanuDirectState')??original), body = new URLSearchParams();
   for (const [key,value] of source) if (typeof value === 'string') body.append(key,value);
   // Keep Google's current upload references and partialResponse verbatim.
   // Never synthesize a Drive ID from local attachment metadata.
@@ -104,6 +109,25 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
   body.set('fvv',body.get('fvv') || '1');
   body.delete('back');body.delete('continue');body.delete('submit');
   if (!request.final) body.set('continue','1');
+  if(request.final&&request.native){
+    if(document.getElementById('hanuDirectState'))throw new Error('Cần khôi phục trang Google thật trước khi Gửi.');
+    for(const [name,value]of request.entries)if(!source.getAll(name).includes(value))throw new Error('Dữ liệu trên trang Google chưa khớp dữ liệu đã kiểm tra.');
+    if(request.validateOnly)return {scheduled:true};
+    if(prepared){
+      document.documentElement.dataset.hanuDirectPost=request.requestId;
+      prepared.method='POST';prepared.action=action.href;prepared.target='_self';
+      HTMLFormElement.prototype.submit.call(prepared);return {scheduled:true};
+    }
+    const submit=[...original.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(b=>/^(gửi|submit)$/i.test(b.textContent?.normalize('NFC').trim()??'')&&b.getBoundingClientRect().width>0);
+    if(submit.length!==1)throw new Error('Không xác định duy nhất nút Gửi của Google.');
+    document.documentElement.dataset.hanuDirectPost=request.requestId;
+    // The recovery guard consumes this one-shot permit. A native click keeps
+    // Google's real confirmation/validation page available to the user.
+    document.documentElement.dataset.hanuDirectNativePermit='1';submit[0].click();
+    delete document.documentElement.dataset.hanuDirectNativePermit;
+    return {scheduled:true};
+  }
+  if(request.validateOnly)return {scheduled:true};
   if(request.final||request.http){
     if(request.final)body.set('submit','Submit');
     // Same-origin fetch keeps Google's authenticated upload session but does
@@ -245,8 +269,7 @@ export function resetExecutionPage():void {
   delete document.documentElement.dataset.hanuDirectStopped;
 }
 
-// Only used on the upload section: Google must commit its own file/draft state.
-// Other sections continue to use prepared HTTP data without filling controls.
+// Used from upload onward so the real Google page is always recoverable.
 export function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):{done?:boolean;x?:number;y?:number;keys?:string[]} {
   const norm=(s:string)=>s.normalize('NFC').replace(/\s+/g,' ').trim();
   const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
