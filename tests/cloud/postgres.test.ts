@@ -3,6 +3,7 @@ import { databaseFixture, users, extension } from './fixture';
 import { Coordinator } from '../../manager/server/coordinator';
 import { digest } from '../../manager/server/store';
 import type { RunState } from '../../src/shared';
+import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../../src/google-direct/schema';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -68,6 +69,24 @@ it('preserves confirmed submissions when a profile-wide Stop is acknowledged',as
  await a.store.acknowledgeStop(a.sessionId,group.id,{execution:null});
  expect((await a.store.session(a.sessionId)).run).toMatchObject({status:'completed',submitAttempted:true});
  expect(await a.store.blocked(a.sessionId,'fixture-form')).toBe(true);
+});
+it('repeats confirmed Direct LAB runs through preflight, durable start and submit grant, but fences uncertain results',async()=>{
+ const f=await setup(),a=await f.pair(),c=new Coordinator(a.store,undefined,true);
+ c.peers.set(a.sessionId,{} as any);
+ c.command=async(_id,kind)=>kind==='PING'?{capabilities:['googleDirect']}:{};
+ const begin=async()=>{
+   const g=await c.start([a.sessionId],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
+   const s=await a.store.session(a.sessionId);s.run!.formId=DIRECT_LAB_FORM_ID;await a.store.saveSession(s);return g;
+ };
+ const first=await begin();await a.store.acquireSubmit(a.sessionId,first.id,DIRECT_LAB_FORM_ID);
+ await a.store.resolve(a.sessionId,first.id,'received');
+ expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID)).toBe(true);
+ expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID,'direct')).toBe(false);
+ const second=await begin();await a.store.acquireSubmit(a.sessionId,second.id,DIRECT_LAB_FORM_ID);
+ await expect(a.store.acquireSubmit(a.sessionId,second.id,DIRECT_LAB_FORM_ID)).rejects.toThrow('khóa');
+ expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID,'direct')).toBe(true);
+ await expect(begin()).rejects.toThrow('khóa');
+ expect((await a.store.history(a.sessionId)).find(r=>r.runId===first.id)).toMatchObject({status:'completed',submitAttempted:true});
 });
 
 it('persists locks and pauses unfinished runs after recovery; relinking preserves the profile ID', async () => {

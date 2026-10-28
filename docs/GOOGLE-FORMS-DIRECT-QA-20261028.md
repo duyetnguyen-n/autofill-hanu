@@ -1,5 +1,19 @@
 # Google Forms Direct — Chrome Windows, 28/10/2026
 
+## Cập nhật 1.9.6 — chạy lại sau khi dọn phản hồi LAB
+
+Khóa `received` của lượt LAB thành công vẫn được lưu trong lịch sử, nhưng
+không chặn **lượt Direct mới được chủ động bắt đầu** trên hai LAB trong
+allowlist. Backend áp dụng cùng quy tắc ở preflight, giao dịch bắt đầu và
+giao dịch cấp quyền gửi. Chạy lại riêng profile và đổi/chạy lại link HSK đều
+áp dụng. Khóa chưa rõ kết quả vẫn chặn; một runId không được nhận quyền gửi
+lần hai. Classic và form ngoài allowlist giữ nguyên quy tắc chống gửi trùng.
+
+Đây là sửa backend/UI; extension Online 1.9.5 đang mở vẫn tương thích, không
+cần Reload extension để nhận sửa đổi sau khi backend được triển khai.
+Ghi chú giữ khóa ở phần dọn dữ liệu bên dưới mô tả trạng thái bản 1.9.5 trước
+sửa lỗi này; lịch sử đã gửi được giữ nguyên, không đổi thành “chưa nhận”.
+
 ## Phạm vi
 
 Kiểm tra trên Chrome thật: profile quản lý `nguyentheduyet.mtp`, profile gửi

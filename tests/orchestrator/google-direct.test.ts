@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {Store} from '../../manager/server/store';
 import {Coordinator} from '../../manager/server/coordinator';
 import {emptyProfile} from '../../src/rules';
-import {DIRECT_LAB_URL} from '../../src/google-direct/schema';
+import {DIRECT_LAB_URL,DIRECT_LAB_FORM_ID} from '../../src/google-direct/schema';
 const stores:Store[]=[];
 afterEach(()=>{for(const s of stores.splice(0))s.close();});
 function fixture(direct=true){
@@ -47,4 +47,36 @@ it('retains the chosen engine through a scheduled manual link and group Stop',as
 it('does not reuse the same request ID to silently change engines',async()=>{
  const f=fixture();await f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,'same-request-id');
  await expect(f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,'same-request-id',undefined,undefined,'direct')).rejects.toThrow('thao tác khác');
+});
+it('allows fresh and restarted Direct LAB runs after confirmed receipt, preserving old results',async()=>{
+ const f=fixture();
+ const first=await f.c.start(['one'],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
+ const s=f.store.session('one');s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
+ f.store.acquireSubmit('one',first.id,DIRECT_LAB_FORM_ID);f.store.resolve('one',first.id,'received');
+ expect(f.store.blocked('one',DIRECT_LAB_FORM_ID)).toBe(true);
+ expect(f.store.blocked('one',DIRECT_LAB_FORM_ID,'direct')).toBe(false);
+ const second=await f.c.restart('one',first.id,'restart-lab-received');
+ expect(second.id).not.toBe(first.id);expect(second.engine).toBe('direct');
+ const next=f.store.session('one');next.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(next);
+ f.store.acquireSubmit('one',second.id,DIRECT_LAB_FORM_ID);
+ expect(f.store.history('one').find(r=>r.runId===first.id)).toMatchObject({status:'completed',submitAttempted:true});
+ expect(()=>f.store.acquireSubmit('one',second.id,DIRECT_LAB_FORM_ID)).toThrow();
+ expect(f.store.blocked('one',DIRECT_LAB_FORM_ID,'direct')).toBe(true);
+});
+it('keeps unresolved LAB submissions blocked and never applies repeat rules to classic',async()=>{
+ const f=fixture();const first=await f.c.start(['one'],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
+ const s=f.store.session('one');s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
+ f.store.acquireSubmit('one',first.id,DIRECT_LAB_FORM_ID);
+ await expect(f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow();
+ f.store.resolve('one',first.id,'received');
+ await expect(f.c.start(['one'],DIRECT_LAB_URL,'test')).rejects.toThrow('khóa');
+});
+it('changes/repeats a scheduled LAB link after a completed Live run without asking for manual resolution',async()=>{
+ const f=fixture();await f.c.scheduler.arm({ids:['one'],mode:'live',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL}});
+ await f.c.scheduler.tick();await vi.waitFor(()=>expect(f.c.scheduler.value?.members[0].status).toBe('started'));
+ const s=f.store.session('one'),first=s.run!.runId!;s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
+ f.store.acquireSubmit('one',first,DIRECT_LAB_FORM_ID);f.store.resolve('one',first,'received');
+ expect(await f.c.scheduler.replace('4',DIRECT_LAB_URL)).toEqual([{id:'one',ok:true}]);
+ await vi.waitFor(()=>expect(f.store.session('one').run?.runId).not.toBe(first));
+ expect(f.store.session('one').run).toMatchObject({engine:'direct',mode:'live',status:'running',submitAttempted:false});
 });

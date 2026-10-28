@@ -9,6 +9,7 @@ import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recover
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 import {RegistrationScheduler} from './registration-scheduler';
+import {canRepeatCompletedLab} from '../../src/google-direct/repeat';
 import {bindHskAnswer,hskVerificationCandidates,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
@@ -72,7 +73,7 @@ export class Coordinator {
         const group=await store.groupForRequest?.(member.requestId);
         const expected=member.runId??group?.id;if(!expected)return;
         if(current.run?.runId!==expected)throw new Error('Profile đã chuyển sang lượt khác. Giữ nguyên lượt hiện tại.');
-        if(current.run.submitAttempted)throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
+        if(current.run.submitAttempted&&!canRepeatCompletedLab(current.run))throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
         await this.control(member.id,'STOP',current.run.runId);
       },
       start:(id,url,s,guard)=>this.start([id],url,s.mode,initialHskQuestion(s,s.members.find(m=>m.id===id)!.level),s.members.find(m=>m.id===id)!.requestId,undefined,guard,s.engine),
@@ -217,7 +218,7 @@ export class Coordinator {
         if(message.kind==='AUTO_RESUME'&&message.source==='returned_submit'){const result=await this.retryReturnedForm(id,message.runId,message.epoch,message.retries);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='AUTO_RESUME'){const result=await this.control(id,'RESUME',message.runId,message.source==='reconnect'?'reconnect':message.source==='page_ready'?'page_ready':true);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
         if(message.kind==='CONTROL'){if(s.run?.runId!==message.runId||!['PAUSE','RESUME','STOP'].includes(message.action))throw new Error('Lệnh điều khiển không hợp lệ.');const result=await this.control(id,message.action,message.runId);this.peers.get(id)?.send(JSON.stringify({type:'REPLY',requestId:message.requestId,ok:true,result}));return;}
-        if(message.kind==='CHECK_FORM'){if(s.run?.runId!==message.runId||!(await this.store.group(message.runId)).members.includes(id)||await this.store.blocked(id,message.formId))throw new Error('Form này có khóa gửi chưa được giải quyết.');}
+        if(message.kind==='CHECK_FORM'){if(s.run?.runId!==message.runId||!(await this.store.group(message.runId)).members.includes(id)||await this.store.blocked(id,message.formId,s.run?.engine))throw new Error('Form này có khóa gửi chưa được giải quyết.');}
         else if(message.kind==='SUBMIT'){
           if(this.runBuffer?.has(id)&&!this.runBuffer.canSubmit(id,message.runId))throw new Error('Lượt đã dừng hoặc không được phép gửi.');
           await this.store.acquireSubmit(id,message.runId,message.formId);this.runBuffer?.submitted(id);this.changed();
@@ -390,11 +391,11 @@ export class Coordinator {
       await this.runBuffer?.flush(id);const s=await this.store.session(id);
       if(expectedRunId&&s.run?.runId!==expectedRunId)throw new Error('Lượt đã thay đổi. Đọc lại trạng thái trước khi chạy lại.');
       if(!s.run?.runId||!s.run.url||!allowedFormUrl(s.run.url))throw new Error('Chưa có link của lượt cũ. Nhập link rồi Bắt đầu.');
-      if(s.run.submitAttempted||await this.store.blocked(id,s.run.formId||canonicalFormId(s.run.url)||''))throw new Error('Lượt đã có khóa gửi. Xác minh kết quả trước khi chạy lại.');
+      if(s.run.submitAttempted&&!canRepeatCompletedLab(s.run)||await this.store.blocked(id,s.run.formId||canonicalFormId(s.run.url)||'',s.run.engine))throw new Error('Lượt đã có khóa gửi. Xác minh kết quả trước khi chạy lại.');
       if(!this.peers.has(id)||s.conflict)throw new Error(s.conflict?'Giải quyết xung đột hồ sơ trước khi chạy lại.':'Profile chưa kết nối.');
       const stopping=this.control(id,'STOP',s.run.runId),intent=this.intents.get(id);await stopping;
       const stopped=await this.store.session(id);
-      if(stopped.run?.runId!==s.run.runId||stopped.run?.status!=='idle'||stopped.execution)throw new Error('Chưa xác nhận profile đã dừng. Đối chiếu trạng thái trước khi chạy lại.');
+      if(stopped.run?.runId!==s.run.runId||stopped.run?.status!=='idle'&&!canRepeatCompletedLab(stopped.run)||stopped.execution)throw new Error('Chưa xác nhận profile đã dừng. Đối chiếu trạng thái trước khi chạy lại.');
       if(!stopped.synced){const imported=await this.pull(id);if(imported.conflict)throw new Error('Hồ sơ đã thay đổi. Chọn bản cần giữ trước khi chạy lại.');}
       if(this.intents.get(id)!==intent)throw new Error('Đã hủy Chạy lại vì có lệnh Dừng hoặc Tạm dừng mới.');
       return this.start([id],s.run.url,s.run.mode,s.run.finalQuestion,requestId,s.run.runId,undefined,s.run.engine);
@@ -441,7 +442,7 @@ export class Coordinator {
         const s=await this.store.session(member);
         if(!this.peers.has(member)||!s.synced||!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error('Cần kết nối, đồng bộ và gán email Google.');
         const form=canonicalFormId(url);
-        if(form&&await this.store.blocked(member,form)||!form&&s.run?.submitAttempted&&s.run.status!=='idle')throw new Error('Xác minh khóa gửi trước khi chạy form này.');
+        if(form&&await this.store.blocked(member,form,engine)||!form&&s.run?.submitAttempted&&s.run.status!=='idle')throw new Error('Xác minh khóa gửi trước khi chạy form này.');
         if(s.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');
         if(s.run&&!['idle','completed','ready_to_submit','failed'].includes(s.run.status)&&!canStartSeparateTest(s.run,url,mode))throw new Error('Hãy dừng lượt hiện tại hoặc xác minh kết quả trước.');
         const hashes:Record<string,string>={};

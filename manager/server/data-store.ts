@@ -26,7 +26,7 @@ export interface DataStore {
   authorizeResume?(id: string): Result<void>;
   cancelResume?(id: string, runId: string): Result<void>;
   acceptProgress(id: string, run: RunState): Result<boolean>;
-  blocked(session: string, form: string): Result<boolean>;
+  blocked(session: string, form: string, engine?:import('../../src/shared').FormEngine): Result<boolean>;
   authorizeReturnedRetry?(session:string,run:string,epoch:string,retries:number):Result<void>;
   acquireSubmit(session: string, run: string, form: string, progress?: RunState): Result<void>;
   resolve(session: string, run: string, result: 'received' | 'not_received'): Result<void>;
