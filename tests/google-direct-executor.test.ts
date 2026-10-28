@@ -18,7 +18,7 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
   const history=[0,1,2,3,5,6,7,8];
   const pages:ExecutionPage[]=history.map((n,i)=>({url:DIRECT_LAB_URL,documentKey:`doc-${i}`,script,history:history.slice(0,i+1),account:options.accountChanged&&i>0?'other@example.test':'fixture@example.test',hasForm:true,hasNext:i<history.length-1,hasSubmit:i===history.length-1,text:'Fixture form',blocked:false}));
   const confirmation:ExecutionPage={...pages[0],documentKey:'confirmed',script:undefined,history:[],account:'',hasForm:false,hasNext:false,hasSubmit:false,text:options.uncertain?'Thank you':'Câu trả lời của bạn đã được ghi lại'};
-  const executeScript=vi.fn(async({func,args}:any)=>{
+  const executeScript=vi.fn(async({func,args}:any):Promise<any>=>{
     if(func===readExecutionPage)return [{result:submitted?confirmation:pages[index]??confirmation}];
     if(func===prepareUploadAnswer)return [{result:{done:true}}];
     if(func===resetExecutionPage)return [{result:undefined}];
@@ -68,6 +68,12 @@ it('uses a fresh foreground tab for every explicitly started run',async()=>{
   expect(update).toHaveBeenCalledWith(99,{active:true});
   expect(f.executeScript.mock.calls.every(([request])=>request.target.tabId===99)).toBe(true);
 });
+it('waits for a menu commit after several asynchronous open/key actions instead of failing immediately after the last action',async()=>{
+  vi.useFakeTimers();const f=fixture();const original=f.executeScript.getMockImplementation()!;let actions=0;
+  f.executeScript.mockImplementation(async request=>request.func===prepareUploadAnswer&&++actions<=6?[{result:{keys:['Home','ArrowDown','Enter']}}]:original(request));
+  const keys=vi.spyOn(DirectPageDialogs.prototype,'keys').mockResolvedValue();
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});expect(keys).toHaveBeenCalledTimes(6);
+});
 function form(){
   vi.stubGlobal('location',new URL(DIRECT_LAB_URL));
   document.body.innerHTML=`<form action="${DIRECT_LAB_URL.replace('viewform','formResponse')}">fixture@example.test<input type="hidden" name="fbzx" value="session-only"><input type="hidden" name="partialResponse" value=""><input type="hidden" name="pageHistory" value="0"></form>`;
@@ -110,6 +116,38 @@ it('handles only the current run/tab beforeunload dialog and cancels it after St
   controller.abort();listener({tabId:42},'Page.javascriptDialogOpening',{type:'beforeunload'});
   expect(sendCommand).toHaveBeenLastCalledWith({tabId:42},'Page.handleJavaScriptDialog',{accept:false});
   await dialogs.close();expect(removeListener).toHaveBeenCalledWith(listener);expect(detach).toHaveBeenCalledWith({tabId:42});
+});
+it('dispatches a complete trusted pointer sequence with the pressed button state Google menus require',async()=>{
+  const sendCommand=vi.fn(async(_source:unknown,_method:string,_params:unknown)=>{});
+  vi.stubGlobal('chrome',{debugger:{sendCommand}});
+  await new DirectPageDialogs(42,new AbortController().signal).click(100,200);
+  expect(sendCommand.mock.calls.map(([,method,params])=>[method,params])).toEqual([
+    ['Input.dispatchMouseEvent',{type:'mouseMoved',x:100,y:200,button:'none',buttons:0,pointerType:'mouse'}],
+    ['Input.dispatchMouseEvent',{type:'mousePressed',x:100,y:200,button:'left',buttons:1,clickCount:1,pointerType:'mouse'}],
+    ['Input.dispatchMouseEvent',{type:'mouseReleased',x:100,y:200,button:'left',buttons:0,clickCount:1,pointerType:'mouse'}]
+  ]);
+});
+it('releases held mouse/key input and does not commit Enter when Stop arrives during selection',async()=>{
+  const controller=new AbortController();
+  const sendCommand=vi.fn(async(_source:unknown,_method:string,params:any)=>{if(params.type==='mousePressed'||params.type==='keyDown')controller.abort();});
+  vi.stubGlobal('chrome',{debugger:{sendCommand}});
+  await expect(new DirectPageDialogs(42,controller.signal).click(100,200)).rejects.toThrow('dừng');
+  expect(sendCommand.mock.calls.at(-1)?.[2]).toMatchObject({type:'mouseReleased',x:-1,y:-1,buttons:0});
+  sendCommand.mockClear();const keysController=new AbortController();
+  sendCommand.mockImplementation(async(_source,_method,params)=>{if(params.type==='keyDown')keysController.abort();});
+  await expect(new DirectPageDialogs(42,keysController.signal).keys(['Home','ArrowDown','Enter'])).rejects.toThrow('dừng');
+  expect(sendCommand.mock.calls.map(([, ,p])=>[p.type,p.key])).toEqual([['keyDown','Home'],['keyUp','Home']]);
+});
+it('recognizes a dropdown value committed in a hidden input outside its card',()=>{
+  document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox"></div></div><input type="hidden" name="entry.123" value="Nam"></form>';
+  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({done:true});
+});
+it('commits the requested menu row by keyboard and does not treat a highlighted row as a committed answer',()=>{
+  document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox" aria-expanded="true"><div role="option" data-value="">Choose</div><div role="option" data-value="Nam" aria-selected="true">Nam</div></div></div><input name="entry.123" value=""></form>';
+  const option=document.querySelector<HTMLElement>('[role="option"]')!;
+  option.scrollIntoView=vi.fn();vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:40} as DOMRect);
+  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({keys:['Home','ArrowDown','Enter']});
+  expect(option.scrollIntoView).not.toHaveBeenCalled();
 });
 it('rejects final submission without a Google file reference and preserves a genuine serialized reference',async()=>{
   vi.useFakeTimers();let posted='';const fetch=vi.fn(async(_url,options)=>{posted=String(options.body);return {status:200,ok:true,text:async()=>'<html><body>Câu trả lời của bạn đã được ghi lại</body></html>'};});vi.stubGlobal('fetch',fetch);

@@ -20,9 +20,25 @@ export class DirectPageDialogs {
     await chrome.debugger.sendCommand(this.source,'Emulation.setFocusEmulationEnabled',{enabled:true});
   }
   async click(x:number,y:number){
-    for(const type of ['mousePressed','mouseReleased']){if(this.signal.aborted)throw new Error('Đã dừng.');await chrome.debugger.sendCommand(this.source,'Input.dispatchMouseEvent',{type,x,y,button:'left',clickCount:1});}
+    if(this.signal.aborted)throw new Error('Đã dừng.');
+    await chrome.debugger.sendCommand(this.source,'Input.dispatchMouseEvent',{type:'mouseMoved',x,y,button:'none',buttons:0,pointerType:'mouse'});
+    if(this.signal.aborted)throw new Error('Đã dừng.');
+    await chrome.debugger.sendCommand(this.source,'Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1,pointerType:'mouse'});
+    // Release a held press even when Stop arrives, outside the target then.
+    const active=!this.signal.aborted;
+    await chrome.debugger.sendCommand(this.source,'Input.dispatchMouseEvent',{type:'mouseReleased',x:active?x:-1,y:active?y:-1,button:'left',buttons:0,clickCount:1,pointerType:'mouse'});
+    if(!active)throw new Error('Đã dừng.');
   }
   posting(value:boolean){this.pending=value;}
+  async keys(keys:string[]){
+    for(const key of keys){
+      if(this.signal.aborted)throw new Error('Đã dừng.');
+      const windowsVirtualKeyCode=key==='Home'?36:key==='ArrowDown'?40:key==='Enter'?13:0;
+      if(!windowsVirtualKeyCode)throw new Error('Phím lựa chọn không hợp lệ.');
+      await chrome.debugger.sendCommand(this.source,'Input.dispatchKeyEvent',{type:'keyDown',key,code:key,windowsVirtualKeyCode});
+      await chrome.debugger.sendCommand(this.source,'Input.dispatchKeyEvent',{type:'keyUp',key,code:key,windowsVirtualKeyCode});
+    }
+  }
   async close(){
     this.pending=false;
     if(!this.attached)return;

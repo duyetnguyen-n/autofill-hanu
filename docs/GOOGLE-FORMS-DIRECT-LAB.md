@@ -21,7 +21,8 @@ Hiện executor thử nghiệm chỉ chấp nhận hai form LAB do người dùn
 
 Đáp án lệ phí `1234567` chỉ là dữ liệu giả của LAB. Không suy ra đáp án từ biểu
 thức validation. Test dừng trước request Gửi; Live gửi phản hồi thật lên LAB.
-Chưa mở cho form đăng ký HANU thật, chưa triển khai website production.
+Chưa mở cho form đăng ký HANU thật. Sau khi người dùng triển khai tính năng lên
+website, lượt kiểm tra production và bản sửa tiếp theo được ghi ở cuối báo cáo.
 
 ## Tách phần thử nghiệm
 
@@ -87,7 +88,7 @@ Bằng chứng được lưu cục bộ trong `test-results/google-direct-fix/`:
 `owner-response-1.txt`, `owner-response-2.txt`, `owner-fee-response-4.txt`, ảnh
 chụp trang chủ form/Drive và giao diện. Không xuất cookie, token hay HAR.
 
-## Kiểm tra và giới hạn nghiệm thu
+## Kiểm tra trước khi người dùng triển khai website
 
 - 94 file test, **857 test qua** với `npm test -- --maxWorkers=2`.
 - `npm run typecheck`, build extension local/Online, manager và cloud server/UI
@@ -109,3 +110,71 @@ Các nghiên cứu trước vẫn ở [báo cáo giao thức ban đầu](GOOGLE-
 [các thử POST ban đầu](GOOGLE-FORMS-LIVE-POST-20261027.md). Kết luận âm ở các
 báo cáo đó chỉ áp dụng cho những cách gửi cũ đã thử, không phủ định các lượt
 thành công có session/upload hợp lệ ở trên.
+
+## Kiểm tra bản đã triển khai — 28/10/2026
+
+Kiểm tra trên `https://hanu-autofill.onrender.com/google-direct`, Chrome đang
+liên kết với website và extension Online build từ source của bản vá. Server
+production giữ bản người dùng đã deploy trong lúc kiểm tra; không thay bằng
+server fixture. Chỉ một Chrome profile đang kết nối. Hồ sơ và ảnh gốc được
+giữ trong phiên chẩn đoán, tạm thay bằng dữ liệu giả, rồi khôi phục và đồng bộ
+lại đầy đủ sau khi kết thúc. Không gửi form HANU gốc.
+
+### Lỗi tái hiện và bản sửa
+
+1. **Lịch không chuẩn bị được sau một lượt Direct.** `PREPARE_FORM` không có
+   run ID bị chuyển nhầm vào `ManagedDirect.control`, trả lỗi “Điều khiển thử
+   nghiệm chưa hỗ trợ lệnh này”. Lệnh chuẩn bị nay đi qua bộ chuẩn bị tab dùng
+   chung; vẫn chặn khi một lượt Direct hoặc classic đang giữ profile.
+2. **Kẹt ở giới tính/thời gian học tại trang ảnh.** Google đặt giá trị dropdown
+   đã commit trong input ẩn bên ngoài card. `aria-selected` khi menu mở chỉ có
+   thể là dòng đang được trỏ tới. Bản sửa mở menu, chọn đúng dòng bằng phím
+   Home/ArrowDown/Enter của Google và chỉ công nhận khi input ẩn có đúng giá
+   trị. Không cuộn popup rồi bấm bằng tọa độ cũ.
+3. **Báo lỗi ngay sau thao tác cuối.** Vòng lặp sáu lần có thể kết thúc ngay
+   sau khi Google vừa nhận lựa chọn, chưa đọc lại giá trị. Thay bằng thời hạn
+   chờ xác nhận 5 giây, thoát ngay khi đúng; không thêm chờ cố định cho cả lượt.
+4. **Trùng số thứ tự trạng thái đầu lượt.** Executor nhận bản run trước lần
+   lưu đầu tiên, khiến hai cập nhật cùng `eventSeq=1`. Nay dùng run đã lưu để
+   giữ số thứ tự tăng liên tục khi website nhận tiến độ.
+5. **Sự kiện nhập và Dừng.** Gửi đủ trạng thái chuột; nếu Dừng đến giữa thao
+   tác thì nhả chuột ngoài mục tiêu. Chuỗi phím kiểm tra hủy trước từng phím,
+   nhả phím đang giữ và không tiếp tục tới Enter sau khi bị hủy.
+
+Không sửa `src/content.ts` hay logic điền/gửi của engine classic. Phần dùng
+chung chỉ đổi cách định tuyến lệnh chuẩn bị và kiểm tra profile đang bị giữ.
+
+### Kết quả quan sát được
+
+| Luồng | Bằng chứng |
+|---|---|
+| Chuẩn bị lịch HSK sau Direct | Tab chờ được mở, profile báo đã chuẩn bị; nhận link LAB rồi phát START qua extension |
+| Test và đáp án bổ sung | Đến câu lệ phí thì chờ khi thiếu đáp án; nhập đáp án và Tiếp tục đưa run về `ready_to_submit`, `submitAttempted=false` |
+| Tạm dừng nhóm | API production trả thành công; extension báo `paused`, `active=false`, chưa cấp quyền gửi |
+| Tiếp tục rồi Dừng nhóm | Cả hai lệnh được xác nhận; kết quả `idle`, `execution=null`, `submitAttempted=false` |
+| Live từ giao diện lịch HSK | Chuẩn bị → chờ/cấp link → upload → ghép đáp án HSK → cấp quyền Gửi → Google xác nhận; run `fc216aae-6adc-4956-af6c-8c5400ccde10` về `completed`, `execution=null` |
+| Đối chiếu chủ LAB lệ phí | Số phản hồi tăng từ 4 lên 5; phản hồi 5 có tên/chủ tài khoản `NGHIEN CUU QUAN LY`, CCCD giả `000000000000`, email `fixture@gmail.com`, giới tính Nam, thời gian học 1 năm, đáp án `1234567`; mở được ảnh fixture trên Drive |
+| Khôi phục | So sánh toàn bộ profile với bản trước khi thử: trùng khớp; đã đồng bộ, không còn execution; lịch LAB đã hủy, giao diện về Test và bỏ chọn profile |
+
+Lượt Live trên mất **30,236 giây**, đo từ `startedAt` đến trạng thái hoàn tất
+của run trên website. Bao gồm mở trang, tải ảnh, điều hướng, tự ghép đáp án HSK
+và xác nhận gửi; không gồm thời gian lịch chờ được cấp link. Đây là một mẫu với
+PNG 1×1, không phải benchmark ảnh giấy tờ thực hoặc cam kết tốc độ.
+
+Các nhãn tên, giấy tờ, ngày sinh và điện thoại trong LAB hiện dùng Morse.
+Hồ sơ giả được ánh xạ rõ theo entry của LAB; không suy đoán tên trường hoặc
+mức lệ phí. Các lượt thiếu ánh xạ/giá trị không qua validation đã dừng trước
+Gửi. Điều này không chứng minh form thật có cấu trúc bất kỳ đều được hỗ trợ.
+
+Kiểm tra bản vá: **95 file / 864 test qua**, `npm run typecheck` qua, build
+extension local, extension Online và cloud server/UI qua. Có regression test
+cho định tuyến PREPARE_FORM, giá trị dropdown nằm ngoài card, dòng highlight
+chưa commit, xác nhận trễ, hủy chuột/phím và số thứ tự trạng thái.
+
+Bằng chứng cục bộ ở `test-results/google-direct-deployed-20261028/` gồm xác
+nhận Live, phản hồi 5 phía chủ form, giá trị dropdown, ảnh fixture trên Drive,
+kết quả run và xác nhận khôi phục. Không xuất cookie, token hay HAR.
+
+Chưa kiểm tra nhiều tài khoản Google chạy đồng thời, Windows, phiên hết hạn,
+CAPTCHA hoặc ảnh dung lượng thực. Bản vá nằm chủ yếu trong extension: deploy
+website xong vẫn cần cập nhật/reload extension ở từng Chrome profile sử dụng.

@@ -18,7 +18,11 @@ let runWriteQueue=Promise.resolve();
 const endedExecution=(run:RunState)=>['idle','completed','failed','ready_to_submit','submit_uncertain'].includes(run.status);
 function writeState<T>(fn:()=>Promise<T>):Promise<T>{const work=runWriteQueue.then(fn);runWriteQueue=work.then(()=>undefined,()=>undefined);return work;}
 async function acquireLease(runId:string,tabId=-1,managed=false){return navigator.locks.request('hanu-profile-start',()=>writeState(async()=>{if((await chrome.storage.local.get('googleDirectLease')).googleDirectLease?.active)throw new Error('Google Forms thử nghiệm đang giữ profile. Dừng lượt đó trước.');const owner=await repairLeaseNow();if(owner&&owner.runId!==runId)throw new Error('Profile đang có lượt chạy. Bấm Xem form hoặc Dừng trên hàng profile để xử lý lượt đang giữ profile.');await chrome.storage.local.set({executionLease:{runId,tabId,managed,acquiredAt:now(),active:true}});}));}
-async function directSelected(c?:Command){const d=await direct.run();if(!d)return false;if(c?.runId)return c.runId===d.runId;const classic=await getManaged();return !classic||d.updatedAt>classic.updatedAt;}
+async function directSelected(c?:Command){
+  // Profile preparation precedes engine selection, even after a Direct run.
+  if(c?.kind==='PREPARE_FORM')return false;
+  const d=await direct.run();if(!d)return false;if(c?.runId)return c.runId===d.runId;const classic=await getManaged();return !classic||d.updatedAt>classic.updatedAt;
+}
 
 const native = createNativeClient({
   capabilities:['googleDirect'],
@@ -1061,6 +1065,7 @@ async function stopProfile(expectedRunId?:string){
 }
 function isPreparedTab(tab:chrome.tabs.Tab|undefined):tab is chrome.tabs.Tab{const url=chrome.runtime.getURL('ready.html');return !!tab&&(tab.pendingUrl?tab.pendingUrl===url:tab.url===url&&tab.status!=='loading');}
 async function prepareManagedTab(){
+  if(await direct.execution())throw new Error('Lượt thử nghiệm còn giữ profile. Dừng trước khi chuẩn bị tab.');
   if(await executionSnapshot())throw new Error('Lượt cũ còn giữ profile. Dừng trước khi chuẩn bị tab.');
   const stored=(await chrome.storage.local.get('preparedFormTab')).preparedFormTab;
   const previous=typeof stored==='number'?await chrome.tabs.get(stored).catch(()=>undefined):undefined;

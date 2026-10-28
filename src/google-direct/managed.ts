@@ -40,12 +40,12 @@ export class ManagedDirect {
     const run:RunState={engine:'direct',runId:c.runId,sessionId,managed:true,profileSnapshot:structuredClone(profile),profileRevision:Number(c.payload.revision),expectedEmail:String(c.payload.expectedEmail),
       url:String(c.payload.url),formId,tabId:-1,mode:c.payload.mode as 'test'|'live',status:'running',autoContinue:true,finalQuestion:c.payload.finalQuestion,
       filled:[],skipped:[],logs:[],submitAttempted:false,eventSeq:0,startedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-    await navigator.locks.request('hanu-profile-start',async()=>{
+    const saved=await navigator.locks.request('hanu-profile-start',async()=>{
       if(this.stopped.has(c.runId!))throw new Error('Lượt đã bị Dừng.');
       if((await chrome.storage.local.get('executionLease')).executionLease?.active)throw new Error('Google Forms cũ đang giữ profile. Dừng lượt đó trước.');
-      await this.save(run);
+      return this.save(run);
     });
-    this.launch(run,false);return (await this.run())!;
+    this.launch(saved,false);return (await this.run())!;
   }
   private launch(initial:RunState,resume:boolean){
     const controller=new AbortController();this.controller=controller;

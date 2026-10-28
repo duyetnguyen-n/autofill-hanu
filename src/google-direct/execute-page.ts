@@ -224,7 +224,7 @@ export function resetExecutionPage():void {
 
 // Only used on the upload section: Google must commit its own file/draft state.
 // Other sections continue to use prepared HTTP data without filling controls.
-export function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):{done?:boolean;x?:number;y?:number} {
+export function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):{done?:boolean;x?:number;y?:number;keys?:string[]} {
   const norm=(s:string)=>s.normalize('NFC').replace(/\s+/g,' ').trim();
   const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
   const roots=[...document.querySelectorAll<HTMLElement>('[role="listitem"],[data-item-id]')];
@@ -232,8 +232,9 @@ export function prepareUploadAnswer(input:{questionId:string;entryId:string;labe
   const cards=matches.filter(e=>!matches.some(other=>other!==e&&e.contains(other)));
   if(cards.length!==1)throw new Error(`Không xác định duy nhất câu upload: ${input.label}`);
   const card=cards[0];
-  const point=(e:HTMLElement)=>{e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();if(!visible(e))throw new Error('Điều khiển chưa hiển thị.');return {x:r.x+r.width/2,y:r.y+r.height/2};};
-  const named=card.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[name="entry.${input.entryId}"]`);
+  const point=(e:HTMLElement,scroll=true)=>{if(scroll)e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();if(!visible(e))throw new Error('Điều khiển chưa hiển thị.');return {x:r.x+r.width/2,y:r.y+r.height/2};};
+  // Forms stores committed select values in hidden inputs outside the card.
+  const named=card.closest('form')?.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[name="entry.${input.entryId}"]`);
   if(['text','textarea'].includes(input.kind)){
     const field=card.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea');
     if(!field)throw new Error('Không có ô nhập cho câu upload.');
@@ -247,9 +248,16 @@ export function prepareUploadAnswer(input:{questionId:string;entryId:string;labe
   }
   if(input.kind==='dropdown'){
     if(named?.value===input.value)return {done:true};
+    const list=card.querySelector<HTMLElement>('[role="listbox"]');if(!list)throw new Error('Không có danh sách tại trang upload.');
     const options=[...card.querySelectorAll<HTMLElement>('[role="option"]')].filter(e=>visible(e)&&norm(e.getAttribute('data-value')??e.textContent??'')===norm(input.value));
-    if(options.length===1)return options[0].getAttribute('aria-selected')==='true'?{done:true}:point(options[0]);
-    const list=card.querySelector<HTMLElement>('[role="listbox"]');if(!list)throw new Error('Không có danh sách tại trang upload.');return point(list);
+    if(list.getAttribute('aria-expanded')==='true'&&options.length===1){
+      const option=options[0],siblings=[...option.parentElement!.children].filter(e=>e.matches('[role="option"]')&&e.getAttribute('aria-disabled')!=='true'&&visible(e));
+      const offset=siblings.indexOf(option);if(offset<0)throw new Error('Không xác định được thứ tự lựa chọn tại trang upload.');
+      // aria-selected in an open Material menu is only the highlighted row.
+      // Commit with its native keyboard handler, then verify the hidden value.
+      option.focus();return {keys:['Home',...Array.from({length:offset},()=> 'ArrowDown'),'Enter']};
+    }
+    return point(list.querySelector<HTMLElement>('[jsname="LgbsSe"],[role="button"],button')??list);
   }
   throw new Error('Chưa hỗ trợ kiểu câu tại trang upload.');
 }

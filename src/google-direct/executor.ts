@@ -170,10 +170,11 @@ export class DirectExecutor {
             await input.onProgress('Google đã nhận đúng ảnh. Đang xác nhận trạng thái upload của Google.');
             for(const q of section.questions.filter(q=>q.kind!=='file')){
               const answer=plan.answers.find(a=>a.questionId===q.id)!;if(!answer.values.length&&!q.required)continue;
-              let done=false;
-              for(let attempt=0;attempt<6;attempt++){
+              let done=false;const answerDeadline=Date.now()+5000;
+              while(Date.now()<answerDeadline){
                 await guard();const state=(await chrome.scripting.executeScript({target:{tabId},func:prepareUploadAnswer,args:[{questionId:q.id,entryId:q.entryId!,label:q.label,kind:q.kind,value:answer.values[0]??''}]}))[0]?.result;
                 if(state?.done){done=true;break;}
+                if(state?.keys){await dialogs.keys(state.keys);await delay(100);continue;}
                 if(state?.x===undefined||state.y===undefined)throw new Error('Chưa chuẩn bị được câu ở trang upload.');
                 await dialogs.click(state.x,state.y);await delay(100);
               }

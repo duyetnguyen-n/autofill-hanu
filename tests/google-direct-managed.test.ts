@@ -28,6 +28,8 @@ it('uses separate run/lease storage and completes Test without granting submit o
   for(const key of Object.keys(before))expect(f.data[key]).toEqual(before[key]);
   expect(f.writes.every(w=>Object.keys(w).every(k=>['googleDirectManagedRun','googleDirectLease'].includes(k)))).toBe(true);
   expect(f.bridge.request).not.toHaveBeenCalled();expect(f.data.googleDirectLease.active).toBe(false);
+  const seq=f.bridge.state.mock.calls.map(([r])=>r.eventSeq);
+  expect(seq).toEqual([1,2,3,4]);
 });
 it('Stop aborts the running executor, awaits cancellation, releases the profile and rejects a stale Resume',async()=>{
   const f=fixture();let input!:DirectRunInput;
