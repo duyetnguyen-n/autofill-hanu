@@ -50,6 +50,7 @@ export interface PagePost {
   history?: number[];
   http?:boolean;
   route?:number[];
+  questionLabels?:Record<string,string>;
 }
 export interface FinalPostResult {status:number;received:boolean;message:string}
 export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult;error?:string}> {
@@ -123,7 +124,29 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
         const path=fields.get('pageHistory')??'',route=request.route;
         const next=path.split(',').map(Number),position=route?.indexOf(next.at(-1)!);
         const previous=String(source.get('pageHistory')??'').split(',').map(Number);
-        if(!route||position===undefined||position<0||path===previous.join(',')||next.join(',')!==route.slice(0,position+1).join(',')||position!==route.indexOf(previous.at(-1)!)+1||!fields.get('token')||!fields.get('fbzx')||!fields.get('partialResponse'))throw new Error('Google chưa xác nhận trang tiếp theo; dừng, không tự gửi lại.');
+        if(!route||position===undefined||position<0||path===previous.join(',')||next.join(',')!==route.slice(0,position+1).join(',')||position!==route.indexOf(previous.at(-1)!)+1||!fields.get('token')||!fields.get('fbzx')||!fields.get('partialResponse')){
+          // Read only visible error text from an inert string. Keep response
+          // values/tokens out of logs and do not insert returned HTML into DOM.
+          const errors:{questionId?:string;label?:string;message:string}[]=[];
+          const alerts:{depth:number;id:string;text:string[]}[]=[];let depth=0;
+          const inert=html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,'');
+          for(const piece of inert.match(/<[^>]*>|[^<]+/g)??[]){
+            if(/^<div\b/i.test(piece)){
+              depth++;const id=/\bid\s*=\s*["']([^"']*)["']/i.exec(piece)?.[1]??'';
+              if(/^i\.err\./.test(id)||/\brole\s*=\s*["']alert["']/i.test(piece))alerts.push({depth,id,text:[]});
+            }else if(/^<\/div\s*>/i.test(piece)){
+              for(let i=alerts.length-1;i>=0;i--)if(alerts[i].depth===depth){const a=alerts.splice(i,1)[0],message=decode(a.text.join(' ')).replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim();if(message){const questionId=a.id.startsWith('i.err.')?a.id.slice(6):undefined;errors.push({questionId,label:questionId?request.questionLabels?.[questionId]:undefined,message:message.slice(0,500)});}}
+              depth--;
+            }else if(!piece.startsWith('<'))for(const alert of alerts)alert.text.push(piece);
+          }
+          const words=decode(inert.replace(/<[^>]*>/g,' ')).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase().replace(/\s+/g,' ');
+          const draft=/ban nhap moi hon|more recent draft|newer draft/.test(words);
+          const login=!!response.url&&new URL(response.url).hostname==='accounts.google.com';
+          const diagnostic={kind:login?'login':draft?'draft_conflict':errors.length?'validation':'navigation',httpStatus:response.status,from:previous,to:next,missingFields:['token','fbzx','partialResponse'].filter(k=>!fields.get(k)),errors:errors.slice(0,5)};
+          const node=document.createElement('pre');node.id='hanuDirectFailure';node.hidden=true;node.textContent=JSON.stringify(diagnostic);document.getElementById(node.id)?.remove();document.body.append(node);
+          const detail=login?'Google yêu cầu đăng nhập lại.':draft?'Google báo có bản nháp mới hơn; chưa chuyển trang.':errors.length?errors.slice(0,5).map(e=>`${e.label??'Google Forms'}: ${e.message}`).join(' · '):path===previous.join(',')?'Google trả lại cùng trang để kiểm tra dữ liệu.':`Google trả trạng thái điều hướng khác dự kiến (${previous.join(',')} → ${path||'trống'}).`;
+          throw new Error(`${detail} Chưa gửi phản hồi; không tự gửi lại.`);
+        }
         const script=[...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]).find(s=>/^\s*(?:var\s+)?FB_PUBLIC_LOAD_DATA_\s*=/.test(s));
         if(!script)throw new Error('Không đọc được metadata trang tiếp theo.');
         const state=document.createElement('form');state.id='hanuDirectState';state.hidden=true;state.dataset.next=String(position<route.length-1);state.dataset.final=String(position===route.length-1);

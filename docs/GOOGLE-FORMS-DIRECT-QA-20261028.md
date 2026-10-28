@@ -103,3 +103,43 @@ Chạy lại riêng profile tạo nhóm mới và bảng HSK cũ không áp đá
 - Mã và bản build sửa UI link chưa được publish lên website; không ghi đè
   bản production trong lúc kiểm tra. Bản sửa dropdown có hiệu lực trên
   extension 1.9.5 đã được kiểm tra trực tiếp.
+
+## Kiểm tra lại lỗi sau upload, 15:57–16:02, bản 1.9.7
+
+Người dùng báo dừng ở trang 7 lúc 15:38 với thông báo chung
+“Google chưa xác nhận trang tiếp theo”. Lỗi này xảy ra trước request Gửi;
+không phải khóa gửi lại. Log cũ không lưu nguyên nhân từ response nên chưa
+thể xác định đó là validation, xung đột bản nháp hay thiếu trạng thái phiên.
+
+Bản 1.9.7 bổ sung phân loại lỗi chuyển trang và thông báo lỗi Google trả về,
+kèm tên câu hỏi nếu xác định được. Chỉ đọc chuỗi HTML như dữ liệu, không chèn
+HTML vào trang, không lưu token/partialResponse hay giá trị hồ sơ trong
+diagnostic. Giữ nguyên điều kiện xác nhận trang kế tiếp và không tự retry.
+Đây là cải thiện chẩn đoán, chưa phải bằng chứng đã sửa nguyên nhân lỗi 15:38.
+
+Đã Reload bản Online 1.9.7 và dùng Chrome profile test thực tế, dữ liệu giả,
+CCCD, Nữ, thời gian học 1 năm, chuyển khoản tại ngân hàng, MB BANK,
+số tài khoản giả `123456`. Ảnh PNG tổng hợp có **1.229.883 byte**.
+
+| Lượt | Kết quả |
+| --- | --- |
+| Test, ảnh lớn | Qua trang 7 → 8 → 9, dừng trước Gửi, khoảng 32 giây |
+| Test lại khi còn bản nháp | Qua trang 7; đáp án `123456` bị chặn đúng bởi validation câu lệ phí |
+| Sửa đáp án thành `1350000` | Tiếp tục đúng lượt Test, tới trang cuối |
+| Xóa bản nháp rồi Live | Google xác nhận ghi lại phản hồi sau khoảng 37 giây |
+
+Run Live: `4e7340c6-4a8d-4980-8377-01c92381ff58`.
+Trang chủ form xác nhận đủ ảnh `large-synthetic - Duyệt Nguyễn.png`, tên
+`NGHIEN CUU ANH LON`, thông tin ngân hàng giả và đáp án `1350000`.
+Số phản hồi lúc bắt đầu lượt kiểm tra buổi chiều là **0**, sau Live là **1**;
+đã xóa đúng phản hồi vừa tạo, trở lại **0**. Không xóa phản hồi buổi khác.
+
+Bằng chứng `large-image-test-log.txt`, `large-image-live-log.txt`,
+`large-image-live-owner.json`, `large-image-live-confirmation.png` nằm trong
+thư mục `test-results/google-direct-chrome-20261028/` được Git bỏ qua.
+Kiểm thử Direct liên quan: **46/46 đạt**, typecheck và build Online đạt.
+Không thay engine classic.
+
+Chưa tái hiện lỗi trang 7 sau ba lần chạy ảnh lớn. Không có bằng chứng để
+kết luận dung lượng ảnh là nguyên nhân; cần response diagnostic nếu tái diễn.
+Các giới hạn về nhiều profile đồng thời và phiên hết hạn vẫn còn.

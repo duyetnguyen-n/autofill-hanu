@@ -195,7 +195,7 @@ export class DirectExecutor {
             entries:current.filter(a=>!a.issue&&!fileQuestions.some(q=>q.id===a.questionId)).flatMap(a=>(a.values.length?a.values:['']).map(v=>[`entry.${a.entryId}`,v] as [string,string])),
             sentinels:section.questions.filter(q=>['checkbox','radio','dropdown'].includes(q.kind)).map(q=>q.entryId!),
             uploadEntries:fileQuestions.filter(q=>q.kind==='file'&&(q.required||!!file?.blob)&&plan.pageHistory.indexOf(index)>=plan.pageHistory.indexOf(schema.sections.findIndex(s=>s.questions.some(item=>item.id===q.id)))).map(q=>q.entryId!),
-            history:page.history,http:committedUpload,route:plan.pageHistory};
+            history:page.history,http:committedUpload,route:plan.pageHistory,questionLabels:Object.fromEntries(section.questions.map(q=>[q.id,q.label]))};
           if(final){
             await guard();
             await input.beforeSubmit?.();await guard();attempted=true;
