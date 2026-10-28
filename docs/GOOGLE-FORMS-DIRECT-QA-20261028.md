@@ -173,3 +173,17 @@ Typecheck, build Online và build cloud-server thành công. Hướng dẫn,
 rào chắn và các giới hạn được ghi trong `GOOGLE-FORMS-DIRECT-RECOVERY.md`.
 Bản mới vẫn chỉ mở cho hai LAB, không thay engine cũ, không coi mẫu kiểm
 tra một profile là bằng chứng bảo đảm tỉ lệ thành công trên form thật.
+
+### Chốt Chrome sau khi Reload 1.9.9
+
+- Test với hồ sơ giả `NGHIEN CUU DUNG MOT CHIN CHIN` tới trang cuối sau
+  khoảng 28 giây. Tiếp quản rồi Tiếp tục tự động giữ cùng run và đáp án,
+  không upload lại hoặc mở lượt khác.
+- Dừng hoàn toàn: banner và hook submit của tool được gỡ, nút Gửi gốc
+  còn hoạt động. Sau khi đã Dừng, thao tác gửi thủ công trên Google thành
+  công; phía chủ form xác nhận đúng tên giả, ảnh fixture và đáp án.
+- Xóa đúng phản hồi thủ công mới, số phản hồi trở lại 0. Trang đầu Google
+  không còn chọn checkbox email, xác nhận bản nháp thử đã được xóa.
+- Bằng chứng bổ sung: `stop-199-before-manual-send.json`,
+  `stop-199-owner-response.json`, `stop-199-google-confirmation.png`,
+  `stop-199-run-log.txt` trong thư mục kết quả được Git bỏ qua.
