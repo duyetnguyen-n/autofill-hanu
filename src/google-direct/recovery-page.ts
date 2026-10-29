@@ -5,24 +5,35 @@ export function showDirectRecovery(input:{runId:string;formId:string;account:str
   if(root.dataset.hanuDirectRecoveryRun===input.runId&&Number(root.dataset.hanuDirectRecoverySeq)>Number(input.eventSeq??0))return;
   root.dataset.hanuDirectRecoveryRun=input.runId;root.dataset.hanuDirectRecoverySeq=String(input.eventSeq??0);
   if(!root.dataset.hanuDirectDocument)root.dataset.hanuDirectDocument=crypto.randomUUID();
-  const state=document as Document&{hanuDirectRecoveryCleanup?:()=>void};state.hanuDirectRecoveryCleanup?.();
+  const state=document as Document&{hanuDirectRecoveryCleanup?:()=>void;hanuDirectRecoveryForm?:HTMLFormElement};
+  const currentForm=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
+  const stateKey=JSON.stringify([input.runId,input.status,input.mode,input.manual,!!input.preservePrepared]);
+  const message=input.status==='submit_uncertain'?'Chưa rõ Google đã nhận phản hồi hay chưa. Kiểm tra kết quả trước khi gửi lại.':input.manual?'Tool đã ngừng tự điền và tự tiếp tục. Bạn có thể sửa dữ liệu, bấm Tiếp trên Google; ở chế độ Live, bấm Gửi sẽ kiểm tra và gửi đúng một lần.':input.message;
+  const existing=document.getElementById('hanuDirectRecovery');
+  // Progress polls must not remove/reinsert the banner above the form. Keep
+  // its node and event guards stable while only the progress text changes.
+  if(existing?.dataset.stateKey===stateKey&&state.hanuDirectRecoveryForm===currentForm){
+    const text=existing.querySelector('p');if(text&&existing.dataset.busy!=='true'&&text.textContent!==message)text.textContent=message;return;
+  }
+  state.hanuDirectRecoveryCleanup?.();state.hanuDirectRecoveryForm=undefined;
   document.getElementById('hanuDirectRecovery')?.remove();
   if(['completed','idle'].includes(input.status)){const form=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');if(form)form.inert=false;return;}
   const form=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');if(!form)return;
   if(['paused','waiting_manual','ready_to_submit','failed'].includes(input.status)&&!input.preservePrepared){form.inert=false;delete root.dataset.hanuDirectManualPending;document.getElementById('hanuDirectManualReady')?.remove();}
-  const panel=document.createElement('aside');panel.id='hanuDirectRecovery';panel.setAttribute('role','status');
+  state.hanuDirectRecoveryForm=form;
+  const panel=document.createElement('aside');panel.id='hanuDirectRecovery';panel.dataset.stateKey=stateKey;panel.setAttribute('role','status');
   panel.style.cssText='position:relative;z-index:10;max-width:640px;margin:16px auto;padding:16px;box-sizing:border-box;background:#fff9e6;border:1px solid #a96e00;border-radius:8px;color:#252525;font:14px/1.5 system-ui';
   const heading=document.createElement('strong'),text=document.createElement('p');
   heading.textContent=input.manual?'Bạn đang tiếp quản form':input.status==='running'?'Tool đang xử lý form':'Giữ lại lượt đăng ký';
-  text.textContent=input.status==='submit_uncertain'?'Chưa rõ Google đã nhận phản hồi hay chưa. Kiểm tra kết quả trước khi gửi lại.':input.manual?'Tool đã ngừng tự điền và tự tiếp tục. Bạn có thể sửa dữ liệu, bấm Tiếp trên Google; ở chế độ Live, bấm Gửi sẽ kiểm tra và gửi đúng một lần.':input.message;
+  text.textContent=message;if(input.status==='running')text.style.minHeight='42px';
   panel.append(heading,text);
   let busy=false;
   const request=async(action:'takeover'|'resume'|'submit')=>{
-    if(busy)return;busy=true;
+    if(busy)return;busy=true;panel.dataset.busy='true';
     try{
       const result=await chrome.runtime.sendMessage({type:'DIRECT_MANUAL',action,runId:input.runId,documentKey:root.dataset.hanuDirectDocument});
       if(!result?.ok)throw new Error(result?.error??'Chưa liên lạc được với extension. Giữ nguyên tab và dữ liệu.');
-    }catch(error){text.textContent=(error as Error).message;form.inert=false;delete root.dataset.hanuDirectManualPending;document.getElementById('hanuDirectManualReady')?.remove();}finally{busy=false;}
+    }catch(error){text.textContent=(error as Error).message;form.inert=false;delete root.dataset.hanuDirectManualPending;document.getElementById('hanuDirectManualReady')?.remove();}finally{busy=false;delete panel.dataset.busy;}
   };
   if(!['submitting','submit_uncertain'].includes(input.status)){
     const button=document.createElement('button');button.type='button';button.textContent=input.manual?'Tiếp tục tự động':'Tiếp quản trên form';button.style.cssText='padding:8px 12px;cursor:pointer';button.onclick=()=>void request(input.manual?'resume':'takeover');panel.append(button);

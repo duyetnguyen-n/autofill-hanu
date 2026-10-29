@@ -138,6 +138,7 @@ export class DirectExecutor {
             while(Date.now()<deadline){
               await guard();const state=(await chrome.scripting.executeScript({target:{tabId},func:prepareUploadAnswer,args:[{questionId:q.id,entryId:q.entryId!,label:q.label,kind:q.kind,value:answer.values[0]??''}]}))[0]?.result;
               if(state?.done){done=true;break;}
+              if(state?.waiting){await delay(40);continue;}
               if(state?.keys){await dialogs!.keys(state.keys);await delay(100);continue;}
               if(state?.x===undefined||state.y===undefined)throw new Error(`Chưa chuẩn bị được ${q.label}.`);
               await dialogs!.click(state.x,state.y);await delay(100);
@@ -189,10 +190,15 @@ export class DirectExecutor {
           }
           await input.onProgress(`Trang ${index+1}/${schema.sections.length}: chuẩn bị request.`);
           if(fileQuestion&&file?.blob&&section.questions.some(q=>q.id===fileQuestion.id)){
-            await input.onProgress('Đang tự tải ảnh đã lưu qua Google Picker…');
             const uploadInput={questionId:fileQuestion.id,entryId:fileQuestion.entryId!,label:fileQuestion.label,name:file.name,open:true};
-            const deadline=Date.now()+130000;
-            let opened=false,ready=false,checkedExisting=false;
+            const initial=(await chrome.scripting.executeScript({target:{tabId},func:inspectExecutionUpload,args:[{...uploadInput,open:false,replaceExisting:false}]}))[0]?.result;
+            if(initial?.state!=='picker'){
+              await input.onProgress('Đang chuẩn bị thông tin trên trang tải ảnh…');
+              await prepareNativeSection(section);
+            }
+            await input.onProgress('Đang tự tải ảnh đã lưu qua Google Picker…');
+            const uploadStarted=performance.now(),deadline=Date.now()+130000;
+            let opened=false,ready=false,checkedExisting=false,assigned=false;
             while(Date.now()<deadline){
               await guard();
               const state=(await chrome.scripting.executeScript({target:{tabId},func:inspectExecutionUpload,args:[{...uploadInput,open:!opened,replaceExisting:!checkedExisting}]}))[0]?.result;
@@ -203,15 +209,16 @@ export class DirectExecutor {
               if(state?.state==='ready'){ready=true;break;}
               if(state?.pickerUrl){
                 opened=true;
-                const result=await uploads.upload({tabId,key:runId,runId,pickerUrl:state.pickerUrl,requestId:runId,name:file.name,type:file.type,
+                const result=await uploads.upload({tabId,key:runId,runId,pickerUrl:state.pickerUrl,requestId:runId,name:file.name,type:file.type,checkOnly:assigned,
                   assertActive:guard,prepare:async()=>{const started=performance.now();const dataUrl=await blobToDataUrl(file.blob!);return {dataUrl,readMs:0,encodeMs:performance.now()-started};}});
                 if(result.state==='error')throw new Error(result.error);
+                if(result.state==='assigned'&&!assigned){assigned=true;await input.onProgress('Đã bàn giao ảnh; đang chờ Google hoàn tất tải lên.');}
               }
-              await delay(300);
+              await delay(150);
             }
             uploads.cancel(tabId);
             if(!ready)throw new Error('Google Picker chưa nhận ảnh sau 130 giây. Chưa gửi form.');
-            await input.onProgress('Google đã nhận đúng ảnh. Đang xác nhận trạng thái upload của Google.');
+            await input.onProgress(`Google đã nhận đúng ảnh sau ${((performance.now()-uploadStarted)/1000).toFixed(1)} giây. Đang đối chiếu thông tin trước khi Tiếp.`);
             await prepareNativeSection(section);
             await guard();dialogs.posting(true);
             await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:beginExecutionSession,args:[formId]});

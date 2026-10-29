@@ -28,6 +28,13 @@ it('lets Google validate a manual answer before reserving any submit, and holds 
   const body=new FormData(document.querySelector<HTMLFormElement>('#hanuDirectManualReady')!);
   expect(body.get('entry.123')).toBe('1350000');expect(body.get('dlut')).toBe('GOOGLE_VALIDATED_REVISION');
 });
+it('updates upload progress without replacing the banner or losing the Test submit guard',()=>{
+  const f=fixture('test');const input={runId:'one',formId:DIRECT_LAB_FORM_ID,account:'fixture@example.test',status:'running',mode:'test',manual:false,message:'Opening Picker',eventSeq:4};
+  showDirectRecovery(input);const panel=document.getElementById('hanuDirectRecovery')!,button=panel.querySelector('button');
+  showDirectRecovery({...input,message:'Google is processing the image',eventSeq:5});
+  expect(document.getElementById('hanuDirectRecovery')).toBe(panel);expect(panel.querySelector('button')).toBe(button);expect(panel.textContent).toContain('Google is processing');
+  (document.querySelector('[role="button"]') as HTMLElement).click();expect(f.google).not.toHaveBeenCalled();expect(f.native).not.toHaveBeenCalled();
+});
 it('a wrong manual answer remains a Google validation error without a submit grant or network POST',()=>{
   const f=fixture();document.querySelector<HTMLInputElement>('[name="entry.123"]')!.value='123456';(document.querySelector('[role="button"]') as HTMLElement).click();
   expect(f.google).toHaveBeenCalledOnce();expect(f.send).not.toHaveBeenCalled();expect(f.native).not.toHaveBeenCalled();expect(document.querySelector('[role="alert"]')!.textContent).toBe('Đáp án chưa đúng');

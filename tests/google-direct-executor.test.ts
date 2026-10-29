@@ -6,6 +6,7 @@ import {DirectExecutor,type DirectRunInput} from '../src/google-direct/executor'
 import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../src/google-direct/schema';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from '../src/google-direct/execute-page';
 import {DirectPageDialogs} from '../src/google-direct/dialogs';
+import {StoredPickerUploads} from '../src/stored-picker-upload';
 import {armDirectManualSubmit,prepareDirectNativeSubmit,directManualReady,restoreDirectNativePage} from '../src/google-direct/recovery-page';
 
 const script = `var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
@@ -143,9 +144,9 @@ it('releases held mouse/key input and does not commit Enter when Stop arrives du
   await expect(new DirectPageDialogs(42,keysController.signal).keys(['Home','ArrowDown','Enter'])).rejects.toThrow('dừng');
   expect(sendCommand.mock.calls.map(([, ,p])=>[p.type,p.key])).toEqual([['keyDown','Home'],['keyUp','Home']]);
 });
-it('recognizes a dropdown value committed in a hidden input outside its card',()=>{
+it('recognizes a dropdown value committed in a hidden input outside its card',async()=>{
   document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox"></div></div><input type="hidden" name="entry.123" value="Nam"></form>';
-  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({done:true});
+  expect(await prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({done:true});
 });
 it('emits the Enter character needed by a menu keypress commit handler',async()=>{
   document.body.innerHTML='<div role="listbox" tabindex="0"></div><input name="entry.123" value="">';
@@ -160,18 +161,20 @@ it('emits the Enter character needed by a menu keypress commit handler',async()=
   expect(answer.value).toBe('Nam');
   expect(sendCommand.mock.calls.filter(([, ,p])=>p.type==='keyUp').map(([, ,p])=>p.key)).toEqual(['Home','ArrowDown','Enter']);
 });
-it('commits the requested menu row by keyboard and does not treat a highlighted row as a committed answer',()=>{
+it('commits the requested menu row by keyboard and does not treat a highlighted row as a committed answer',async()=>{
   document.body.innerHTML='<form><div role="listitem" data-item-id="gender"><h3>Gender</h3><div role="listbox" aria-expanded="true"><div role="option" data-value="">Choose</div><div role="option" data-value="Nam" aria-selected="true">Nam</div></div></div><input name="entry.123" value=""></form>';
   const option=document.querySelector<HTMLElement>('[role="option"]')!;
   option.scrollIntoView=vi.fn();vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:40} as DOMRect);
-  expect(prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({keys:['ArrowUp','ArrowDown','Enter']});
+  expect(await prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toMatchObject({x:60,y:40});
+  expect(await prepareUploadAnswer({questionId:'gender',entryId:'123',label:'Gender',kind:'dropdown',value:'Nam'})).toEqual({keys:['ArrowUp','ArrowDown','Enter']});
   expect(option.scrollIntoView).not.toHaveBeenCalled();
 });
 it('chooses the same dropdown row from any previous highlight without relying on Home',async()=>{
   const values=['Choose','Under six months','One year','Two years','Three years'];
   document.body.innerHTML=`<form><div role="listitem" data-item-id="duration"><h3>Duration</h3><div role="listbox" aria-expanded="true">${values.map(v=>`<div role="option" data-value="${v}">${v}</div>`).join('')}</div></div><input name="entry.123" value=""></form>`;
   vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:40} as DOMRect);
-  const choice=prepareUploadAnswer({questionId:'duration',entryId:'123',label:'Duration',kind:'dropdown',value:'One year'});
+  await prepareUploadAnswer({questionId:'duration',entryId:'123',label:'Duration',kind:'dropdown',value:'One year'});
+  const choice=await prepareUploadAnswer({questionId:'duration',entryId:'123',label:'Duration',kind:'dropdown',value:'One year'});
   for(let start=0;start<values.length;start++){
     let selected=start,committed='';
     vi.stubGlobal('chrome',{debugger:{sendCommand:async(_source:unknown,_method:string,p:any)=>{
@@ -400,4 +403,22 @@ it('restores the native page before any final grant when a fast transition is re
 it('refuses an early final POST even with known answers when Google has not issued the complete section history',async()=>{
   const request={...form(),final:true,navigate:true,history:[0],route:[0,1,2]},submit=vi.spyOn(HTMLFormElement.prototype,'submit').mockImplementation(()=>{});
   await expect(postExecutionPage({...request,validateOnly:true})).rejects.toThrow('Chưa hoàn tất trạng thái');expect(submit).not.toHaveBeenCalled();
+});
+
+it('prepares upload-page controls before opening Picker, then uses status-only checks after the single handoff',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,events:string[]=[];let polls=0;
+  f.executeScript.mockImplementation(async r=>{
+    if(r.func===prepareUploadAnswer)events.push('prepare');
+    if(r.func===inspectExecutionUpload){if(!r.args[0].open&&!r.args[0].replaceExisting&&!polls)return [{result:{state:'waiting'}}];events.push('picker');return [{result:++polls<3?{state:'picker',pickerUrl:'https://docs.google.com/picker?hostId=file-upload'}:{state:'ready'}}];}
+    return original(r);
+  });
+  const upload=vi.spyOn(StoredPickerUploads.prototype,'upload').mockResolvedValue({state:'assigned'});
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});
+  expect(events.indexOf('prepare')).toBeLessThan(events.indexOf('picker'));expect(upload).toHaveBeenCalledTimes(2);expect(upload.mock.calls.map(([scope])=>scope.checkOnly)).toEqual([false,true]);
+});
+it('Stop during upload-page preparation prevents opening Picker or handing over bytes',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!,controller=new AbortController();
+  f.executeScript.mockImplementation(async r=>{if(r.func===prepareUploadAnswer)controller.abort();return original(r);});
+  const upload=vi.spyOn(StoredPickerUploads.prototype,'upload').mockResolvedValue({state:'assigned'});
+  const running=f.run({signal:controller.signal});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'stopped'});expect(upload).not.toHaveBeenCalled();expect(f.executeScript.mock.calls.filter(([r])=>r.func===inspectExecutionUpload&&r.args[0].open)).toHaveLength(0);
 });

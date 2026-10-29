@@ -297,41 +297,93 @@ export function resetExecutionPage():void {
 }
 
 // Used from upload onward so the real Google page is always recoverable.
-export function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):{done?:boolean;x?:number;y?:number;keys?:string[]} {
+export async function prepareUploadAnswer(input:{questionId:string;entryId:string;label:string;kind:string;value:string}):Promise<{done?:boolean;x?:number;y?:number;keys?:string[];waiting?:boolean}> {
   const norm=(s:string)=>s.normalize('NFC').replace(/\s+/g,' ').trim();
   const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
   const roots=[...document.querySelectorAll<HTMLElement>('[role="listitem"],[data-item-id]')];
   const matches=roots.filter(e=>e.dataset.itemId===input.questionId||[...e.querySelectorAll('[role="heading"],h3')].some(h=>norm(h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
   const cards=matches.filter(e=>!matches.some(other=>other!==e&&e.contains(other)));
-  if(cards.length!==1)throw new Error(`Không xác định duy nhất câu upload: ${input.label}`);
-  const card=cards[0];
-  const point=(e:HTMLElement,scroll=true)=>{if(scroll)e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();if(!visible(e))throw new Error('Điều khiển chưa hiển thị.');return {x:r.x+r.width/2,y:r.y+r.height/2};};
+  if(cards.length!==1)throw new Error(`Không xác định duy nhất câu hỏi: ${input.label}`);
+  const card=cards[0],form=card.closest('form');
+  const intoView=(e:HTMLElement)=>{
+    const r=e.getBoundingClientRect(),x=r.left??r.x,y=r.top??r.y;
+    if(x<0||y<0||x+r.width>innerWidth||y+r.height>innerHeight)e.scrollIntoView?.({block:'nearest',behavior:'instant'});
+  };
+  const point=(e:HTMLElement)=>{intoView(e);const r=e.getBoundingClientRect();if(!visible(e))throw new Error('Điều khiển chưa hiển thị.');return {x:(r.x??r.left)+r.width/2,y:(r.y??r.top)+r.height/2};};
+  // Same pointer sequence as classic. Observe the committed value before
+  // escalating to trusted mouse input, then to the slower keyboard fallback.
+  const pointer=(target:HTMLElement)=>{
+    intoView(target);const r=target.getBoundingClientRect();
+    const init={bubbles:true,cancelable:true,button:0,clientX:(r.x??r.left)+r.width/2,clientY:(r.y??r.top)+r.height/2};
+    if(typeof PointerEvent!=='undefined')target.dispatchEvent(new PointerEvent('pointerdown',{...init,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true}));
+    target.dispatchEvent(new MouseEvent('mousedown',{...init,buttons:1}));
+    const cancelled=!!document.documentElement.dataset.hanuDirectStopped,release=cancelled?document.documentElement:target;
+    if(typeof PointerEvent!=='undefined')release.dispatchEvent(new PointerEvent('pointerup',{...init,buttons:0,pointerId:1,pointerType:'mouse',isPrimary:true}));
+    release.dispatchEvent(new MouseEvent('mouseup',{...init,buttons:0}));if(!cancelled)target.dispatchEvent(new MouseEvent('click',init));
+  };
+  const wait=(predicate:()=>boolean):Promise<boolean>=>{
+    if(predicate())return Promise.resolve(true);
+    return new Promise(resolve=>{
+      let finished=false;
+      const finish=(value:boolean)=>{if(finished)return;finished=true;observer.disconnect();clearInterval(poll);clearTimeout(timer);resolve(value);};
+      const check=()=>{if(!card.isConnected||document.documentElement.dataset.hanuDirectStopped){finish(false);return;}if(predicate())finish(true);};
+      const observer=new MutationObserver(check);observer.observe(form??card,{subtree:true,childList:true,attributes:true,characterData:true});
+      const poll=setInterval(check,25),timer=setTimeout(()=>finish(false),160);check();
+    });
+  };
+  if(document.documentElement.dataset.hanuDirectStopped)throw new Error('Đã dừng trước khi điền câu hỏi.');
+  const active=()=>{if(document.documentElement.dataset.hanuDirectStopped||!card.isConnected)throw new Error('Đã dừng hoặc trang đã thay đổi.');};
   // Forms stores committed select values in hidden inputs outside the card.
-  const named=card.closest('form')?.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[name="entry.${input.entryId}"]`);
+  const named=form?.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[name="entry.${input.entryId}"]`);
   if(['text','textarea'].includes(input.kind)){
     const field=card.querySelector<HTMLInputElement|HTMLTextAreaElement>('input:not([type="hidden"]),textarea');
-    if(!field)throw new Error('Không có ô nhập cho câu upload.');
+    if(!field)throw new Error('Không có ô nhập cho câu hỏi.');
     if(field.value!==input.value){const proto=field instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value')!.set!.call(field,input.value);field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));}
     return {done:field.value===input.value};
   }
   if(input.kind==='radio'||input.kind==='checkbox'){
-    const option=[...card.querySelectorAll<HTMLElement>('[role="radio"],[role="checkbox"]')].filter(e=>norm(e.getAttribute('data-value')??e.getAttribute('aria-label')??e.textContent??'')===norm(input.value));
-    if(option.length!==1)throw new Error('Không khớp duy nhất lựa chọn tại trang upload.');
-    return option[0].getAttribute('aria-checked')==='true'?{done:true}:point(option[0]);
+    const options=[...card.querySelectorAll<HTMLElement>('[role="radio"],[role="checkbox"]')].filter(e=>norm(e.getAttribute('data-value')??e.getAttribute('aria-label')??e.textContent??'')===norm(input.value));
+    if(options.length!==1)throw new Error('Không khớp duy nhất lựa chọn của câu hỏi.');
+    const option=options[0],done=()=>option.getAttribute('aria-checked')==='true';if(done())return {done:true};
+    pointer(option);if(await wait(done))return {done:true};active();return point(option);
   }
   if(input.kind==='dropdown'){
-    if(named?.value===input.value)return {done:true};
-    const list=card.querySelector<HTMLElement>('[role="listbox"]');if(!list)throw new Error('Không có danh sách tại trang upload.');
-    const options=[...card.querySelectorAll<HTMLElement>('[role="option"]')].filter(e=>visible(e)&&norm(e.getAttribute('data-value')??e.textContent??'')===norm(input.value));
-    if(list.getAttribute('aria-expanded')==='true'&&options.length===1){
-      const option=options[0],siblings=[...option.parentElement!.children].filter(e=>e.matches('[role="option"]')&&e.getAttribute('aria-disabled')!=='true'&&visible(e));
-      const offset=siblings.indexOf(option);if(offset<0)throw new Error('Không xác định được thứ tự lựa chọn tại trang upload.');
-      // Google handles Up/Down but ignores Home. Reset to the first row with
-      // clamped Up presses, then choose the exact offset and commit. A mere
-      // aria-selected highlight is still not a committed hidden input value.
-      option.focus();return {keys:[...Array.from({length:siblings.length-1},()=> 'ArrowUp'),...Array.from({length:offset},()=> 'ArrowDown'),'Enter']};
+    const native=card.querySelector<HTMLSelectElement>('select');
+    if(native){
+      if(native.disabled||native.multiple)throw new Error('Danh sách chưa sẵn sàng.');
+      const options=[...native.options].filter(o=>!o.disabled&&!o.closest('optgroup[disabled]')&&norm(o.value)===norm(input.value));
+      if(options.length!==1)throw new Error('Không khớp duy nhất lựa chọn của danh sách.');
+      if(native.value!==options[0].value){Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')!.set!.call(native,options[0].value);native.dispatchEvent(new Event('input',{bubbles:true}));native.dispatchEvent(new Event('change',{bubbles:true}));}
+      return {done:native.value===options[0].value};
     }
-    return point(list.querySelector<HTMLElement>('[jsname="LgbsSe"],[role="button"],button')??list);
+    const done=()=>named?.value===input.value;if(done())return {done:true};
+    const list=card.querySelector<HTMLElement>('[role="listbox"]');if(!list)throw new Error('Không có danh sách của câu hỏi.');
+    const opener=list.querySelector<HTMLElement>('[jsname="LgbsSe"],[role="button"],button')??list;
+    if(list.getAttribute('aria-expanded')!=='true'){
+      pointer(opener);if(!await wait(()=>list.getAttribute('aria-expanded')==='true')){active();return point(opener);}
+    }
+    active();
+    const choices=()=>[...card.querySelectorAll<HTMLElement>('[role="option"]')].filter(e=>visible(e)&&e.getAttribute('aria-disabled')!=='true'&&norm(e.getAttribute('data-value')??e.textContent??'')===norm(input.value));
+    const onTop=(e:HTMLElement)=>{
+      if(!document.elementFromPoint)return true;
+      const r=e.getBoundingClientRect(),hit=document.elementFromPoint((r.x??r.left)+r.width/2,(r.y??r.top)+r.height/2);
+      return !!hit&&(hit===e||e.contains(hit));
+    };
+    if(!await wait(()=>choices().length>0)){active();return {waiting:true};}
+    const candidates=choices(),exposed=candidates.filter(onTop);
+    if(exposed.length>1)throw new Error('Có nhiều lựa chọn cùng khớp; chưa chọn.');
+    const options=exposed.length?exposed:candidates.length===1?candidates:[];
+    if(!options.length)return {waiting:true};
+    intoView(options[0]);
+    const option=options[0],attempt=JSON.stringify([input.entryId,input.value]);
+    if(onTop(option)&&card.dataset.hanuDirectPointerChoice!==attempt){
+      card.dataset.hanuDirectPointerChoice=attempt;pointer(option);
+      if(await wait(done))return {done:true};active();return point(option);
+    }
+    const siblings=[...option.parentElement!.children].filter(e=>e.matches('[role="option"]')&&e.getAttribute('aria-disabled')!=='true'&&visible(e));
+    const offset=siblings.indexOf(option);if(offset<0)throw new Error('Không xác định được thứ tự lựa chọn.');
+    // Retain the tested clamped-arrow fallback; Google ignores Home on some builds.
+    option.focus();return {keys:[...Array.from({length:siblings.length-1},()=> 'ArrowUp'),...Array.from({length:offset},()=> 'ArrowDown'),'Enter']};
   }
-  throw new Error('Chưa hỗ trợ kiểu câu tại trang upload.');
+  throw new Error('Chưa hỗ trợ kiểu câu hỏi này.');
 }
