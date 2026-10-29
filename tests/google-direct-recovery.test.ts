@@ -55,6 +55,15 @@ it('rejects a failed native preflight while retaining the editable real form',as
 it('Test blocks manual Send as well as automatic Send',()=>{
   const f=fixture('test');(document.querySelector('[role="button"]') as HTMLElement).click();expect(f.google).not.toHaveBeenCalled();expect(f.send).not.toHaveBeenCalled();expect(f.native).not.toHaveBeenCalled();expect(document.getElementById('hanuDirectRecovery')!.textContent).toContain('Test');
 });
+it.each(['test','live'])('native Back on the final page remains a non-final navigation in %s',mode=>{
+  const f=fixture(mode),form=document.querySelector('form')!;
+  const back=document.createElement('input');back.type='hidden';back.name='back';back.value='1';form.append(back);
+  form.submit();expect(f.native).toHaveBeenCalledOnce();expect(f.send).not.toHaveBeenCalled();expect(directManualReady('doc-final')).toBe(false);
+});
+it.each(['test','live'])('does not cancel a real Back submit event in %s',mode=>{
+  fixture(mode);const form=document.querySelector('form')!,back=document.createElement('input');back.name='back';back.value='1';form.append(back);
+  const event=new Event('submit',{bubbles:true,cancelable:true});form.dispatchEvent(event);expect(event.defaultPrevented).toBe(false);
+});
 it('an older progress callback cannot replace the takeover guard',()=>{
   fixture();showDirectRecovery({runId:'one',formId:DIRECT_LAB_FORM_ID,account:'fixture@example.test',status:'running',mode:'live',manual:false,message:'OLD',eventSeq:2});
   expect(document.getElementById('hanuDirectRecovery')!.textContent).toContain('Bạn đang tiếp quản');expect(document.getElementById('hanuDirectRecovery')!.textContent).not.toContain('OLD');

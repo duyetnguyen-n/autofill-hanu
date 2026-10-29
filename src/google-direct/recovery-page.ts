@@ -41,6 +41,7 @@ export function showDirectRecovery(input:{runId:string;formId:string;account:str
   // The real Google Submit remains usable, but it crosses the same durable
   // grant as automation. User edits never race an automatic second submit.
   const intercept=(event:Event)=>{
+    if(event.type==='submit'&&event.target===form&&new FormData(form).get('back')==='1')return;
     const target=event.target instanceof Element?event.target.closest('button,[role="button"]'):null;
     const submit=event.type==='submit'&&event.target===form||target&&form.contains(target)&&/^(gửi|submit)$/i.test(target.textContent?.normalize('NFC').trim()??'');
     if(!submit)return;
@@ -73,6 +74,9 @@ export function armDirectManualSubmit():void{
   (form as HTMLFormElement&{hanuDirectOriginalSubmit?:()=>void}).hanuDirectOriginalSubmit=original;
   form.submit=function(){
     const root=document.documentElement;
+    // Google's Back button uses the same submit method on the final page.
+    // Its back=1 request navigates only; it must not reserve a final grant.
+    if(new FormData(form).get('back')==='1'){original();return;}
     const final=[...form.querySelectorAll<HTMLElement>('button,[role="button"]')].some(b=>/^(gửi|submit)$/i.test(b.textContent?.normalize('NFC').trim()??'')&&b.getBoundingClientRect().width>0);
     if(!final||root.dataset.hanuDirectNativePermit==='1'){original();return;}
     if(root.dataset.hanuDirectManualPending)return;

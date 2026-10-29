@@ -93,3 +93,35 @@ Sau ghi nhận bằng chứng đã Dừng, xóa bản nháp thử và đóng tab
 
 Toàn bộ suite cuối: **100 file, 970 đạt, 1 bỏ qua**. Typecheck và build cloud
 extension/server đạt; Vite vẫn có cảnh báo kích thước chunk giao diện.
+
+## Lượt sạch 1.9.15
+
+Server commit `fdb63f3` Live lúc 10:17:23. Run
+`f9707a9a-fd95-47ab-8624-cb8cf14aa702` chạy Test từ đầu, không can thiệp giữa lượt:
+trang 2 lúc 10:17:53, upload 10:17:58–10:18:07 (9,3 giây), ngân hàng
+10:18:08, cam kết 10:18:09, câu năm và Xong Test lúc 10:18:11. Manager hiển thị
+0:21, tương đương khoảng 22 giây theo log. Câu năm Google thật có **2026**,
+hiển thị đã lưu bản nháp. Không phát request Gửi và không tạo phản hồi.
+Không coi đây là benchmark tải hoặc cam kết thời gian đăng ký thật.
+
+Ảnh bằng chứng: `test-results/google-direct-registration-20261029/clean-final-1.9.15.png`.
+Không đọc được partialResponse qua công cụ do giá trị bị che; không kết luận
+đã kiểm toán đầy đủ các reference ẩn từ lần đọc đó.
+
+## Bổ sung dự phòng khi tiếp tục công việc
+
+- Giao diện manager đã thêm nút **Xem hồ sơ của lượt này** trong lịch sử.
+  Nút mở snapshot để xem/sửa, không tự ghi đè hoặc đồng bộ; vẫn phải dùng
+  nút Lưu và đồng bộ hiện có. Typecheck và build server đạt.
+- 1.9.16 cho request Back gốc có `back=1` đi qua bộ giữ Submit trên trang
+  cuối, ở cả Test và Live. Back không xin quyền Gửi và không tạo bản Submit
+  đã chuẩn bị. Các kiểm thử Gửi Test/Live và khóa Gửi hiện có vẫn đạt.
+- 140 kiểm thử liên quan đạt cho thay đổi cuối này. Lượt Chrome hoàn chỉnh
+  ở trên dùng 1.9.15; chưa ghi nhận lượt Chrome 1.9.16.
+- Khi tiếp tục buổi tối, profile test không còn kết nối, dữ liệu giả vẫn đang
+  được lưu trên manager. Đã tìm được bản hồ sơ gốc từ run
+  `66edcbd6-fdcb-4e46-aea9-64060552d017` bắt đầu 09:41:25, đủ 19 trường và
+  tham chiếu ảnh gốc. Bản khôi phục riêng tư nằm trong thư mục test-results
+  được Git bỏ qua. Còn phải đồng bộ trả lại và dọn bản nháp khi profile mở lại.
+- Render yêu cầu đăng nhập lại trước khi triển khai nút mở snapshot mới;
+  không ghi nhận phần này đã Live khi chưa xác nhận trên dashboard.
