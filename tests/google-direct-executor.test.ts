@@ -62,6 +62,18 @@ it('stops repeated draft rewinds without a final request or endless replay',asyn
   vi.useFakeTimers();const f=fixture({draftRewinds:2}),running=f.run({mode:'test'});await vi.runAllTimersAsync();
   expect(await running).toMatchObject({status:'failed',message:expect.stringContaining('liên tục đổi bản nháp')});expect(f.posts.some(p=>p.final)).toBe(false);
 });
+it('waits for a transient missing control-injection result instead of abandoning a newly navigated page',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!;let misses=0;
+  f.executeScript.mockImplementation(async r=>r.func===prepareUploadAnswer&&misses++<2?[{result:undefined}]:original(r));
+  const running=f.run({mode:'test'});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'ready'});
+});
+it('refuses unknown navigation markers before posting any registration data',async()=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  const raw=JSON.parse(script.replace(/^var FB_PUBLIC_LOAD_DATA_ = /,'').replace(/;$/,''));raw[1][1].filter((q:any)=>q[3]===8)[1][5]=-999;
+  const changedScript=`var FB_PUBLIC_LOAD_DATA_ = ${JSON.stringify(raw)};`;
+  f.executeScript.mockImplementation(async r=>{const result=await original(r);if(r.func===readExecutionPage)result[0].result={...result[0].result,script:changedScript};return result;});
+  const running=f.run({expectedScript:changedScript});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'failed',postCount:0});expect(f.posts).toHaveLength(0);
+});
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
   vi.useFakeTimers();const f=fixture();const promise=f.run();await vi.runAllTimersAsync();
   expect(await promise).toMatchObject({status:'received',postCount:6});

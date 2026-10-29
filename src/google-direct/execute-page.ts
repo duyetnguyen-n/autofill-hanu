@@ -250,7 +250,7 @@ export function inspectExecutionUpload(input: {questionId:string;entryId:string;
   if (picker) return {state:'picker',pickerUrl:picker.src};
   const norm=(s:string)=>(s??'').replace(/\s+/g,' ').trim();
   const roots=[...document.querySelectorAll<HTMLElement>('[role="listitem"],[data-item-id]')];
-  const candidates=roots.filter(el=>el.dataset.itemId===input.questionId||!!el.querySelector(`[name="entry.${input.entryId}"]`)||[...el.querySelectorAll('[role="heading"],h3')].some(h=>norm(h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
+  const candidates=roots.filter(el=>el.dataset.itemId===input.questionId||!!el.querySelector(`[name="entry.${input.entryId}"]`)||[...el.querySelectorAll<HTMLElement>('[role="heading"],h3')].some(h=>norm(h.innerText??h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
   const cards=candidates.filter(el=>!candidates.some(other=>other!==el&&el.contains(other)));
   if(cards.length!==1)return {state:'missing'};
   const card=cards[0], buttons=[...card.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(visible);
@@ -301,7 +301,7 @@ export async function prepareUploadAnswer(input:{questionId:string;entryId:strin
   const norm=(s:string)=>s.normalize('NFC').replace(/\s+/g,' ').trim();
   const visible=(e:Element)=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden';};
   const roots=[...document.querySelectorAll<HTMLElement>('[role="listitem"],[data-item-id]')];
-  const matches=roots.filter(e=>e.dataset.itemId===input.questionId||[...e.querySelectorAll('[role="heading"],h3')].some(h=>norm(h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
+  const matches=roots.filter(e=>e.dataset.itemId===input.questionId||[...e.querySelectorAll<HTMLElement>('[role="heading"],h3')].some(h=>norm(h.innerText??h.textContent??'').replace(/\s*\*$/,'')===norm(input.label)));
   const cards=matches.filter(e=>!matches.some(other=>other!==e&&e.contains(other)));
   if(cards.length!==1)throw new Error(`Không xác định duy nhất câu hỏi: ${input.label}`);
   const card=cards[0],form=card.closest('form');

@@ -1,4 +1,4 @@
-# Google Forms Direct 1.9.13 — form đăng ký ngoài LAB
+# Google Forms Direct 1.9.13–1.9.15 — form đăng ký ngoài LAB
 
 Ngày 29/10/2026. Sửa giới hạn hai mã form LAB đã gây lỗi khi dùng form đăng ký.
 Chức năng Google Forms cũ vẫn riêng, không thay engine cũ.
@@ -63,4 +63,22 @@ nếu lặp lại thì giữ form để tiếp quản, không chạy vô hạn h
 
 Typecheck và 111 kiểm thử liên quan đạt, gồm native Next sau upload, quay
 về phần đầu không phát POST rỗng, và chặn lặp đổi bản nháp. Đã build extension
-1.9.14. Kết quả Chrome sau Reload được ghi tiếp sau đối chiếu.
+1.9.14. Toàn bộ suite bản này: 966 đạt, 1 bỏ qua trên 100 file.
+
+## Chrome 1.9.14 và bản sửa nhãn 1.9.15
+
+Run `820485d5-3352-410b-8e83-ab01e0d27d2f`, Test: Google nhận ảnh sau 11,0
+giây (10:07:56–10:08:07), qua ngân hàng lúc 10:08:08, cam kết lúc 10:08:15
+và tới trang câu năm lúc 10:08:20. Không còn xung đột bản nháp ở lượt này.
+Tại câu cuối, bộ tìm card chưa ghép được nhãn; chưa có request Gửi cuối.
+
+Đối chiếu DOM thật: nhãn chứa `<div>` xuống dòng giữa phần Việt và Trung.
+`textContent` ghép sát hai ngôn ngữ, còn metadata có newline; trang này không
+có `data-item-id` để làm định danh thay thế. 1.9.15 dùng `innerText` của heading
+(fallback `textContent` ở môi trường không có layout), cả ô nhập và câu upload.
+Thêm kiểm thử tương ứng không có `data-item-id`. Đồng thời chuyển lỗi injection
+thành thông tin câu cụ thể, chờ kết quả injection tạm chưa có và giữ dừng trước
+request nếu gặp mã điều hướng chưa nhận diện.
+
+Typecheck và 121 kiểm thử liên quan đạt. Extension 1.9.15 đã build. Giữ form
+ở câu cuối để kiểm tra Tiếp tục sau Reload mà không điền lại hay tải ảnh lại.

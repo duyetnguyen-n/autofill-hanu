@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach,expect,it,vi} from 'vitest';
-import {prepareUploadAnswer} from '../src/google-direct/execute-page';
+import {prepareUploadAnswer,inspectExecutionUpload} from '../src/google-direct/execute-page';
 
 afterEach(()=>{vi.restoreAllMocks();Reflect.deleteProperty(document,'elementFromPoint');document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectStopped;});
 const input={questionId:'duration',entryId:'123',label:'Duration',kind:'dropdown',value:'One year'};
@@ -38,6 +38,19 @@ it('supports an actual native select using its value setter and change events',a
   document.body.innerHTML='<div data-item-id="duration"><h3>Duration</h3><select name="entry.123"><option value="">Choose</option><option value="One year">One year</option></select></div>';
   const select=document.querySelector('select')!,changed=vi.fn();select.onchange=changed;
   expect(await prepareUploadAnswer(input)).toEqual({done:true});expect(select.value).toBe('One year');expect(changed).toHaveBeenCalledOnce();
+});
+it('matches a bilingual heading rendered on separate lines without data-item-id',async()=>{
+  document.body.innerHTML='<form><div role="listitem"><div role="heading">Năm nay là năm bao nhiêu?<div>今年是哪一年？</div><span> *</span></div><input type="text"></div></form>';
+  Object.defineProperty(document.querySelector('[role="heading"]'),'innerText',{value:'Năm nay là năm bao nhiêu?\n今年是哪一年？\n*'});
+  expect(await prepareUploadAnswer({questionId:'new-year-id',entryId:'1703858814',label:'Năm nay là năm bao nhiêu?\n今年是哪一年？',kind:'text',value:'2026'})).toEqual({done:true});
+  expect(document.querySelector('input')!.value).toBe('2026');
+});
+it('locates a multiline upload heading without depending on the LAB entry ID',()=>{
+  document.body.innerHTML='<div role="listitem"><div role="heading">Ảnh giấy tờ<div>证件图</div><span> *</span></div><button>Thêm tệp</button></div>';
+  vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:10,y:20,width:100,height:30} as DOMRect);
+  Object.defineProperty(document.querySelector('[role="heading"]'),'innerText',{value:'Ảnh giấy tờ\n证件图\n*'});
+  const click=vi.spyOn(document.querySelector('button')!,'click').mockImplementation(()=>{});
+  expect(inspectExecutionUpload({questionId:'new-file',entryId:'777',label:'Ảnh giấy tờ\n证件图',name:'fake.png',open:true})).toMatchObject({opened:true});expect(click).toHaveBeenCalledOnce();
 });
 it('Stop during a pointer press releases without clicking or opening the Picker',async()=>{
   const f=menu(),click=vi.fn();f.opener.onclick=click;f.opener.addEventListener('mousedown',()=>{document.documentElement.dataset.hanuDirectStopped='1';});

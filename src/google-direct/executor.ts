@@ -137,7 +137,11 @@ export class DirectExecutor {
             if(answer.issue||!answer.values.length&&!q.required)continue;
             let done=false;const deadline=Date.now()+5000;
             while(Date.now()<deadline){
-              await guard();const state=(await chrome.scripting.executeScript({target:{tabId},func:prepareUploadAnswer,args:[{questionId:q.id,entryId:q.entryId!,label:q.label,kind:q.kind,value:answer.values[0]??''}]}))[0]?.result;
+              await guard();const injected=(await chrome.scripting.executeScript({target:{tabId},func:prepareUploadAnswer,args:[{questionId:q.id,entryId:q.entryId!,label:q.label,kind:q.kind,value:answer.values[0]??''}]}))[0];
+              const injectionError=(injected as {error?:{message?:string}|string}|undefined)?.error;
+              if(injectionError)throw new Error(`${q.label}: ${typeof injectionError==='string'?injectionError:injectionError.message??'Không đọc được điều khiển Google.'}`);
+              const state=injected?.result;
+              if(!state){await delay(75);continue;}
               if(state?.done){done=true;break;}
               if(state?.waiting){await delay(40);continue;}
               if(state?.keys){await dialogs!.keys(state.keys);await delay(100);continue;}
@@ -148,7 +152,7 @@ export class DirectExecutor {
           }
         };
         const problems=plan.answers.filter(a=>a.issue&&!schema.sections.flatMap(s=>s.questions).some(q=>q.id===a.questionId&&q.kind==='file'));
-        if(plan.blockers.some(b=>/nhánh|Nhánh|vòng lặp/.test(b)))throw new Error(problems.map(a=>`${a.label}: ${a.issue}`).join(' · ')||'Chưa xác định được lộ trình form.');
+        if(plan.blockers.some(b=>/nhánh|Nhánh|vòng lặp|điều hướng/.test(b)))throw new Error(problems.map(a=>`${a.label}: ${a.issue}`).join(' · ')||'Chưa xác định được lộ trình form.');
         const fileQuestions=schema.sections.flatMap(s=>s.questions).filter(q=>q.kind==='file'&&plan.answers.some(a=>a.questionId===q.id));
         if(fileQuestions.length>1)throw new Error('Direct hiện tự tải một ảnh trên nhánh đã chọn. Tiếp quản trên form để hoàn tất các tệp còn lại.');
         const fileQuestion=fileQuestions[0];
