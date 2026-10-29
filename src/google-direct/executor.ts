@@ -165,6 +165,7 @@ export class DirectExecutor {
         }
         let committedUpload=!!input.resume&&fileQuestion!==undefined&&plan.pageHistory.indexOf(page.history.at(-1)!)>plan.pageHistory.indexOf(schema.sections.findIndex(s=>s.questions.some(q=>q.id===fileQuestion.id)));
         let fastRequestsAvailable=true;
+        let draftRewinds=0;
         const seen=new Map<number,number>();
         for(let step=0;step<schema.sections.length*3+1;step++){
           await guard();
@@ -178,12 +179,24 @@ export class DirectExecutor {
           if(attempted)throw new Error('Google trả lại trang form sau request Gửi; giữ khóa và đối chiếu phản hồi, không tự gửi lại.');
           if(!page.script||directSchemaFingerprint(parseDirectSchema(page.script))!==expectedSchema)throw new Error('Schema form thay đổi trong lúc chạy.');
           const index=page.history.at(-1)??0;
+          if(page.draftUpdated&&index===0){
+            if(++draftRewinds>1)throw new Error('Google liên tục đổi bản nháp. Giữ nguyên form và tiếp quản để tránh chạy lặp.');
+            seen.clear();committedUpload=false;
+          }
           const visits=seen.get(index)??0;
           if(visits&&(!page.draftUpdated||visits>=3))throw new Error(`Google trả lại trang ${index+1}; kiểm tra dữ liệu/validation, chưa tự gửi lại.`);
           seen.set(index,visits+1);
           if(!plan.pageHistory.includes(index))throw new Error('Google chuyển sang nhánh khác với dữ liệu đã chuẩn bị.');
           const section=schema.sections[index];
           if(!section)throw new Error('Không xác định được trang hiện tại.');
+          // Updating a newer draft can return to the verified-email intro.
+          // Its native checkbox/revision handshake is required again; an empty
+          // synthetic POST cannot stand in for Google's Next handler.
+          if(index===0&&section.questions.length===0){
+            await guard();dialogs.posting(true);
+            await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:beginExecutionSession,args:[formId]});
+            page=await changed(page);dialogs.posting(false);continue;
+          }
           const problem=!input.manualFinal&&problems.find(a=>section.questions.some(q=>q.id===a.questionId));
           if(problem){
             const q=directQuestionSummary(section.questions.find(q=>q.id===problem.questionId)!);
@@ -229,6 +242,14 @@ export class DirectExecutor {
           const preparedFlow=fastRequestsAvailable&&input.fastSubmit===true&&input.mode==='live'&&committedUpload&&!input.manualFinal&&remaining.length>0&&remaining.every(q=>q.kind!=='file'&&!!plan.answers.find(a=>a.questionId===q.id&&!a.issue));
           const final=!page.hasNext&&page.hasSubmit;
           const preparedFinish=preparedFlow&&final;
+          // Test must keep real editable pages. Let Google's own Next commit
+          // its latest draft after upload, as the classic filler does, instead
+          // of navigating a synthetic form while autosave is still active.
+          if(input.mode==='test'&&committedUpload&&!final){
+            await prepareNativeSection(section);await guard();dialogs.posting(true);posts++;
+            await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:beginExecutionSession,args:[formId]});
+            page=await changed(page);dialogs.posting(false);continue;
+          }
           // Fully resolved Live sections advance with Google's issued state.
           // Unknown answers, Test and recovery keep real Google pages, with
           // Google's client validation before the ordinary final submission.

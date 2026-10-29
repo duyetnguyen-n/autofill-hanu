@@ -271,8 +271,8 @@ export function cancelExecutionPage():void {
   document.dispatchEvent(new Event('hanu-direct-stop'));
 }
 
-// Use Google's own first Next to obtain its actual draft revision. Only the
-// verified-email introduction is eligible; never guess Date.now() for dlut.
+// Use Google's own Next handler to commit controls and obtain its actual
+// draft revision, including the verified-email intro. Never invent dlut.
 export function beginExecutionSession(formId:string):boolean {
   if(location.origin!=='https://docs.google.com'||!location.pathname.includes(`/d/e/${formId}/`))throw new Error('Sai form khởi tạo.');
   const form=document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');

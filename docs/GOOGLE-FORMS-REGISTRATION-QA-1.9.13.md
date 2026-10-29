@@ -43,4 +43,24 @@ Link rút gọn cần mở thành URL trả lời đầy đủ trước khi đư
   `https://docs.google.com/forms/d/e/1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ/viewform`.
   Đã đọc schema thật, kiểm tra nhánh CCCD và câu hỏi năm. Chưa gửi phản hồi.
 
-Kết quả chạy extension trên Chrome được ghi tiếp sau khi Reload bản mới.
+## Chrome 1.9.13 và bản sửa 1.9.14
+
+Server commit `919bee1` Live lúc 10:02:02. Extension 1.9.13 đã Reload.
+Run `f4241407-05ed-4a2a-8d98-1e829056a7fa`, Test với toàn bộ hồ sơ giả:
+
+- Qua các trang cam kết, tên, CCCD và các câu trên trang upload.
+- Google xác nhận ảnh tổng hợp 1.229.883 byte sau 9,3 giây (10:03:08–18).
+- Sau upload, lúc đi trang ngân hàng Google báo có bản nháp mới hơn, cập nhật
+  rồi quay về phần email đầu. Executor phát POST rỗng thay cho khởi tạo
+  checkbox/phiên gốc và hết hạn 35 giây. Không có request Gửi cuối.
+- Đã Dừng và xóa bản nháp do lượt này tạo. Không tính lượt này thành công.
+
+1.9.14 đổi các bước sau upload trong Test sang điền điều khiển thật và dùng
+Next của Google, để chính Google commit bản nháp trước chuyển trang. Live
+đủ đáp án vẫn giữ request tuần tự đã kiểm chứng. Nếu cập nhật bản nháp quay
+về phần đầu, khởi tạo lại bằng Next gốc và làm mới dấu vết đã thăm một lần;
+nếu lặp lại thì giữ form để tiếp quản, không chạy vô hạn hoặc tự Gửi lại.
+
+Typecheck và 111 kiểm thử liên quan đạt, gồm native Next sau upload, quay
+về phần đầu không phát POST rỗng, và chặn lặp đổi bản nháp. Đã build extension
+1.9.14. Kết quả Chrome sau Reload được ghi tiếp sau đối chiếu.

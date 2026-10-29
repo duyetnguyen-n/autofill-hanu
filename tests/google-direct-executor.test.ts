@@ -12,8 +12,8 @@ import {armDirectManualSubmit,prepareDirectNativeSubmit,directManualReady,restor
 const script = `var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectDocument;delete document.documentElement.dataset.hanuDirectPost;delete document.documentElement.dataset.hanuDirectStopped;sessionStorage.clear();});
 function profile(){const p=emptyProfile();p.values={...p.values,fullName:'NGHIEN CUU LAB',identityType:'CCCD',identityNumber:'000000000000',gender:'Nam',birthDate:'2000-01-01',nationality:'Việt Nam',motherTongue:'Tiếng Việt',email:'hanu.lab.request@gmail.com',phone:'0000000000',chineseStudyDuration:'1 năm',paymentMethod:'E-BANKING',bankAccountNumber:'0',bankAccountHolder:'NGHIEN CUU LAB',bankName:'BIDV',firstCommitment:'true',termsCommitment:'true'};return p;}
-function fixture(options:{url?:string;uncertain?:boolean;lease?:boolean;accountChanged?:boolean;priorPending?:boolean;validationReturn?:boolean;clientValidation?:boolean;finalPage?:boolean}={}){
-  let index=options.finalPage?7:0,submitted=false;
+function fixture(options:{draftRewinds?:number;url?:string;uncertain?:boolean;lease?:boolean;accountChanged?:boolean;priorPending?:boolean;validationReturn?:boolean;clientValidation?:boolean;finalPage?:boolean}={}){
+  let index=options.finalPage?7:0,submitted=false,rewinds=options.draftRewinds??0;
   const posts:PagePost[]=[],data:Record<string,any>={executionLease:{active:!!options.lease},submissionLocks:{}};
   const url=options.url??DIRECT_LAB_URL,key=`googleDirectSubmit:${directFormId(url)}:fixture@example.test`;
   if(options.priorPending)data[key]={status:'pending',runId:'prior'};
@@ -27,7 +27,7 @@ function fixture(options:{url?:string;uncertain?:boolean;lease?:boolean;accountC
     if(func===prepareDirectNativeSubmit)return [{result:{ready:!options.clientValidation,message:'Google: sai dữ liệu'}}];
     if(func===prepareUploadAnswer)return [{result:{done:true}}];
     if(func===resetExecutionPage)return [{result:undefined}];
-    if(func===beginExecutionSession){index++;return [{result:true}];}
+    if(func===beginExecutionSession){if(index===5&&rewinds>0){rewinds--;index=0;pages[0]={...pages[0],documentKey:`rewound-${rewinds}`,draftUpdated:true};}else index++;return [{result:true}];}
     if(func===inspectExecutionUpload)return [{result:{state:'ready'}}];
     if(func===postExecutionPage){if(args[0].validateOnly)return [{result:{scheduled:true}}];posts.push(args[0]);if(args[0].final){submitted=true;return [{result:{scheduled:true,finalResult:{status:200,received:!options.uncertain,message:options.uncertain?'Chưa nhận được xác nhận.':'Google xác nhận đã ghi lại phản hồi.'}}}];}else if(options.validationReturn&&index===2)pages[index]={...pages[index],documentKey:'validation-return'};else index++;return [{result:{scheduled:true}}];}
     throw new Error('Unexpected injection');
@@ -45,6 +45,22 @@ it.each(['another-form','third-form','1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3
 it('preserves the durable received lock for an actual registration outside the repeatable LABs',async()=>{
   vi.useFakeTimers();const f=fixture({url:'https://docs.google.com/forms/d/e/real-registration-form/viewform'});f.data[f.key]={status:'received',runId:'previous-registration'};
   const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'failed',postCount:0,message:expect.stringContaining('đăng ký trùng')});expect(f.posts).toHaveLength(0);
+});
+it('uses Google native Next after upload in Test, preparing bank/commitment controls before navigating',async()=>{
+  vi.useFakeTimers();const f=fixture(),events:string[]=[];const original=f.executeScript.getMockImplementation()!;
+  f.executeScript.mockImplementation(async r=>{if(r.func===prepareUploadAnswer)events.push(`fill:${r.args[0].questionId}`);if(r.func===beginExecutionSession)events.push('native-next');return original(r);});
+  const running=f.run({mode:'test'});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'ready'});
+  expect(f.posts.every(p=>!p.uploadEntries.length&&!p.final)).toBe(true);
+  expect(events.filter(e=>e==='native-next')).toHaveLength(4); // intro, upload, bank, commitment
+  expect(events.at(-1)).toBe('fill:982814777');
+});
+it('reinitializes the verified-email intro after Google refreshes a newer draft, without an empty intro POST',async()=>{
+  vi.useFakeTimers();const f=fixture({draftRewinds:1}),running=f.run({mode:'test'});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'ready'});expect(f.posts.every(p=>p.history?.at(-1)!==0&&!p.final)).toBe(true);
+});
+it('stops repeated draft rewinds without a final request or endless replay',async()=>{
+  vi.useFakeTimers();const f=fixture({draftRewinds:2}),running=f.run({mode:'test'});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'failed',message:expect.stringContaining('liên tục đổi bản nháp')});expect(f.posts.some(p=>p.final)).toBe(false);
 });
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
   vi.useFakeTimers();const f=fixture();const promise=f.run();await vi.runAllTimersAsync();
