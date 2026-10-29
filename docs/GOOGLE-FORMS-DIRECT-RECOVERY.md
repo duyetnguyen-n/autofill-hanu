@@ -1,10 +1,15 @@
 # Tiếp tục đăng ký khi Google Forms Direct cần xử lý
 
-Áp dụng từ bản Online 1.9.15. Engine Direct vẫn tách riêng và đã bỏ giới hạn
+Áp dụng từ bản Online 1.9.16. Engine Direct vẫn tách riêng và đã bỏ giới hạn
 hai form LAB. Không thay engine Google Forms cũ. Test dừng trước Gửi; Live
 gửi trên form được chọn. Form ngoài LAB giữ khóa sau khi gửi thành công.
 
 ## Luồng dự phòng
+
+Trong Chi tiết profile → Nhật ký lượt chạy → Lịch sử, mở một lượt có snapshot
+và chọn **Xem hồ sơ của lượt này** để nạp bản xem trước. Kiểm tra dữ liệu rồi
+bấm **Lưu và đồng bộ** nếu muốn dùng lại; chỉ xem snapshot không tự lưu đè.
+Nút Quay lại gốc ở trang cuối được giữ như điều hướng, không xin khóa Gửi.
 
 Trang upload dùng Google Picker và nút Tiếp gốc để ghi nhận ảnh cùng các ô
 cùng trang. Ở Live, nếu toàn bộ câu còn lại đã có đáp án hợp lệ, các trang

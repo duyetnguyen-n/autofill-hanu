@@ -1,4 +1,4 @@
-# Google Forms Direct 1.9.13–1.9.15 — form đăng ký ngoài LAB
+# Google Forms Direct 1.9.13–1.9.16 — form đăng ký ngoài LAB
 
 Ngày 29/10/2026. Sửa giới hạn hai mã form LAB đã gây lỗi khi dùng form đăng ký.
 Chức năng Google Forms cũ vẫn riêng, không thay engine cũ.
@@ -125,3 +125,28 @@ Không đọc được partialResponse qua công cụ do giá trị bị che; kh
   được Git bỏ qua. Còn phải đồng bộ trả lại và dọn bản nháp khi profile mở lại.
 - Render yêu cầu đăng nhập lại trước khi triển khai nút mở snapshot mới;
   không ghi nhận phần này đã Live khi chưa xác nhận trên dashboard.
+
+## Hoàn tất sau khi kết nối lại
+
+- Người dùng mở lại profile ntduyet260602 và đăng nhập Render. Đã khôi phục
+  đủ 19 trường từ snapshot 09:41:25, tên profile/email liên kết giữ nguyên.
+  Ảnh gốc `2303220045529.jpg` (1.232.696 byte) được nạp lại từ tệp gốc.
+  Manager báo đã lưu và đồng bộ; đóng/mở Chi tiết kiểm tra lại 19/19 trường
+  khớp và đúng ảnh gốc. Không gửi hồ sơ gốc tới Google Form.
+- Xóa bản nháp Test ở đúng tài khoản Google trên form được cung cấp, xác nhận
+  checkbox email trở lại chưa chọn và đóng tab thử. Đã Dừng lượt cũ; dashboard
+  giữ Test, ND bỏ chọn, không có profile đang chạy. Không tạo phản hồi mới.
+- Người dùng đã xác nhận Reload Online 1.9.16.
+- Render báo **Live commit `f9b031e` lúc 22:29:01 ngày 29/10/2026**.
+- Kiểm tra UI thực tế nút **Xem hồ sơ của lượt này** trên lịch sử run
+  `f9707a9a-fd95-47ab-8624-cb8cf14aa702`: mở đúng dữ liệu giả của snapshot,
+  có thông báo chưa lưu. Đóng không bấm Lưu, mở lại kiểm tra đủ 19 trường
+  gốc và ảnh gốc vẫn nguyên, trạng thái đồng bộ vẫn đúng.
+- Ảnh UI chỉ chứa snapshot giả:
+  `test-results/google-direct-registration-20261029/backup-history-control-1.9.16.png`.
+- Sau xác nhận khôi phục, xóa bản JSON riêng tư tạm dùng để phục hồi; snapshot
+  lịch sử trong app vẫn được giữ nguyên. Không đưa dữ liệu cá nhân vào Git.
+
+Giới hạn đối chiếu: lượt Chrome tự động đầy đủ đã ghi ở trên dùng 1.9.15.
+1.9.16 được Reload, kiểm tra nút xem snapshot trên server và 140 test liên
+quan đạt; không tạo thêm lượt gửi Google sau khi khôi phục hồ sơ gốc.
