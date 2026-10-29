@@ -3,6 +3,8 @@ import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
 import {DIRECT_LAB_URL} from '../src/google-direct/schema';
 import {inspectDirectForm} from '../src/google-direct/inspect';
+const executorMocks=vi.hoisted(()=>({run:vi.fn(),resolveNotReceived:vi.fn()}));
+vi.mock('../src/google-direct/executor',()=>({DirectExecutor:class {run=executorMocks.run;resolveNotReceived=executorMocks.resolveNotReceived;}}));
 
 const metadata = readFileSync('tests/fixtures/google-direct-lab.json','utf8');
 const inspection = {url:DIRECT_LAB_URL,action:DIRECT_LAB_URL.replace('viewform','formResponse'),script:`var FB_PUBLIC_LOAD_DATA_ = ${metadata};`,sessionFields:['fbzx','token','pageHistory'],hasUpload:true};
@@ -15,6 +17,7 @@ async function page(executeScript = vi.fn(async () => [{result:inspection}])) {
   await import('../src/google-direct/page');
   await vi.waitFor(() => expect(document.querySelectorAll('#formTab option')).toHaveLength(2));
   const tabs = document.querySelector<HTMLSelectElement>('#formTab')!;tabs.value = '42';tabs.dispatchEvent(new Event('change'));
+  const source = document.querySelector<HTMLSelectElement>('#source')!;source.value='fixture';source.dispatchEvent(new Event('change'));
   return {write,send,network,executeScript};
 }
 it('reads a selected form, previews a synthetic request, and never sends/writes/starts the legacy engine',async () => {
@@ -33,6 +36,16 @@ it('reads a selected form, previews a synthetic request, and never sends/writes/
   expect(document.querySelector<HTMLElement>('#results')!.hidden).toBe(true);
   expect(document.querySelector('#payload')!.textContent).toBe('');
   expect(reveal.checked).toBe(false);
+});
+it('executes the inspected unfamiliar form in Test, never the default LAB URL',async()=>{
+  const url='https://docs.google.com/forms/d/e/unfamiliar-registration/formResponse?pli=1';
+  await page(vi.fn(async()=>[{result:{...inspection,url,action:url.split('?')[0]}}]));
+  executorMocks.run.mockResolvedValue({runId:'new',status:'ready',postCount:4,message:'Ready before Submit'});
+  document.querySelector<HTMLButtonElement>('#inspect')!.click();
+  await vi.waitFor(()=>expect(document.querySelector<HTMLElement>('#results')!.hidden).toBe(false));
+  document.querySelector<HTMLButtonElement>('#execute')!.click();
+  await vi.waitFor(()=>expect(executorMocks.run).toHaveBeenCalled());
+  expect(executorMocks.run).toHaveBeenLastCalledWith(expect.objectContaining({url,mode:'test',tabId:42}));
 });
 it('discards an in-flight inspection when the selected source changes',async () => {
   let finish!: (value: any) => void;

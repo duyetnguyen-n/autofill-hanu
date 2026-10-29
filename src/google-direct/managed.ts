@@ -4,7 +4,7 @@ import {sha256} from '../protocol';
 import {matchesFinalQuestionLabel,type RunState,type FinalQuestion,validateFinalQuestion} from '../shared';
 import {directQuestionSummary} from './verification';
 import {DirectExecutor} from './executor';
-import {directLabFormId,parseDirectSchema} from './schema';
+import {directFormId,parseDirectSchema} from './schema';
 import {readExecutionPage,cancelExecutionPage} from './execute-page';
 import {showDirectRecovery,restoreDirectNativePage,armDirectManualSubmit,disarmDirectManualSubmit} from './recovery-page';
 import {DirectPageDialogs} from './dialogs';
@@ -32,7 +32,7 @@ export class ManagedDirect {
   }
   async start(c:Command,sessionId:string){
     if(!['test','live'].includes(String(c.payload.mode)))throw new Error('Chế độ chạy không hợp lệ.');
-    const formId=directLabFormId(String(c.payload.url));validateFinalQuestion(c.payload.finalQuestion);
+    const formId=directFormId(String(c.payload.url));validateFinalQuestion(c.payload.finalQuestion);
     const preparedFinalAnswer=c.payload.preparedFinalAnswer;
     if(preparedFinalAnswer!==undefined&&(typeof preparedFinalAnswer!=='string'||!preparedFinalAnswer.trim()||preparedFinalAnswer.length>10000))throw new Error('Đáp án chuẩn bị trước không hợp lệ.');
     if(!c.runId)throw new Error('Thiếu mã lượt thử nghiệm.');
@@ -62,6 +62,7 @@ export class ManagedDirect {
         const latest=await this.run();if(latest?.runId!==r.runId)throw new Error('Lượt đã thay đổi.');
       };
       try{
+        const url=r.url;if(!url)throw new Error('Không còn link form của lượt Direct. Chọn lại đúng form trước khi chạy.');
         let overrides:Record<string,string>={};
         // Resolve verification from the configured question on the actual schema,
         // never infer the fee from a numeric validation expression.
@@ -83,7 +84,7 @@ export class ManagedDirect {
           overrides={[matches[0].id]:r.finalQuestion.value};
         };
         // Executor opens and waits for the responder before resolving its schema.
-        const result=await new DirectExecutor().run({tabId:r.tabId,url:r.url,runId:r.runId,mode:r.mode,resume,manualFinal,fastSubmit:true,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
+        const result=await new DirectExecutor().run({tabId:r.tabId,url,runId:r.runId,mode:r.mode,resume,manualFinal,fastSubmit:true,managed:true,profile:r.profileSnapshot!,overrides,expectedEmail:r.expectedEmail,
           signal:controller.signal,assertActive:valid,
           onTab:async tabId=>{await valid();r=await this.save({...r,tabId});},
           onSchema:async(tabId)=>{await resolveOverrides(tabId);return overrides;},
@@ -120,7 +121,7 @@ export class ManagedDirect {
     if(c.kind==='SCAN_FORM'){
       if(r.tabId<0)throw new Error('Chưa mở form thử nghiệm.');
       const page=(await chrome.scripting.executeScript({target:{tabId:r.tabId},func:readExecutionPage}))[0]?.result;
-      if(!page?.script||directLabFormId(page.url)!==r.formId)throw new Error('Tab đã rời form thử nghiệm.');
+      if(!page?.script||directFormId(page.url)!==r.formId)throw new Error('Tab đã rời form thử nghiệm.');
       return {runId:r.runId,formId:r.formId,url:page.url,questions:parseDirectSchema(page.script).sections.flatMap(s=>s.questions).map(directQuestionSummary)};
     }
     if(c.kind==='RESUME'){
@@ -153,7 +154,7 @@ export class ManagedDirect {
   async pageLoaded(tabId:number){
     const r=await this.run();if(!r||r.tabId!==tabId)return;
     const page=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;
-    if(!page||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase()||directLabFormId(page.url)!==r.formId)return;
+    if(!page||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase()||directFormId(page.url)!==r.formId)return;
     const current=await this.run();if(!current||current.runId!==r.runId||current.eventSeq!==r.eventSeq)return;
     await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:['idle','completed'].includes(r.status)?disarmDirectManualSubmit:armDirectManualSubmit});
     await chrome.scripting.executeScript({target:{tabId},func:showDirectRecovery,args:[{runId:r.runId!,formId:r.formId,account:r.expectedEmail!,status:r.status,mode:r.mode,eventSeq:r.eventSeq,preservePrepared:this.manualBusy||!!this.task,manual:!!r.manualTakeover,message:r.blockingIssue?.message??r.activity?.message??r.logs.at(-1)?.message??'Giữ nguyên dữ liệu; có thể tiếp quản trên form.'}]});
@@ -167,7 +168,7 @@ export class ManagedDirect {
       let r=await this.run();
       if(!r||r.runId!==runId||r.tabId!==tabId||r.submitAttempted||['idle','completed','submit_uncertain'].includes(r.status))throw new Error('Lượt đã đổi hoặc đã khóa gửi. Đối chiếu kết quả trước.');
       const page=(await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage}))[0]?.result;
-      if(!page||page.documentKey!==documentKey||directLabFormId(page.url)!==r.formId||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase())throw new Error('Trang hoặc tài khoản Google đã thay đổi.');
+      if(!page||page.documentKey!==documentKey||directFormId(page.url)!==r.formId||page.account.toLowerCase()!==r.expectedEmail?.toLowerCase())throw new Error('Trang hoặc tài khoản Google đã thay đổi.');
       if(action==='takeover'){
         await this.interrupt();await this.task;r=(await this.run())!;
         if(r.runId!==runId||r.submitAttempted)throw new Error('Đã bắt đầu gửi; cần đối chiếu kết quả trước khi tiếp quản.');

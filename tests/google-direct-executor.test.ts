@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
 import {DirectExecutor,type DirectRunInput} from '../src/google-direct/executor';
-import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL} from '../src/google-direct/schema';
+import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL,directFormId} from '../src/google-direct/schema';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from '../src/google-direct/execute-page';
 import {DirectPageDialogs} from '../src/google-direct/dialogs';
 import {StoredPickerUploads} from '../src/stored-picker-upload';
@@ -12,13 +12,13 @@ import {armDirectManualSubmit,prepareDirectNativeSubmit,directManualReady,restor
 const script = `var FB_PUBLIC_LOAD_DATA_ = ${readFileSync('tests/fixtures/google-direct-lab.json','utf8')};`;
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();document.body.replaceChildren();delete document.documentElement.dataset.hanuDirectDocument;delete document.documentElement.dataset.hanuDirectPost;delete document.documentElement.dataset.hanuDirectStopped;sessionStorage.clear();});
 function profile(){const p=emptyProfile();p.values={...p.values,fullName:'NGHIEN CUU LAB',identityType:'CCCD',identityNumber:'000000000000',gender:'Nam',birthDate:'2000-01-01',nationality:'Việt Nam',motherTongue:'Tiếng Việt',email:'hanu.lab.request@gmail.com',phone:'0000000000',chineseStudyDuration:'1 năm',paymentMethod:'E-BANKING',bankAccountNumber:'0',bankAccountHolder:'NGHIEN CUU LAB',bankName:'BIDV',firstCommitment:'true',termsCommitment:'true'};return p;}
-function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:boolean;priorPending?:boolean;validationReturn?:boolean;clientValidation?:boolean;finalPage?:boolean}={}){
+function fixture(options:{url?:string;uncertain?:boolean;lease?:boolean;accountChanged?:boolean;priorPending?:boolean;validationReturn?:boolean;clientValidation?:boolean;finalPage?:boolean}={}){
   let index=options.finalPage?7:0,submitted=false;
   const posts:PagePost[]=[],data:Record<string,any>={executionLease:{active:!!options.lease},submissionLocks:{}};
-  const key=`googleDirectSubmit:${DIRECT_LAB_FORM_ID}:fixture@example.test`;
+  const url=options.url??DIRECT_LAB_URL,key=`googleDirectSubmit:${directFormId(url)}:fixture@example.test`;
   if(options.priorPending)data[key]={status:'pending',runId:'prior'};
   const history=[0,1,2,3,5,6,7,8];
-  const pages:ExecutionPage[]=history.map((n,i)=>({url:DIRECT_LAB_URL,documentKey:`doc-${i}`,script,history:history.slice(0,i+1),account:options.accountChanged&&i>0?'other@example.test':'fixture@example.test',hasForm:true,hasNext:i<history.length-1,hasSubmit:i===history.length-1,text:'Fixture form',blocked:false}));
+  const pages:ExecutionPage[]=history.map((n,i)=>({url,documentKey:`doc-${i}`,script,history:history.slice(0,i+1),account:options.accountChanged&&i>0?'other@example.test':'fixture@example.test',hasForm:true,hasNext:i<history.length-1,hasSubmit:i===history.length-1,text:'Fixture form',blocked:false}));
   const confirmation:ExecutionPage={...pages[0],documentKey:'confirmed',script:undefined,history:[],account:'',hasForm:false,hasNext:false,hasSubmit:false,text:options.uncertain?'Thank you':'Câu trả lời của bạn đã được ghi lại'};
   const executeScript=vi.fn(async({func,args}:any):Promise<any>=>{
     if(func===readExecutionPage)return [{result:submitted?confirmation:pages[index]??confirmation}];
@@ -34,9 +34,18 @@ function fixture(options:{uncertain?:boolean;lease?:boolean;accountChanged?:bool
   });
   vi.stubGlobal('chrome',{scripting:{executeScript},storage:{local:{get:vi.fn(async(keys:any)=>keys===null?{...data}:typeof keys==='string'?{[keys]:data[keys]}:Object.fromEntries(keys.map((k:string)=>[k,data[k]]))),set:vi.fn(async(values:any)=>Object.assign(data,values))}}});
   Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_name:any,options:any,callback:any)=>(callback??options)({name:'fixture-lock'})}});
-  const run=(extra:Partial<DirectRunInput>={})=>new DirectExecutor().run({tabId:42,profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),...extra});
+  const run=(extra:Partial<DirectRunInput>={})=>new DirectExecutor().run({tabId:42,url,profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),...extra});
   return {posts,data,key,run,executeScript};
 }
+it.each(['another-form','third-form','1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ'])('runs Test on an unfamiliar form %s and never dispatches final submit',async form=>{
+  vi.useFakeTimers();const f=fixture({url:`https://docs.google.com/forms/u/0/d/e/${form}/formResponse?pli=1`});
+  const beforeSubmit=vi.fn(),running=f.run({mode:'test',beforeSubmit});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:'ready'});expect(f.posts.length).toBeGreaterThan(0);expect(f.posts.every(p=>p.formId===form&&!p.final)).toBe(true);expect(beforeSubmit).not.toHaveBeenCalled();
+});
+it('preserves the durable received lock for an actual registration outside the repeatable LABs',async()=>{
+  vi.useFakeTimers();const f=fixture({url:'https://docs.google.com/forms/d/e/real-registration-form/viewform'});f.data[f.key]={status:'received',runId:'previous-registration'};
+  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'failed',postCount:0,message:expect.stringContaining('đăng ký trùng')});expect(f.posts).toHaveLength(0);
+});
 it('automatically posts the CCCD route, checks Google upload, locks before final POST and verifies acknowledgement',async()=>{
   vi.useFakeTimers();const f=fixture();const promise=f.run();await vi.runAllTimersAsync();
   expect(await promise).toMatchObject({status:'received',postCount:6});
@@ -216,8 +225,8 @@ it('does not classify a HTTP 200 returned form as a received response',async()=>
   expect(await postExecutionPage(request)).toMatchObject({finalResult:{received:false}});
 });
 it('releases only an explicitly reconciled pending run, retaining its audit metadata',async()=>{
-  const f=fixture({priorPending:true});await new DirectExecutor().resolveNotReceived('prior');expect(f.data[f.key]).toMatchObject({runId:'prior',status:'not_received'});
-  await expect(new DirectExecutor().resolveNotReceived('other')).rejects.toThrow('Không còn đúng khóa');
+  const f=fixture({priorPending:true});await new DirectExecutor().resolveNotReceived('prior',DIRECT_LAB_FORM_ID);expect(f.data[f.key]).toMatchObject({runId:'prior',status:'not_received'});
+  await expect(new DirectExecutor().resolveNotReceived('other',DIRECT_LAB_FORM_ID)).rejects.toThrow('Không còn đúng khóa');
 });
 
 it('rejects a fabricated final-page history before any request',async()=>{
@@ -230,7 +239,7 @@ it('Stop cancels a queued native navigation before it can dispatch',async()=>{
 });
 it('explicit Test mode traverses to the actual final page and never invokes the final grant or POST',async()=>{
   vi.useFakeTimers();const f=fixture(),beforeSubmit=vi.fn();
-  const promise=new DirectExecutor().run({tabId:42,mode:'test',profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),beforeSubmit});
+  const promise=new DirectExecutor().run({tabId:42,url:DIRECT_LAB_URL,mode:'test',profile:profile(),overrides:{'982814777':'2026'},expectedScript:script,file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},signal:new AbortController().signal,onProgress:vi.fn(),beforeSubmit});
   await vi.runAllTimersAsync();expect(await promise).toMatchObject({status:'ready'});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.every(p=>!p.final)).toBe(true);expect(f.data[f.key]).toBeUndefined();
 });
 
@@ -282,12 +291,12 @@ it('captures the draft revision generated by Google on native upload Next rather
 
 it('leaves the real final page editable when Google client validation rejects, without granting or posting',async()=>{
   vi.useFakeTimers();const f=fixture({clientValidation:true}),beforeSubmit=vi.fn();
-  const running=new DirectExecutor().run({tabId:42,profile:profile(),overrides:{'982814777':'2026'},file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},beforeSubmit,signal:new AbortController().signal,onProgress:vi.fn()});
+  const running=new DirectExecutor().run({tabId:42,url:DIRECT_LAB_URL,profile:profile(),overrides:{'982814777':'2026'},file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},beforeSubmit,signal:new AbortController().signal,onProgress:vi.fn()});
   await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'waiting',message:'Google: sai dữ liệu'});expect(beforeSubmit).not.toHaveBeenCalled();expect(f.posts.every(p=>!p.final)).toBe(true);expect(f.data[f.key]).toBeUndefined();
 });
 it('uses the exact Google-validated manual body, even when configured verification differs',async()=>{
   vi.useFakeTimers();const f=fixture({finalPage:true}),beforeSubmit=vi.fn();
-  const running=new DirectExecutor().run({tabId:42,resume:true,manualFinal:'doc-7',profile:profile(),overrides:{'982814777':'WRONG CONFIGURED VALUE'},file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},beforeSubmit,signal:new AbortController().signal,onProgress:vi.fn()});
+  const running=new DirectExecutor().run({tabId:42,url:DIRECT_LAB_URL,resume:true,manualFinal:'doc-7',profile:profile(),overrides:{'982814777':'WRONG CONFIGURED VALUE'},file:{name:'fixture.png',type:'image/png',blob:new Blob(['fixture'])},beforeSubmit,signal:new AbortController().signal,onProgress:vi.fn()});
   await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'received'});expect(beforeSubmit).toHaveBeenCalledOnce();expect(f.posts).toHaveLength(1);expect(f.posts[0]).toMatchObject({final:true,manualReady:true,entries:[]});
 });
 

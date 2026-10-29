@@ -63,7 +63,7 @@ export function buildDirectPlan(schema: DirectSchema, profile: Profile, formId: 
       const customs = profile.customFields.filter(f => hasExactAlias(q.label,[f.label,...f.aliases]));
       const explicit = Object.hasOwn(overrides,q.id);
       const value = explicit ? overrides[q.id] : rule ? profile.values[rule.key] ?? '' : customs.length === 1 ? customs[0].value : '';
-      const answer: DirectAnswer = {questionId:q.id, entryId:q.entryId, label:q.label, source:explicit ? 'Nhập riêng cho Lab' : rule?.label ?? (customs.length === 1 ? customs[0].label : undefined), values:[]};
+      const answer: DirectAnswer = {questionId:q.id, entryId:q.entryId, label:q.label, source:explicit ? 'Nhập riêng cho form' : rule?.label ?? (customs.length === 1 ? customs[0].label : undefined), values:[]};
       plan.answers.push(answer);
       if (!q.entryId || q.kind === 'unsupported') answer.issue = 'Loại câu hỏi chưa hỗ trợ gửi trực tiếp.';
       else if (q.kind === 'file') {
@@ -97,7 +97,9 @@ export function buildDirectPlan(schema: DirectSchema, profile: Profile, formId: 
     if (unresolvedBranch) {plan.blockers.push('Chưa xác định nhánh tiếp theo; chưa lập dữ liệu các trang phía sau.');break;}
     if (destinations.size > 1) {plan.blockers.push('Có nhiều nhánh khác nhau trên cùng trang.');break;}
     const destination = [...destinations][0] ?? section.goTo;
-    if (destination === undefined) index++;
+    // -2 is Google's explicit "continue to next section" marker, observed
+    // against native Next on the independent registration form (2026-10-29).
+    if (destination === undefined || destination === -2) index++;
     else {
       if (destination < 0) {plan.blockers.push('Chưa kiểm chứng mã điều hướng đặc biệt của Google.');break;}
       const next = schema.sections.findIndex(s => s.id === destination);

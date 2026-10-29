@@ -4,19 +4,20 @@ import './style.css';
 import {getProfile} from '../storage';
 import {emptyProfile} from '../rules';
 import type {Profile} from '../shared';
-import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL, parseDirectSchema, type DirectSchema} from './schema';
+import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL,directFormId,parseDirectSchema,type DirectSchema} from './schema';
 import {inspectDirectForm, type DirectInspection} from './inspect';
 import {buildDirectPlan, previewDirectRequest} from './plan';
 import {DirectExecutor} from './executor';
 
 const root = document.querySelector<HTMLElement>('#directLab')!;
 root.innerHTML = `
-  <header><a href="sidepanel.html">HSK Autofill</a><span class="tag">NGHIÊN CỨU</span></header>
-  <div class="intro"><p class="eyebrow">GOOGLE FORMS DIRECT · LAB</p><h1>Chuẩn bị dữ liệu.<br>Kiểm tra trước khi gửi.</h1>
-  <p>Ghép hồ sơ có sẵn, tự chuẩn bị request, tải ảnh và gửi trên form Lab. Luồng Google Forms cũ chạy riêng.</p></div>
+  <header><a href="sidepanel.html">HSK Autofill</a><span class="tag">DIRECT</span></header>
+  <div class="intro"><p class="eyebrow">GOOGLE FORMS DIRECT</p><h1>Chuẩn bị dữ liệu.<br>Đăng ký trên form đã chọn.</h1>
+  <p>Dùng hồ sơ và ảnh đã lưu để đăng ký. Có thể tiếp quản trên Google Form khi cần bổ sung. Luồng Google Forms cũ chạy riêng.</p></div>
   <section aria-labelledby="setupTitle"><h2 id="setupTitle">01 / Chọn nguồn dữ liệu</h2>
     <div class="setup"><label>Tab Google Form<select id="formTab"><option value="">Chọn tab đang mở</option></select></label>
-    <label>Dữ liệu lập request<select id="source"><option value="fixture">Hồ sơ giả để nghiên cứu</option><option value="saved">Hồ sơ đã lưu trên Chrome này</option></select></label></div>
+    <label>Dữ liệu lập request<select id="source"><option value="saved">Hồ sơ đã lưu trên Chrome này</option><option value="fixture">Hồ sơ giả để kiểm tra</option></select></label></div>
+    <label>Chế độ chạy<select id="mode"><option value="test">Test · dừng trước Gửi</option><option value="live">Live · gửi đăng ký</option></select></label>
     <div class="toolbar"><button id="openTest">Mở form test</button><button id="refreshTabs">Làm mới danh sách</button><button id="inspect" class="primary">Đọc form và lập dữ liệu</button></div>
     <p id="message" role="status" aria-live="polite">Mở form trong Chrome đã đăng nhập, rồi chọn tab tương ứng.</p>
   </section>
@@ -29,10 +30,10 @@ root.innerHTML = `
       <p id="endpoint" class="mono"></p><p id="sessionFields"></p>
       <details><summary>Chẩn đoán cấu trúc trạng thái Google (không gồm token/đáp án)</summary><pre id="stateDiagnostics"></pre></details>
       <label class="reveal"><input id="showValues" type="checkbox"> Hiện giá trị hồ sơ trong payload</label><pre id="payload"></pre>
-      <p class="note">Lab không ghi lại hồ sơ, cookie, token hoặc payload vào bộ nhớ lưu trữ. Khi cần đổi đáp án, sửa tại đây; hồ sơ gốc được giữ nguyên.</p>
+      <p class="note">Bản xem trước không lưu cookie, token hoặc payload. Khi cần đổi đáp án, sửa tại đây; hồ sơ gốc được giữ nguyên.</p>
     </section>
-    <section><h2>04 / Tự chạy và gửi form Lab</h2><p>Tool tự chạy bằng dữ liệu đang xem. Hồ sơ giả dùng ảnh fixture 1×1; hồ sơ đã lưu dùng đúng ảnh trong Chrome này. Lệnh này sẽ tạo phản hồi thật trên form test.</p>
-      <div class="toolbar"><button id="execute" class="primary">Tự chạy và gửi form test</button><button id="stopExecute" hidden>Dừng</button></div>
+    <section><h2>04 / Chạy form đã chọn</h2><p>Test giữ dữ liệu trên form và dừng trước Gửi. Live tạo phản hồi thật. Kiểm tra nguồn hồ sơ và chế độ trước khi chạy.</p>
+      <div class="toolbar"><button id="execute" class="primary">Chạy form đã chọn</button><button id="stopExecute" hidden>Dừng</button></div>
       <p id="executionStatus" role="status" aria-live="polite">Chưa bắt đầu.</p>
       <button id="resolveNotReceived" hidden>Đã đối chiếu Google: chưa có phản hồi, cho phép thử lại</button>
     </section>
@@ -45,6 +46,7 @@ let busy = false;
 let generation = 0;
 let execution: AbortController | undefined;
 let uncertainRunId: string | undefined;
+let uncertainFormId: string | undefined;
 const executor = new DirectExecutor();
 function message(text: string, error = false) {element('message').textContent = text;element('message').className = error ? 'error' : '';}
 function fixtureProfile(): Profile {
@@ -69,6 +71,7 @@ function clearResults() {
   schema = undefined; inspection = undefined; overrides = {};
   element('results').hidden = true; element('answers').replaceChildren(); element('payload').textContent = '';
   element<HTMLInputElement>('showValues').checked = false;
+  uncertainRunId=undefined;uncertainFormId=undefined;element('resolveNotReceived').hidden=true;element<HTMLButtonElement>('execute').disabled=false;
 }
 function renderPlan() {
   if (!schema || !inspection) return;
@@ -91,7 +94,7 @@ function renderPlan() {
     } else {
       const input = document.createElement('input'); input.type = q.kind === 'text' && /cccd|number|email|phone/i.test(answer.source ?? '') ? 'password' : 'text';
       input.value = Object.hasOwn(overrides,q.id) ? overrides[q.id] : answer.values[0] ?? '';
-      input.setAttribute('aria-label',`Đáp án Lab: ${q.label}`); input.dataset.questionId = q.id;
+      input.setAttribute('aria-label',`Đáp án: ${q.label}`); input.dataset.questionId = q.id;
       input.disabled = !!execution;
       input.addEventListener('change',() => {overrides[q.id] = input.value;renderPlan();}); valueCell.append(input);
     }
@@ -124,7 +127,11 @@ async function inspect() {
     inspection = result[0].result; schema = parseDirectSchema(inspection.script);
     profile = source === 'saved' ? await getProfile() : fixtureProfile();
     if (version !== generation) return;
-    renderPlan(); message('Đã lập bản xem trước. Bấm Tự chạy và gửi form test để tool thực hiện toàn bộ lượt.');
+    const formId=directFormId(inspection.url),data=await chrome.storage.local.get(null);
+    if(version!==generation)return;
+    const pending=Object.entries(data).filter(([key,value])=>key.startsWith(`googleDirectSubmit:${formId}:`)&&value?.status==='pending');
+    if(pending.length===1){uncertainRunId=pending[0][1].runId;uncertainFormId=formId;element('resolveNotReceived').hidden=false;element<HTMLButtonElement>('execute').disabled=true;element('executionStatus').textContent='Form đang chọn có lượt trước chưa rõ kết quả. Đối chiếu trên Google trước khi cho phép thử lại.';}
+    renderPlan(); message('Đã lập bản xem trước. Kiểm tra dữ liệu rồi bấm Chạy form đã chọn.');
   } catch (error) {clearResults();message((error as Error).message,true);}
   finally {busy = false;element<HTMLButtonElement>('inspect').disabled = false;}
 }
@@ -136,8 +143,8 @@ element('showValues').addEventListener('change',renderPlan);
 element('execute').addEventListener('click',() => void execute());
 element('stopExecute').addEventListener('click',() => {execution?.abort();element('executionStatus').textContent='Đã yêu cầu dừng. Nếu request cuối đã phát, vẫn cần đối chiếu kết quả Google.';});
 element('resolveNotReceived').addEventListener('click',()=>void (async()=>{
-  if(!uncertainRunId||execution)return;
-  try{await executor.resolveNotReceived(uncertainRunId);uncertainRunId=undefined;element('resolveNotReceived').hidden=true;element<HTMLButtonElement>('execute').disabled=false;element('executionStatus').textContent='Đã ghi nhận đối chiếu chưa gửi. Có thể bắt đầu một lượt thử mới.';}
+  if(!uncertainRunId||!uncertainFormId||execution)return;
+  try{await executor.resolveNotReceived(uncertainRunId,uncertainFormId);uncertainRunId=undefined;uncertainFormId=undefined;element('resolveNotReceived').hidden=true;element<HTMLButtonElement>('execute').disabled=false;element('executionStatus').textContent='Đã ghi nhận đối chiếu chưa gửi. Có thể bắt đầu lượt mới.';}
   catch(error){element('executionStatus').textContent=(error as Error).message;}
 })());
 async function execute() {
@@ -146,31 +153,28 @@ async function execute() {
   const source = element<HTMLSelectElement>('source').value;
   const selected = Number(element<HTMLSelectElement>('formTab').value);
   for (const input of document.querySelectorAll<HTMLInputElement>('#answers input')) input.disabled=true;
-  for (const id of ['source','formTab','inspect','execute','refreshTabs','openTest']) (element(id) as HTMLButtonElement).disabled = true;
+  for (const id of ['source','mode','formTab','inspect','execute','refreshTabs','openTest']) (element(id) as HTMLButtonElement).disabled = true;
   element('stopExecute').hidden=false;
   let uncertain=false;
   try {
     const fixture = source === 'fixture';
     const file = fixture ? {name:'google-direct-lab-fixture.png',type:'image/png',blob:new Blob([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='),c=>c.charCodeAt(0))],{type:'image/png'})} : undefined;
-    const result = await executor.run({tabId:selected,profile:structuredClone(profile),overrides:{...overrides},expectedScript:inspection.script,file,signal:controller.signal,
+    const result = await executor.run({tabId:selected,url:inspection.url,mode:element<HTMLSelectElement>('mode').value as 'test'|'live',profile:structuredClone(profile),overrides:{...overrides},expectedScript:inspection.script,file,signal:controller.signal,
       onProgress:text=>{element('executionStatus').textContent=text;}});
     uncertain=result.status==='uncertain';
     uncertainRunId=uncertain?result.runId:undefined;
+    uncertainFormId=uncertain?directFormId(inspection.url):undefined;
     element('resolveNotReceived').hidden=!uncertain;
     element('executionStatus').textContent=`${result.status==='received'?'Đã gửi thành công':uncertain?'Chưa rõ kết quả':result.status==='stopped'?'Đã dừng':'Chưa gửi thành công'} · ${result.message} · ${result.postCount} request.`;
     element('executionStatus').className=result.status==='received'?'ok':'error';
   } catch(error) {element('executionStatus').textContent=(error as Error).message;element('executionStatus').className='error';}
   finally {
     execution=undefined;element('stopExecute').hidden=true;
-    for (const id of ['source','formTab','inspect','execute','refreshTabs','openTest']) (element(id) as HTMLButtonElement).disabled = false;
+    for (const id of ['source','mode','formTab','inspect','execute','refreshTabs','openTest']) (element(id) as HTMLButtonElement).disabled = false;
     for (const input of document.querySelectorAll<HTMLInputElement>('#answers input')) input.disabled=false;
     // A new inspection/run cannot clear an uncertain durable submit lock.
     if(uncertain)element<HTMLButtonElement>('execute').disabled=true;
   }
 }
 window.addEventListener('pagehide',()=>execution?.abort(),{once:true});
-void chrome.storage.local.get(null).then(data=>{
-  const pending=Object.entries(data).filter(([key,value])=>key.startsWith(`googleDirectSubmit:${DIRECT_LAB_FORM_ID}:`)&&value?.status==='pending').map(([,value])=>value);
-  if(pending.length===1){uncertainRunId=pending[0].runId;element('resolveNotReceived').hidden=false;element<HTMLButtonElement>('execute').disabled=true;element('executionStatus').textContent='Có lượt trước chưa rõ kết quả. Đối chiếu trên trang Câu trả lời của Google trước khi cho phép thử lại.';}
-}).catch(error=>message(`Chưa đọc được khóa gửi: ${(error as Error).message}`,true));
 void refreshTabs().catch(e => message(`Không đọc được tab Chrome: ${String(e)}`,true));

@@ -1,10 +1,11 @@
-// Research-only parser for Google's responder-page metadata. This is not a
-// documented Google API; fail closed when its shape changes. Never eval it.
+// Google's responder metadata is not a documented API. Validate its structure
+// for every form and stop for manual recovery when its shape changes.
 export const DIRECT_LAB_FORM_ID = '1FAIpQLScRrul5GFZkLQD21oVlarFeb1AbomeKoqOJGVsnW3k3XbMtIA';
 export const DIRECT_LAB_FORM_IDS = [DIRECT_LAB_FORM_ID,'1FAIpQLSevBk_8863gvlRtkeaKONg6H7y4teYgGU11SBQgg3LSAJNhlw'] as const;
-export function directLabFormId(url:string):string {
-  const u=new URL(url),id=u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/e\/([^/]+)\/(?:viewform|formResponse)$/)?.[1];
-  if(u.origin!=='https://docs.google.com'||!id||!(DIRECT_LAB_FORM_IDS as readonly string[]).includes(id))throw new Error('Gửi thử nghiệm hiện chỉ hỗ trợ hai form LAB đã đối chiếu.');
+export function directFormId(url:string):string {
+  let u:URL;try{u=new URL(url);}catch{throw new Error('Link Google Forms không hợp lệ.');}
+  const id=u.pathname.match(/^\/forms\/(?:u\/\d+\/)?d\/e\/([A-Za-z0-9_-]+)\/(?:viewform|formResponse)\/?$/)?.[1];
+  if(u.origin!=='https://docs.google.com'||u.username||u.password||!id)throw new Error('Dùng link trả lời Google Forms dạng docs.google.com/forms/d/e/…/viewform hoặc formResponse.');
   return id;
 }
 export const DIRECT_LAB_URL = `https://docs.google.com/forms/d/e/${DIRECT_LAB_FORM_ID}/viewform`;

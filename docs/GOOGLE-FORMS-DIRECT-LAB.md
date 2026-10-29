@@ -1,11 +1,11 @@
-# Google Forms thử nghiệm — 27/10/2026
+# Google Forms Direct — cập nhật 1.9.13 ngày 29/10/2026
 
 Kiểm tra Chrome Windows và sửa dropdown trong bản 1.9.5: xem
 [báo cáo ngày 28/10/2026](GOOGLE-FORMS-DIRECT-QA-20261028.md).
 
 ## Cách dùng và phạm vi
 
-Mở **Google Forms thử nghiệm** trong thanh điều hướng trang quản lý, đường dẫn
+Mở **Google Forms Direct** trong thanh điều hướng trang quản lý, đường dẫn
 `/google-direct`. Màn hình dùng chính component quản lý Google Forms hiện có:
 profile, ảnh, cấp HSK, lịch/link theo HSK, đáp án xác thực, theo dõi, Tạm dừng,
 Tiếp tục, Dừng từng profile, Dừng lượt và Dừng tất cả. Không cần thực hiện quy
@@ -17,15 +17,22 @@ Extension cũ thiếu capability `googleDirect` bị từ chối, không tự ch
 engine cũ. `google-direct.html` còn được build để chẩn đoán kỹ thuật, không còn
 được giới thiệu trong Side Panel như luồng sử dụng chính.
 
-Hiện executor thử nghiệm chỉ chấp nhận hai form LAB do người dùng sở hữu:
+Từ 1.9.13, Direct nhận link trả lời Google Forms bất kỳ dạng
+`https://docs.google.com/forms/d/e/<id>/viewform` hoặc `formResponse`, gồm
+đường dẫn tài khoản `/forms/u/<n>/d/e/…` và query. Không còn allowlist mã form.
+Extension phải báo capability `googleDirectForms`; bản cũ cần Reload/cập nhật.
+Lấy cấu trúc, mã câu hỏi, nhánh và kiểm tra dữ liệu từ chính form được chọn.
+Câu chưa ghép được/kiểu chưa hỗ trợ chuyển sang xử lý trên form thật.
+
+Hai LAB sau được giữ làm ví dụ và để đối chiếu hồi quy:
 
 - [LAB chuẩn](https://docs.google.com/forms/d/e/1FAIpQLScRrul5GFZkLQD21oVlarFeb1AbomeKoqOJGVsnW3k3XbMtIA/viewform).
 - [LAB câu lệ phí](https://docs.google.com/forms/d/e/1FAIpQLSevBk_8863gvlRtkeaKONg6H7y4teYgGU11SBQgg3LSAJNhlw/viewform).
 
 Đáp án lệ phí `1234567` chỉ là dữ liệu giả của LAB. Không suy ra đáp án từ biểu
-thức validation. Test dừng trước request Gửi; Live gửi phản hồi thật lên LAB.
-Chưa mở cho form đăng ký HANU thật. Sau khi người dùng triển khai tính năng lên
-website, lượt kiểm tra production và bản sửa tiếp theo được ghi ở cuối báo cáo.
+thức validation. Test dừng trước request Gửi; Live tạo phản hồi trên form đã
+chọn. Form đăng ký ngoài LAB giữ khóa sau khi xác nhận gửi để tránh đăng ký
+trùng; chỉ hai LAB có ngoại lệ cho phép chủ động tạo lượt thử mới.
 
 ## Tách phần thử nghiệm
 

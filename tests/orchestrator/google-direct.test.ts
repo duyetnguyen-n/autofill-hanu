@@ -9,7 +9,7 @@ function fixture(direct=true){
  const store=new Store(':memory:');stores.push(store);const c=new Coordinator(store);
  for(const id of ['one','two']){store.pair(id,store.pairCode());const s=store.session(id);Object.assign(s,{hskLevel:'4',expectedEmail:`${id}@example.test`,profile:emptyProfile(),synced:true,connected:true});store.saveSession(s);c.peers.set(id,{readyState:1} as any);}
  const command=vi.fn(async(id:string,kind:string,payload:any={},runId?:string)=>{
-   if(kind==='PING')return {capabilities:direct?['googleDirect','scheduledHskLinks','preparedFormTab']:['scheduledHskLinks'],execution:null};
+   if(kind==='PING')return {capabilities:direct?['googleDirect','googleDirectForms','scheduledHskLinks','preparedFormTab']:['scheduledHskLinks'],execution:null};
    if(kind==='STOP_PROFILE')return {execution:null};
    return {};
  });c.command=command;return {store,c,command};
@@ -32,9 +32,27 @@ it('does not downgrade Direct to the classic engine on an older extension',async
  const f=fixture(false);await expect(f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('Cập nhật');
  expect(f.command.mock.calls.some(c=>c[1]==='START')).toBe(false);expect(f.store.session('one').run).toBeUndefined();
 });
-it('rejects non-LAB experimental URLs before persisting a group or dispatching commands',async()=>{
- const f=fixture();await expect(f.c.start(['one'],'https://docs.google.com/forms/d/e/real-form/viewform','live',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('LAB');
+it.each(['test','live'] as const)('starts an unfamiliar registration form in %s without a hardcoded form list',async mode=>{
+ const f=fixture(),url='https://docs.google.com/forms/d/e/real-registration-form/formResponse?pli=1';
+ const group=await f.c.start(['one'],url,mode,undefined,undefined,undefined,undefined,'direct');
+ expect(f.command).toHaveBeenCalledWith('one','START',expect.objectContaining({engine:'direct',url,mode}),group.id,120000);
+});
+it('rejects a non-Google destination before persisting or dispatching',async()=>{
+ const f=fixture();await expect(f.c.start(['one'],'https://example.com/forms/d/e/real-form/viewform','live',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('Google Forms');
  expect(f.store.groups()).toEqual([]);expect(f.command).not.toHaveBeenCalled();
+});
+it('requires a Reload for an old LAB-only extension on an unfamiliar form',async()=>{
+ const f=fixture();f.command.mockResolvedValue({capabilities:['googleDirect'],execution:null});
+ await expect(f.c.start(['one'],'https://docs.google.com/forms/d/e/new-form/viewform','test',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('1.9.13');
+ expect(f.command.mock.calls.some(c=>c[1]==='START')).toBe(false);
+});
+it('keeps a confirmed registration locked on non-LAB forms',async()=>{
+ const f=fixture(),form='real-registration-form',url=`https://docs.google.com/forms/d/e/${form}/viewform`;
+ const first=await f.c.start(['one'],url,'live',undefined,undefined,undefined,undefined,'direct');
+ const s=f.store.session('one');s.run!.formId=form;f.store.saveSession(s);f.store.acquireSubmit('one',first.id,form);f.store.resolve('one',first.id,'received');
+ expect(f.store.blocked('one',form,'direct')).toBe(true);
+ await expect(f.c.start(['one'],url,'live',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('khóa');
+ await expect(f.c.restart('one',first.id)).rejects.toThrow('khóa');
 });
 it('retains the chosen engine through a scheduled manual link and group Stop',async()=>{
  const f=fixture();const s=await f.c.scheduler.arm({ids:['one','two'],mode:'test',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL}});

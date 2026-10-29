@@ -23,7 +23,7 @@ export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=f
   const forms=page==='forms'||page==='google-direct';
   const products = [
     {id:'forms', label:'Google Forms', href:'/', icon:<Browsers size={20}/>},
-    {id:'google-direct',label:'Google Forms thử nghiệm',href:'/google-direct',icon:<Browsers size={20}/>},
+    {id:'google-direct',label:'Google Forms Direct',href:'/google-direct',icon:<Browsers size={20}/>},
     ...(chinesetestEnabled ? [{id:'chinesetest', label:'ChineseTest', href:'/chinesetest', icon:<Exam size={20}/>}] : []),
     ...(hcmueEnabled ? [{id:'hcmue', label:'HSK HCMUE', href:'/hcmue', icon:<Exam size={20}/>}] : []),
   ];

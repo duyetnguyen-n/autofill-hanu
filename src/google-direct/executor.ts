@@ -3,20 +3,21 @@ import {StoredPickerUploads} from '../stored-picker-upload';
 import {hasSubmissionConfirmation} from '../submission-confirmation';
 import {directQuestionSummary} from './verification';
 import type {BlockingIssue,Profile} from '../shared';
-import {DIRECT_LAB_FORM_ID,DIRECT_LAB_URL,directLabFormId,directSchemaFingerprint,parseDirectSchema} from './schema';
+import {directFormId,directSchemaFingerprint,parseDirectSchema} from './schema';
+import {repeatableDirectLab} from './repeat';
 import {buildDirectPlan} from './plan';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,refreshExecutionDraft,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from './execute-page';
 import {DirectPageDialogs} from './dialogs';
 import {directManualReady,armDirectManualSubmit,prepareDirectNativeSubmit,restoreDirectNativePage} from './recovery-page';
 
 export interface DirectRunResult {runId:string;status:'received'|'failed'|'uncertain'|'stopped'|'ready'|'waiting';issue?:BlockingIssue;message:string;postCount:number}
-export interface DirectRunInput {tabId:number;profile:Profile;overrides:Record<string,string>;expectedScript?:string;url?:string;mode?:'test'|'live';runId?:string;expectedEmail?:string;resume?:boolean;managed?:boolean;onTab?:(tabId:number)=>Promise<void>;onSchema?:(tabId:number)=>Promise<Record<string,string>>;beforeSubmit?:()=>Promise<void>;assertActive?:()=>Promise<void>;file?:{name:string;type:string;blob:Blob};onProgress:(text:string)=>void|Promise<void>;manualFinal?:string;fastSubmit?:boolean;signal:AbortSignal}
+export interface DirectRunInput {tabId:number;profile:Profile;overrides:Record<string,string>;expectedScript?:string;url:string;mode?:'test'|'live';runId?:string;expectedEmail?:string;resume?:boolean;managed?:boolean;onTab?:(tabId:number)=>Promise<void>;onSchema?:(tabId:number)=>Promise<Record<string,string>>;beforeSubmit?:()=>Promise<void>;assertActive?:()=>Promise<void>;file?:{name:string;type:string;blob:Blob};onProgress:(text:string)=>void|Promise<void>;manualFinal?:string;fastSubmit?:boolean;signal:AbortSignal}
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 class DirectPageProblem extends Error {constructor(readonly issue:BlockingIssue){super(issue.message);}}
 
 export class DirectExecutor {
   async run(input:DirectRunInput):Promise<DirectRunResult> {
-    const runId=input.runId??crypto.randomUUID(),url=input.url??DIRECT_LAB_URL,formId=directLabFormId(url);
+    const runId=input.runId??crypto.randomUUID(),url=input.url,formId=directFormId(url);
     let expectedSchema=input.expectedScript?directSchemaFingerprint(parseDirectSchema(input.expectedScript)):undefined;
     return navigator.locks.request(`hanu-direct:${formId}`,{ifAvailable:true},async lock=>{
       if(!lock)throw new Error('Có một lượt Direct khác đang chạy trên form này.');
@@ -46,7 +47,7 @@ export class DirectExecutor {
           throw error;
         }
         let page=results[0]?.result;
-        if(results.length!==1||!page||!page.url.includes(`/d/e/${formId}/`))throw new Error('Executor Lab chỉ chạy trên đúng form test đã cung cấp.');
+        if(results.length!==1||!page||directFormId(page.url)!==formId)throw new Error('Direct chỉ chạy trên đúng form đã chọn.');
         if(page.blocked)throw new DirectPageProblem(page.issue??{reason:'captcha',message:'Google đang yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'});
         if(page.draftRefresh&&!attempted){
           await input.onProgress('Google có bản nháp mới hơn. Tool đang đối chiếu lại trước khi áp dụng snapshot hồ sơ.');
@@ -108,7 +109,7 @@ export class DirectExecutor {
         const initialDeadline=Date.now()+30000;
         while(Date.now()<initialDeadline){
           try{const candidate=await read();if(candidate.hasForm&&candidate.script){page=candidate;break;}}
-          catch(error){if(!/Cannot access|removed|frame was|context was destroyed|Frame with ID|Tab đã rời|Executor Lab chỉ chạy/i.test((error as Error).message))throw error;}
+          catch(error){if(!/Cannot access|removed|frame was|context was destroyed|Frame with ID|Tab đã rời|Direct chỉ chạy/i.test((error as Error).message))throw error;}
           await delay(250);
         }
         if(!page)throw new Error('Form chưa tải xong sau 30 giây. Kiểm tra đăng nhập hoặc mạng.');
@@ -120,7 +121,7 @@ export class DirectExecutor {
         if(!account)throw new Error('Chưa xác định được tài khoản Google của form.');
         lockKey=`googleDirectSubmit:${formId}:${account.toLowerCase()}`;
         const prior=(await chrome.storage.local.get(lockKey))[lockKey];
-        if(prior&&!['received','not_received'].includes(prior.status))throw new Error('Lượt Direct trước chưa rõ kết quả. Đối chiếu phản hồi trước khi tạo lượt mới.');
+        if(prior&&prior.status!=='not_received'&&!(prior.status==='received'&&repeatableDirectLab('direct',formId)))throw new Error(prior.status==='received'?'Google đã xác nhận gửi form này. Không tạo đăng ký trùng.':'Lượt Direct trước chưa rõ kết quả. Đối chiếu phản hồi trước khi tạo lượt mới.');
         await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:resetExecutionPage});
         const effectiveOverrides=await input.onSchema?.(tabId)??input.overrides;
         const schema=parseDirectSchema(page.script);
@@ -149,7 +150,7 @@ export class DirectExecutor {
         const problems=plan.answers.filter(a=>a.issue&&!schema.sections.flatMap(s=>s.questions).some(q=>q.id===a.questionId&&q.kind==='file'));
         if(plan.blockers.some(b=>/nhánh|Nhánh|vòng lặp/.test(b)))throw new Error(problems.map(a=>`${a.label}: ${a.issue}`).join(' · ')||'Chưa xác định được lộ trình form.');
         const fileQuestions=schema.sections.flatMap(s=>s.questions).filter(q=>q.kind==='file'&&plan.answers.some(a=>a.questionId===q.id));
-        if(fileQuestions.length>1)throw new Error('Bản Lab hiện hỗ trợ một câu tải ảnh trên nhánh đã chọn.');
+        if(fileQuestions.length>1)throw new Error('Direct hiện tự tải một ảnh trên nhánh đã chọn. Tiếp quản trên form để hoàn tất các tệp còn lại.');
         const fileQuestion=fileQuestions[0];
         const answer=fileQuestion&&plan.answers.find(a=>a.questionId===fileQuestion.id);
         const ref=answer?.attachmentId?Object.values(input.profile.attachments).find(a=>a?.id===answer.attachmentId):undefined;
@@ -300,7 +301,7 @@ export class DirectExecutor {
       }finally{removeStop();uploads.cancel(tabId);await dialogs?.close();if(!input.managed){const lease=(await chrome.storage.local.get('googleDirectLease')).googleDirectLease;if(lease?.runId===runId)await chrome.storage.local.set({googleDirectLease:{...lease,active:false}});}}
     });
   }
-  async resolveNotReceived(runId:string,formId:string=DIRECT_LAB_FORM_ID){
+  async resolveNotReceived(runId:string,formId:string){
     return navigator.locks.request(`hanu-direct:${formId}`,async()=>{
       const data=await chrome.storage.local.get(null);
       const matches=Object.entries(data).filter(([key,value])=>key.startsWith(`googleDirectSubmit:${formId}:`)&&value?.runId===runId&&value.status==='pending');

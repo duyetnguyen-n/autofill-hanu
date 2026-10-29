@@ -34,6 +34,12 @@ it('uses separate run/lease storage and completes Test without granting submit o
   const seq=f.bridge.state.mock.calls.map(([r])=>r.eventSeq);
   expect(seq).toEqual([1,2,3,4]);
 });
+it('routes an unfamiliar form to the separate executor in Test mode',async()=>{
+  const f=fixture(),url='https://docs.google.com/forms/d/e/new-registration-form/formResponse?pli=1';
+  mocks.run.mockResolvedValue({status:'ready',message:'Ready',postCount:2});await f.start({url});
+  await vi.waitFor(()=>expect(f.data.googleDirectManagedRun?.status).toBe('ready_to_submit'));
+  expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({url,mode:'test',managed:true}));expect(f.data.googleDirectManagedRun.formId).toBe('new-registration-form');expect(f.bridge.request).not.toHaveBeenCalled();
+});
 it('Stop aborts the running executor, awaits cancellation, releases the profile and rejects a stale Resume',async()=>{
   const f=fixture();let input!:DirectRunInput;
   mocks.run.mockImplementation((value:DirectRunInput)=>{input=value;return new Promise(resolve=>value.signal.addEventListener('abort',()=>resolve({status:'stopped',message:'Stopped',postCount:0}),{once:true}));});

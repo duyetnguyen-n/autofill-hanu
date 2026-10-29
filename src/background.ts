@@ -25,7 +25,7 @@ async function directSelected(c?:Command){
 }
 
 const native = createNativeClient({
-  capabilities:['googleDirect'],
+  capabilities:['googleDirect','googleDirectForms'],
   start:(c,id)=>c.payload.engine==='direct'?direct.start(c,id):startManaged(c,id),
   control:async c=>await directSelected(c)?direct.control(c):managedControl(c),
   focus:async c=>await directSelected(c)?direct.focus():focusManaged(),

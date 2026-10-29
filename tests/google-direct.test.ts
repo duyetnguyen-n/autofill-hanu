@@ -7,7 +7,17 @@ import {buildDirectPlan,previewDirectRequest} from '../src/google-direct/plan';
 // Sanitized DOM metadata observed on the supplied lab form, 2026-10-27.
 // Descriptions, session tokens and account details were removed.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/google-direct-lab.json',import.meta.url),'utf8'));
+const registration = JSON.parse(readFileSync(new URL('./fixtures/google-direct-registration.json',import.meta.url),'utf8'));
 const parse = (data: unknown = fixture) => parseDirectSchema(`var FB_PUBLIC_LOAD_DATA_ = ${JSON.stringify(data)};`);
+it('maps the supplied non-LAB registration schema with independent question and entry IDs',()=>{
+  const plan=buildDirectPlan(parse(registration),profile(),'1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3fNytLWHtUJW5JQ',{'2042476168':'2026'});
+  expect(plan.entries).toContainEqual(['entry.152376345','NGHIEN CUU LAB']);
+  expect(plan.entries).toContainEqual(['entry.153625766','000000000000']);
+  expect(plan.entries).toContainEqual(['entry.1703858814','2026']);
+  expect(plan.answers.some(a=>a.entryId==='1801749512')).toBe(false);
+  expect(plan.answers.filter(a=>a.issue&&a.entryId!=='717838050')).toEqual([]);
+  expect(plan.pageHistory).toEqual([0,1,2,3,5,6,7,8]);
+});
 function profile() {
   const p = emptyProfile();
   p.values = {...p.values,fullName:'NGHIEN CUU LAB',identityType:'CCCD',identityNumber:'000000000000',passportNumber:'AB0000000',gender:'Nam',birthDate:'2000-01-01',nationality:'Việt Nam',motherTongue:'Tiếng Việt',email:'hanu.direct.lab@gmail.com',phone:'0000000000',chineseStudyDuration:'1 năm',paymentMethod:'E-BANKING',bankAccountNumber:'0',bankAccountHolder:'NGHIEN CUU LAB',bankName:'BIDV',firstCommitment:'true',termsCommitment:'true'};

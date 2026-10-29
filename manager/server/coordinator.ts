@@ -9,7 +9,7 @@ import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recover
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 import {RegistrationScheduler} from './registration-scheduler';
-import {canRepeatCompletedLab} from '../../src/google-direct/repeat';
+import {canRepeatCompletedLab,repeatableDirectLab} from '../../src/google-direct/repeat';
 import {bindHskAnswer,hskVerificationCandidates,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
@@ -409,7 +409,7 @@ export class Coordinator {
   async start(ids:string[],url:string,mode:RunMode,finalQuestion?:FinalQuestion,requestId?:string,restartOf?:string,guard?:()=>boolean,engine?:import('../../src/shared').FormEngine,preparedFinalAnswer?:string){
     if(preparedFinalAnswer!==undefined&&(engine!=='direct'||typeof preparedFinalAnswer!=='string'||!preparedFinalAnswer.trim()||preparedFinalAnswer.length>10000))throw new Error('Đáp án chuẩn bị trước không hợp lệ.');
     if(engine!==undefined&&!['classic','direct'].includes(engine))throw new Error('Engine không hợp lệ.');
-    if(engine==='direct'){const {directLabFormId}=await import('../../src/google-direct/schema');directLabFormId(url);}
+    if(engine==='direct'){const {directFormId}=await import('../../src/google-direct/schema');directFormId(url);}
     if(guard&&!guard())throw new Error('Lịch đã hủy hoặc profile đã bỏ chờ.');
     if(requestId!==undefined&&(typeof requestId!=='string'||!/^[-a-zA-Z0-9]{8,100}$/.test(requestId)))throw new Error('Mã yêu cầu không hợp lệ.');
     const intents=new Map((Array.isArray(ids)?ids:[]).map(id=>[id,this.intents.get(id)??0]));
@@ -442,7 +442,10 @@ export class Coordinator {
     const results=await Promise.all(ids.map(member=>(async()=>{
       try{
         await this.runBuffer?.flush(member);
-        if(engine==='direct'){const ping=await this.command(member,'PING',{},undefined,5000);if(!ping?.capabilities?.includes('googleDirect'))throw new Error('Cập nhật/Reload extension để dùng Google Forms thử nghiệm.');}
+        if(engine==='direct'){
+          const ping=await this.command(member,'PING',{},undefined,5000);
+          if(!ping?.capabilities?.includes('googleDirect')||!repeatableDirectLab('direct',canonicalFormId(url)??'')&&!ping.capabilities.includes('googleDirectForms'))throw new Error('Cập nhật/Reload extension 1.9.13 trở lên để dùng Google Forms Direct với form đăng ký.');
+        }
         if(finalQuestion){const result=await this.command(member,'PING',{},undefined,5000);if(!result?.capabilities?.includes('sharedFinalQuestion'))throw new Error('Reload hoặc cập nhật extension để dùng đáp án câu hỏi cuối chung.');if(result.execution)throw new Error('Còn lượt giữ profile. Bấm Xem form hoặc Dừng trên hàng profile.');}
         const s=await this.store.session(member);
         if(!this.peers.has(member)||!s.synced||!s.profile||s.conflict||!/^\S+@\S+\.\S+$/.test(s.expectedEmail))throw new Error('Cần kết nối, đồng bộ và gán email Google.');
