@@ -1,6 +1,6 @@
 # Tiếp tục đăng ký khi Google Forms Direct cần xử lý
 
-Áp dụng từ bản Online 1.9.13. Engine Direct vẫn tách riêng và đã bỏ giới hạn
+Áp dụng từ bản Online 1.9.15. Engine Direct vẫn tách riêng và đã bỏ giới hạn
 hai form LAB. Không thay engine Google Forms cũ. Test dừng trước Gửi; Live
 gửi trên form được chọn. Form ngoài LAB giữ khóa sau khi gửi thành công.
 

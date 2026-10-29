@@ -1,4 +1,4 @@
-# Google Forms Direct — cập nhật 1.9.13 ngày 29/10/2026
+# Google Forms Direct — cập nhật 1.9.15 ngày 29/10/2026
 
 Kiểm tra Chrome Windows và sửa dropdown trong bản 1.9.5: xem
 [báo cáo ngày 28/10/2026](GOOGLE-FORMS-DIRECT-QA-20261028.md).
@@ -21,6 +21,8 @@ Từ 1.9.13, Direct nhận link trả lời Google Forms bất kỳ dạng
 `https://docs.google.com/forms/d/e/<id>/viewform` hoặc `formResponse`, gồm
 đường dẫn tài khoản `/forms/u/<n>/d/e/…` và query. Không còn allowlist mã form.
 Extension phải báo capability `googleDirectForms`; bản cũ cần Reload/cập nhật.
+Nên dùng Online 1.9.15, có sửa bản nháp sau upload trong Test và nhãn Việt–Trung
+xuống dòng đã kiểm tra trên form mẫu độc lập do người dùng cung cấp.
 Lấy cấu trúc, mã câu hỏi, nhánh và kiểm tra dữ liệu từ chính form được chọn.
 Câu chưa ghép được/kiểu chưa hỗ trợ chuyển sang xử lý trên form thật.
 

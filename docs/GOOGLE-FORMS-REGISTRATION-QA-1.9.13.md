@@ -82,3 +82,14 @@ request nếu gặp mã điều hướng chưa nhận diện.
 
 Typecheck và 121 kiểm thử liên quan đạt. Extension 1.9.15 đã build. Giữ form
 ở câu cuối để kiểm tra Tiếp tục sau Reload mà không điền lại hay tải ảnh lại.
+
+## Khôi phục 1.9.15 trên Chrome
+
+Sau khi Reload, bấm Tiếp tục trên chính run `820485d5-3352-410b-8e83-ab01e0d27d2f`:
+10:15:40 xử lý trang 9/9, 10:15:41 Xong Test. Ô Google thật có giá trị **2026**,
+không có request Gửi, không điền lại các trang trước hoặc bàn giao ảnh lần nữa.
+Ảnh cục bộ: `test-results/google-direct-registration-20261029/resumed-final-1.9.15.png`.
+Sau ghi nhận bằng chứng đã Dừng, xóa bản nháp thử và đóng tab.
+
+Toàn bộ suite cuối: **100 file, 970 đạt, 1 bỏ qua**. Typecheck và build cloud
+extension/server đạt; Vite vẫn có cảnh báo kích thước chunk giao diện.
