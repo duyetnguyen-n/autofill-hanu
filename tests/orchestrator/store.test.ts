@@ -11,6 +11,21 @@ const stores:Store[]=[],dirs:string[]=[];
 afterEach(()=>{for(const store of stores)try{store.close();}catch{}for(const dir of dirs)rmSync(dir,{recursive:true,force:true});stores.length=dirs.length=0;});
 function setup(count=2){const dir=mkdtempSync(join(tmpdir(),'hanu-store-'));dirs.push(dir);const path=join(dir,'db.sqlite');const store=new Store(path);stores.push(store);const members=Array.from({length:count},(_,i)=>`session-${i}`);for(const id of members){const token=store.pair(id,store.pairCode());expect(store.authenticate(id,token)).toBe(true);const s=store.session(id);s.profile=emptyProfile();s.profile.values.fullName=id;s.expectedEmail=`${id}@example.com`;s.synced=true;s.run={runId:'group',sessionId:id,managed:true,formId:'form',tabId:1,mode:'live',status:'running',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',eventSeq:0};store.saveSession(s);}store.saveGroup({id:'group',url:'https://docs.google.com/forms/d/e/form/viewform',mode:'live',members,paused:false,createdAt:''});return {store,path,members};}
 describe('durable coordinator state',()=>{
+  it.each([true,false])('keeps a CAPTCHA member locked while another profile completes (autoContinue=%s)',autoContinue=>{
+    const {store,members}=setup(2),[blocked,successful]=members;
+    const first=store.session(blocked);
+    Object.assign(first.run!,{autoContinue:true,retryOnReturn:true,contentEpoch:'new',submissionEpoch:'old',profileSnapshot:structuredClone(first.profile)});store.saveSession(first);
+    store.acquireSubmit(blocked,'group','form');
+    const submitted=store.session(blocked).run!;
+    expect(store.acceptProgress(blocked,{...submitted,eventSeq:1,status:'submit_uncertain',autoContinue,blockingIssue:{reason:'captcha',message:'Traffic check; frame failed'}})).toBe(true);
+    expect(()=>store.authorizeReturnedRetry(blocked,'group','new',0)).toThrow('không được phép');
+    expect(store.session(blocked).run).toMatchObject({status:'submit_uncertain',submitAttempted:true,profileSnapshot:{values:{fullName:blocked}}});
+    expect(store.blocked(blocked,'form')).toBe(true);
+    store.acquireSubmit(successful,'group','form');const second=store.session(successful).run!;
+    expect(store.acceptProgress(successful,{...second,eventSeq:1,status:'completed'})).toBe(true);
+    expect(store.session(successful).run?.status).toBe('completed');expect(store.group('group').paused).toBe(false);
+    expect(store.session(blocked).run?.status).toBe('submit_uncertain');expect(store.blocked(successful,'form')).toBe(false);
+  });
   it('stops every active profile across separate HSK groups and reports a failed member without hiding it',async()=>{
     const {store,members}=setup(3),c=new Coordinator(store),calls:string[]=[];
     for(const id of members){const s=store.session(id);s.run!.runId=id;store.saveGroup({...store.group('group'),id,members:[id]});store.saveSession(s);}
@@ -183,7 +198,7 @@ describe('durable coordinator state',()=>{
   it('commits a send lock once, persists it through restart, and keeps it per nick/form',()=>{const {store,path}=setup();store.acquireSubmit('session-0','group','form');expect(()=>store.acquireSubmit('session-0','group','form')).toThrow();expect(store.blocked('session-1','form')).toBe(false);store.close();stores.splice(stores.indexOf(store),1);const restored=new Store(path);stores.push(restored);expect(restored.blocked('session-0','form')).toBe(true);expect(restored.session('session-0').run?.status).toBe('submit_uncertain');expect(restored.session('session-0').connected).toBe(false);});
   it('can promote one local reservation to a send grant but rejects a second grant',()=>{const {store}=setup();const s=store.session('session-0');s.run!.status='submitting';s.run!.submitAttempted=true;store.saveSession(s);store.db.prepare('INSERT INTO locks VALUES(?,?,?,?,?)').run('session-0','form','group','local_reserved','');store.acquireSubmit('session-0','group','form');expect(()=>store.acquireSubmit('session-0','group','form')).toThrow();});
   it('manual not-received resolution keeps the old run locked but permits a new run',()=>{const {store}=setup();store.acquireSubmit('session-0','group','form');store.resolve('session-0','group','not_received');expect(store.blocked('session-0','form')).toBe(false);expect(store.session('session-0').run?.submitAttempted).toBe(true);expect(store.history('session-0')[0].submitAttempted).toBe(true);const s=store.session('session-0');s.run!.status='running';store.saveSession(s);expect(()=>store.acquireSubmit('session-0','group','form')).toThrow();});
-  it('does not unlock a confirmed received response',()=>{const {store}=setup();store.acquireSubmit('session-0','group','form');store.resolve('session-0','group','received');expect(store.blocked('session-0','form')).toBe(true);expect(store.session('session-0').run?.status).toBe('completed');});
+  it('retains a confirmed result but permits an explicit new run',()=>{const {store}=setup();store.acquireSubmit('session-0','group','form');store.resolve('session-0','group','received');expect(store.blocked('session-0','form')).toBe(false);expect(store.session('session-0').run?.status).toBe('completed');expect(store.history('session-0')[0].submitAttempted).toBe(true);expect(()=>store.acquireSubmit('session-0','group','form')).toThrow();});
   it('rejects old-run, old-sequence and other-session events',async()=>{const {store}=setup();const c=new Coordinator(store);const r=store.session('session-0').run!;await c.acceptState('session-0',{...r,runId:'old',eventSeq:10,status:'completed'});await c.acceptState('session-0',{...r,sessionId:'session-1',eventSeq:10,status:'completed'});expect(store.session('session-0').run?.status).toBe('running');await c.acceptState('session-0',{...r,eventSeq:2,status:'paused'});await c.acceptState('session-0',{...r,eventSeq:1,status:'running'});expect(store.session('session-0').run?.status).toBe('paused');});
   it('records simultaneous load failures without pausing healthy group members',async()=>{const {store}=setup(24);const c=new Coordinator(store);for(let i=0;i<20;i++)await c.failure('session-0','group');for(let i=1;i<5;i++)await c.failure(`session-${i}`,'group');expect(store.group('group').paused).toBe(false);await c.failure('session-5','group');expect(store.group('group').paused).toBe(false);expect(c.failures.get('group')?.size).toBe(6);});
   it('expires old failure events and does not treat two profiles as three',async()=>{const {store}=setup(2);const c=new Coordinator(store);await c.failure('session-0','group');await c.failure('session-1','group');expect(store.group('group').paused).toBe(false);c.failures.get('group')!.set('session-0',Date.now()-31000);await c.failure('session-1','group');expect(c.failures.get('group')!.size).toBe(1);});
@@ -247,7 +262,7 @@ describe('verification answers isolated by scheduled HSK',()=>{
     const f=await scheduled(),id=f.members[0];f.store.acquireSubmit(id,'group','form');f.store.resolve(id,'group','received');
     const result=await f.c.stopScheduledRuns(f.plan.id);
     expect(result).toContainEqual({id,ok:true,skipped:true});expect(f.calls.filter(c=>c.kind==='STOP_PROFILE').map(c=>c.id)).toEqual([f.members[1]]);
-    expect(f.store.session(id).run?.status).toBe('completed');expect(f.store.blocked(id,'form')).toBe(true);
+    expect(f.store.session(id).run?.status).toBe('completed');expect(f.store.blocked(id,'form')).toBe(false);
   });
   it('stores each answer separately, resumes only matching verification, and applies to a later arrival',async()=>{
     const f=await scheduled(),q4={label:'Tên trường?',value:'HANU',formId:'form'},q5={label:'Năm thi?',value:'2026',formId:'form'};

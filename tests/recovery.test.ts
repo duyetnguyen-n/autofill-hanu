@@ -5,8 +5,21 @@ import {commandStatus,runStatusLabel,submissionReviewMessage} from '../src/run-p
 import type {RunState} from '../src/shared';
 const page={text:'',hasQuestions:false,hasNavigation:false,captcha:false,online:true};
 const run:RunState={runId:'run',tabId:1,formId:'form',mode:'test',status:'waiting_manual',filled:[],skipped:[],logs:[],submitAttempted:false,updatedAt:'',blockingIssue:{reason:'server_error',message:'500'},recovery:{reason:'server_error',attempt:1,automatic:true,retryAt:new Date(1000).toISOString()}};
-it.each(['500. That’s an error.','502 Bad Gateway','503 Service Unavailable','504 Gateway Timeout','429 Too Many Requests'])('classifies a Google error document as retryable: %s',text=>{
+it.each(['500. That’s an error.','502 Bad Gateway','503 Service Unavailable','504 Gateway Timeout'])('classifies a Google error document as retryable: %s',text=>{
  expect(classifyPage({...page,text})).toMatchObject({retryable:true,issue:{reason:'server_error'}});
+});
+it.each([
+ 'Our systems have detected unusual traffic from your computer network.',
+ 'Hệ thống của chúng tôi đã phát hiện lưu lượng truy cập bất thường từ mạng máy tính của bạn.',
+ 'Cannot contact reCAPTCHA. Check your connection and try again.',
+ 'Could not connect to the reCAPTCHA service.',
+])('parks a traffic-check document even without a working frame: %s',text=>{
+ expect(classifyPage({...page,text})).toMatchObject({issue:{reason:'captcha'}});
+ expect(classifyPage({...page,text,online:false}).retryable).not.toBe(true);
+ expect(classifyPage({...page,text,hasQuestions:true})).toEqual({});
+});
+it.each(['429 Too Many Requests','Quá nhiều yêu cầu'])('respects an explicit access limit instead of scheduling more requests: %s',text=>{
+ const health=classifyPage({...page,text});expect(health).toMatchObject({issue:{reason:'server_error'}});expect(health.retryable).not.toBe(true);
 });
 it('does not mistake a form mentioning status codes for an error document',()=>{
  expect(classifyPage({...page,text:'500. That’s an error.',hasQuestions:true})).toEqual({});
@@ -57,7 +70,7 @@ it('requires persistent intent and a different document before allowing a bounde
  const {returnedSubmissionAllowed,pageReadyResumeAllowed}=await import('../src/recovery');
  const candidate:RunState={...run,mode:'live',status:'submit_uncertain',autoContinue:true,retryOnReturn:true,submitAttempted:true,submissionEpoch:'old',contentEpoch:'new'};
  expect(returnedSubmissionAllowed(candidate)).toBe(true);
- for(const patch of [{autoContinue:false},{retryOnReturn:false},{mode:'test'},{status:'paused'},{status:'completed'},{recoveryRequired:true},{submissionEpoch:undefined},{contentEpoch:'old'},{submissionRetries:2}])expect(returnedSubmissionAllowed({...candidate,...patch} as RunState)).toBe(false);
+ for(const patch of [{autoContinue:false},{retryOnReturn:false},{mode:'test'},{status:'paused'},{status:'completed'},{recoveryRequired:true},{submissionEpoch:undefined},{contentEpoch:'old'},{submissionRetries:2},{blockingIssue:{reason:'captcha',message:'Google traffic check'}}])expect(returnedSubmissionAllowed({...candidate,...patch} as RunState)).toBe(false);
  expect(pageReadyResumeAllowed({...run,autoContinue:true,blockingIssue:{reason:'captcha',message:'wait'}})).toBe(true);
  expect(pageReadyResumeAllowed({...run,autoContinue:false})).toBe(false);
 });

@@ -1001,7 +1001,7 @@ async function emit(event: FormEvent): Promise<void> {
 
 export function pageHealth():PageHealth {
   const hasNavigation=!!button('next')||!!button('submit');
-  return {...classifyPage({text:document.body.innerText??document.body.textContent??'',title:document.title,hasQuestions:!!document.querySelector('[role=\"listitem\"], [data-item-id]')||questions().length>0,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false}),ready:hasNavigation||completedPage()};
+  return {...classifyPage({text:document.body.innerText??document.body.textContent??'',title:document.title,url:location.href,hasQuestions:!!document.querySelector('[role=\"listitem\"], [data-item-id]')||questions().length>0,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false}),ready:hasNavigation||completedPage()};
 }
 
 export function pageAccount():{email?:string;error?:string;health?:PageHealth}{
@@ -1040,7 +1040,7 @@ function completedPage(): boolean {
   const text = document.body.innerText ?? document.body.textContent ?? "";
   const hasQuestions=questions().length>0;
   const hasNavigation=!!button('next')||!!button('submit');
-  const health=classifyPage({text,title:document.title,hasQuestions,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false});
+  const health=classifyPage({text,title:document.title,url:location.href,hasQuestions,hasNavigation,captcha:hasUnsatisfiedCaptcha(),online:navigator.onLine!==false});
   return hasSubmissionConfirmation({text,hasQuestions,hasNavigation,blocked:!!health.issue});
 }
 
@@ -1350,7 +1350,11 @@ async function execute(depth = 0): Promise<void> {
     if(!active)return;
     const submissionGeneration=runRequestGeneration;
     submit.click();
-    for(let i=0;i<80&&active&&submissionGeneration===runRequestGeneration&&!completedPage();i++)await new Promise(r=>window.setTimeout(r,250));
+    for(let i=0;i<80&&active&&submissionGeneration===runRequestGeneration&&!completedPage();i++){
+      const health=pageHealth();
+      if(health.issue?.reason==='captcha'){active=false;await emit({type:'block',issue:health.issue});return;}
+      await new Promise(r=>window.setTimeout(r,250));
+    }
     if(!active||submissionGeneration!==runRequestGeneration)return;
     if (completedPage()) {
       active = false;

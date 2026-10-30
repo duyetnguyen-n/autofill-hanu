@@ -1,5 +1,4 @@
 import {returnedSubmissionAllowed} from '../../src/recovery';
-import {repeatableDirectLab} from '../../src/google-direct/repeat';
 import { randomBytes } from 'node:crypto';
 import { digest } from '../server/store';
 import type { DataStore } from '../server/data-store';
@@ -190,7 +189,7 @@ export class PostgresStore implements DataStore {
       const rows = (await db.query('SELECT id,data,version,revoked FROM hanu.sessions WHERE owner=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE', [this.owner, ids])).rows;
       const locked = new Map(rows.map(row => [row.id, this.decode(row)]));
       const form = canonicalFormId(g.url);
-      const blocked = form ? new Set((await db.query("SELECT session FROM hanu.locks WHERE owner=$1 AND session=ANY($2::text[]) AND form=$3 AND resolution!='not_received' AND (NOT $4::boolean OR resolution!='received')", [this.owner, ids, form,repeatableDirectLab(g.engine,form)])).rows.map(row => row.session)) : new Set();
+      const blocked = form ? new Set((await db.query("SELECT session FROM hanu.locks WHERE owner=$1 AND session=ANY($2::text[]) AND form=$3 AND resolution NOT IN ('not_received','received')", [this.owner, ids, form])).rows.map(row => row.session)) : new Set();
       for (const requested of sessions) {
         const current = locked.get(requested.id);
         if (!current) throw new CloudError('Không tìm thấy profile.', 404);
@@ -253,9 +252,9 @@ export class PostgresStore implements DataStore {
       return true;
     });
   }
-  async blocked(session: string, form: string,engine?:import('../../src/shared').FormEngine) {
+  async blocked(session: string, form: string,_engine?:import('../../src/shared').FormEngine) {
     await this.read(session);
-    return !!(await this.pool.query("SELECT 1 FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3 AND resolution!='not_received' AND (NOT $4::boolean OR resolution!='received')", [this.owner, session, form,repeatableDirectLab(engine,form)])).rowCount;
+    return !!(await this.pool.query("SELECT 1 FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3 AND resolution NOT IN ('not_received','received')", [this.owner, session, form])).rowCount;
   }
   async acquireSubmit(session: string, run: string, form: string, progress?: RunState) {
     if (!form || typeof form !== 'string') throw new CloudError('Form thiếu định danh.');
@@ -281,8 +280,7 @@ export class PostgresStore implements DataStore {
       }
       const locks = (await db.query('SELECT run,resolution FROM hanu.locks WHERE owner=$1 AND session=$2 AND form=$3', [this.owner, session, form])).rows;
       const old = locks.find(l => l.run === run);
-      const repeatable=repeatableDirectLab(g?.engine,form);
-      if (!g || g.mode!=='live' || g.paused || !g.members.includes(session) || !s.run || s.run.runId !== run || s.run.formId !== form || s.run.mode !== 'live' || !['running', 'submitting'].includes(s.run.status) || old && old.resolution !== 'local_reserved' || locks.some(l => l.resolution !== 'not_received' && !(repeatable&&l.resolution==='received'&&l.run!==run) && (l.run !== run || l.resolution !== 'local_reserved'))) throw new CloudError('Quyền gửi đã bị khóa hoặc lượt không hoạt động.', 409);
+      if (!g || g.mode!=='live' || g.paused || !g.members.includes(session) || !s.run || s.run.runId !== run || s.run.formId !== form || s.run.mode !== 'live' || !['running', 'submitting'].includes(s.run.status) || old && old.resolution !== 'local_reserved' || locks.some(l => l.resolution !== 'not_received' && !(l.resolution==='received'&&l.run!==run) && (l.run !== run || l.resolution !== 'local_reserved'))) throw new CloudError('Quyền gửi đã bị khóa hoặc lượt không hoạt động.', 409);
       await db.query("INSERT INTO hanu.locks(owner,session,form,run,resolution) VALUES($1,$2,$3,$4,'uncertain') ON CONFLICT(owner,session,form,run) DO UPDATE SET resolution='uncertain'", [this.owner, session, form, run]);
       s.run.pendingReturnedRetry=undefined;
       s.run.submitAttempted = true;

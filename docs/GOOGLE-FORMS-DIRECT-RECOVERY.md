@@ -1,10 +1,39 @@
 # Tiếp tục đăng ký khi Google Forms Direct cần xử lý
 
-Áp dụng từ bản Online 1.9.16. Engine Direct vẫn tách riêng và đã bỏ giới hạn
+Áp dụng từ bản Online 1.9.19. Engine Direct vẫn tách riêng và đã bỏ giới hạn
 hai form LAB. Không thay engine Google Forms cũ. Test dừng trước Gửi; Live
-gửi trên form được chọn. Form ngoài LAB giữ khóa sau khi gửi thành công.
+gửi trên form được chọn. Cả Classic và Direct cho phép chủ động tạo lượt
+mới sau khi đã xác nhận thành công, trên mọi form. Lịch sử nhận phản hồi
+được giữ; chỉ lượt chưa rõ kết quả và gửi lặp cùng lượt còn bị chặn.
 
 ## Luồng dự phòng
+
+### Google báo lưu lượng bất thường hoặc CAPTCHA không tải được (1.9.17)
+
+- Direct nhận diện trang kiểm tra lưu lượng ngay cả khi không có iframe
+  CAPTCHA hoạt động. Đây là tình huống chờ xác minh, không phải lỗi máy chủ
+  để tự thử lại. Nhận diện URL `/sorry` cũng áp dụng khi Chrome trả về kết
+  quả injection trống hoặc lỗi, gồm host `www`, `ipv4`, `ipv6.google.com`.
+- Nếu request nhận trang cảnh báo, Direct giữ nguyên trang/trạng thái Google
+  cuối được chấp nhận và dừng. Không đổi sang POST native để thử tiếp, không
+  chèn HTML/trang xác minh nhận qua request vào form hiện tại.
+- Không đọc được phản hồi request (mạng, timeout hoặc chuyển hướng không đọc
+  được) cũng dừng; không suy đoán đó là CAPTCHA. HTTP 429 dừng với thông báo
+  giới hạn truy cập. Các trường hợp này không kích hoạt request dự phòng.
+- Nếu đã bắt đầu Gửi, khóa pending và trạng thái chưa rõ vẫn được giữ;
+  phải đối chiếu xác nhận trước khi gửi lại. Hồ sơ/ảnh gốc không bị xóa.
+- Giữ tab đang có dữ liệu. Nếu trang xác minh không tải, kiểm tra kết nối,
+  trình duyệt/JavaScript và tiện ích xung đột; không tải lại hay Gửi liên tục.
+  Tiếp tục chỉ khi đã xử lý lỗi và trở lại đúng form/tài khoản.
+
+Đây là xử lý phục hồi, không phải cách ngăn hoặc vượt CAPTCHA. Chrome
+profile không tạo đường mạng riêng. Chưa có bằng chứng Google đặt ngưỡng
+hai profile và không thể suy ra tỷ lệ CAPTCHA từ các kiểm thử mô phỏng.
+Ngày 30/10/2026 kiểm tra bằng fixture trang cảnh báo/khung hỏng, response
+HTTP, lỗi transport và khóa executor; chưa tái hiện CAPTCHA thật trên Chrome.
+Typecheck, 176 kiểm thử liên quan (10 file) và build Online 1.9.17 đã đạt.
+
+### Tiếp quản trên form
 
 Trong Chi tiết profile → Nhật ký lượt chạy → Lịch sử, mở một lượt có snapshot
 và chọn **Xem hồ sơ của lượt này** để nạp bản xem trước. Kiểm tra dữ liệu rồi

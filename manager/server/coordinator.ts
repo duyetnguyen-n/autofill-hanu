@@ -9,7 +9,7 @@ import {automaticRecoveryAllowed,pageReadyResumeAllowed} from '../../src/recover
 import {AttentionQueue} from './attention';
 import type { RunBuffer } from './run-buffer';
 import {RegistrationScheduler} from './registration-scheduler';
-import {canRepeatCompletedLab,repeatableDirectLab} from '../../src/google-direct/repeat';
+import {canRepeatCompletedRun,repeatableDirectLab} from '../../src/google-direct/repeat';
 import {bindHskAnswer,hskVerificationCandidates,initialHskQuestion,isHskLevel,type HskLevel} from '../../src/registration-schedule';
 
 export class Coordinator {
@@ -73,7 +73,7 @@ export class Coordinator {
         const group=await store.groupForRequest?.(member.requestId);
         const expected=member.runId??group?.id;if(!expected)return;
         if(current.run?.runId!==expected)throw new Error('Profile đã chuyển sang lượt khác. Giữ nguyên lượt hiện tại.');
-        if(current.run.submitAttempted&&!canRepeatCompletedLab(current.run))throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
+        if(current.run.submitAttempted&&!canRepeatCompletedRun(current.run))throw new Error('Lượt đã khóa gửi. Xác minh kết quả trước khi đổi link.');
         await this.control(member.id,'STOP',current.run.runId);
       },
       start:(id,url,s,guard)=>{
@@ -395,11 +395,11 @@ export class Coordinator {
       await this.runBuffer?.flush(id);const s=await this.store.session(id);
       if(expectedRunId&&s.run?.runId!==expectedRunId)throw new Error('Lượt đã thay đổi. Đọc lại trạng thái trước khi chạy lại.');
       if(!s.run?.runId||!s.run.url||!allowedFormUrl(s.run.url))throw new Error('Chưa có link của lượt cũ. Nhập link rồi Bắt đầu.');
-      if(s.run.submitAttempted&&!canRepeatCompletedLab(s.run)||await this.store.blocked(id,s.run.formId||canonicalFormId(s.run.url)||'',s.run.engine))throw new Error('Lượt đã có khóa gửi. Xác minh kết quả trước khi chạy lại.');
+      if(s.run.submitAttempted&&!canRepeatCompletedRun(s.run)||await this.store.blocked(id,s.run.formId||canonicalFormId(s.run.url)||'',s.run.engine))throw new Error('Lượt đã có khóa gửi. Xác minh kết quả trước khi chạy lại.');
       if(!this.peers.has(id)||s.conflict)throw new Error(s.conflict?'Giải quyết xung đột hồ sơ trước khi chạy lại.':'Profile chưa kết nối.');
       const stopping=this.control(id,'STOP',s.run.runId),intent=this.intents.get(id);await stopping;
       const stopped=await this.store.session(id);
-      if(stopped.run?.runId!==s.run.runId||stopped.run?.status!=='idle'&&!canRepeatCompletedLab(stopped.run)||stopped.execution)throw new Error('Chưa xác nhận profile đã dừng. Đối chiếu trạng thái trước khi chạy lại.');
+      if(stopped.run?.runId!==s.run.runId||stopped.run?.status!=='idle'&&!canRepeatCompletedRun(stopped.run)||stopped.execution)throw new Error('Chưa xác nhận profile đã dừng. Đối chiếu trạng thái trước khi chạy lại.');
       if(!stopped.synced){const imported=await this.pull(id);if(imported.conflict)throw new Error('Hồ sơ đã thay đổi. Chọn bản cần giữ trước khi chạy lại.');}
       if(this.intents.get(id)!==intent)throw new Error('Đã hủy Chạy lại vì có lệnh Dừng hoặc Tạm dừng mới.');
       return this.start([id],s.run.url,s.run.mode,s.run.finalQuestion,requestId,s.run.runId,undefined,s.run.engine);

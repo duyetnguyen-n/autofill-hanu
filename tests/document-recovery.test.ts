@@ -3,6 +3,27 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {emptyProfile} from '../src/rules';
 import type {ExtensionMessage} from '../src/shared';
 let listener:(message:ExtensionMessage)=>void;
+
+it('reports a broken traffic-check frame immediately after Submit without a second click or grant',async()=>{
+  vi.useFakeTimers();document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Submit</button>';
+  vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockReturnValue({width:100,height:40} as DOMRect);
+  Object.defineProperty(HTMLElement.prototype,'scrollIntoView',{configurable:true,value:()=>{}});
+  const profile=emptyProfile();profile.values.fullName='KEEP TEST PROFILE';const messages:any[]=[];
+  const run={runId:'captcha-submit',status:'running',mode:'live',submitAttempted:false,autoContinue:true};
+  const click=vi.fn(()=>{document.body.innerHTML='<iframe src="about:blank"></iframe><p>Our systems have detected unusual traffic from your computer network.</p>';});
+  document.querySelector('button')!.addEventListener('click',click);
+  vi.stubGlobal('chrome',{runtime:{onMessage:{addListener:(fn:typeof listener)=>listener=fn},sendMessage:async(m:any)=>{
+    messages.push(m);if(m.type==='CLAIM_DOCUMENT')return {ok:true,run:{...run}};
+    if(m.type==='GET_PROFILE')return profile;
+    if(m.type==='REQUEST_SUBMIT'){run.submitAttempted=true;run.status='submitting';return {granted:true};}
+    if(m.type==='FORM_EVENT'&&m.event.type==='block'){run.status='submit_uncertain';run.autoContinue=false;}
+    return {ok:true};
+  }}});
+  await import('../src/content');await vi.advanceTimersByTimeAsync(1000);
+  expect(messages).toContainEqual(expect.objectContaining({type:'FORM_EVENT',event:expect.objectContaining({type:'block',issue:expect.objectContaining({reason:'captcha'})})}));
+  expect(click).toHaveBeenCalledOnce();expect(messages.filter(m=>m.type==='REQUEST_SUBMIT')).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(25000);expect(messages.filter(m=>m.type==='REQUEST_SUBMIT')).toHaveLength(1);expect(messages.some(m=>m.type==='AUTO_RESUME')).toBe(false);
+});
 afterEach(()=>{listener?.({type:'HALT_RUN'});vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();vi.resetModules();document.body.replaceChildren();});
 it('starts a new document from the run returned by its claim without a second recovery request',async()=>{
   document.body.innerHTML='<div role="listitem"><div role="heading">Họ và tên *</div><input type="text"></div><button>Gửi</button>';

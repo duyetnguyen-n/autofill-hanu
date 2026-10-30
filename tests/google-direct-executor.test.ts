@@ -42,9 +42,13 @@ it.each(['another-form','third-form','1FAIpQLSdwGr_cZjiXs_AapAIHmP1cdHp5q4_tLWI3
   const beforeSubmit=vi.fn(),running=f.run({mode:'test',beforeSubmit});await vi.runAllTimersAsync();
   expect(await running).toMatchObject({status:'ready'});expect(f.posts.length).toBeGreaterThan(0);expect(f.posts.every(p=>p.formId===form&&!p.final)).toBe(true);expect(beforeSubmit).not.toHaveBeenCalled();
 });
-it('preserves the durable received lock for an actual registration outside the repeatable LABs',async()=>{
+it('allows an explicit new Direct run after confirmed receipt on any form',async()=>{
   vi.useFakeTimers();const f=fixture({url:'https://docs.google.com/forms/d/e/real-registration-form/viewform'});f.data[f.key]={status:'received',runId:'previous-registration'};
-  const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'failed',postCount:0,message:expect.stringContaining('đăng ký trùng')});expect(f.posts).toHaveLength(0);
+  const running=f.run({mode:'test'});await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'ready'});expect(f.posts.some(p=>p.final)).toBe(false);expect(f.data[f.key]).toEqual({status:'received',runId:'previous-registration'});
+});
+it('never reuses a received Direct run ID to send again',async()=>{
+  const f=fixture();f.data[f.key]={status:'received',runId:'same-received-run'};
+  expect(await f.run({runId:'same-received-run'})).toMatchObject({status:'failed',postCount:0});expect(f.posts).toHaveLength(0);
 });
 it('uses Google native Next after upload in Test, preparing bank/commitment controls before navigating',async()=>{
   vi.useFakeTimers();const f=fixture(),events:string[]=[];const original=f.executeScript.getMockImplementation()!;
@@ -375,6 +379,78 @@ it('does not reserve a submit grant when native validation opens CAPTCHA',async(
   f.executeScript.mockImplementation(async request=>request.func===prepareDirectNativeSubmit?[{result:{ready:false,reason:'captcha',message:'Hoàn tất CAPTCHA'}}]:original(request));
   const running=f.run();await vi.runAllTimersAsync();expect(await running).toMatchObject({status:'waiting',issue:{reason:'captcha'}});
   expect(f.posts.some(p=>p.final)).toBe(false);expect(f.data[f.key]).toBeUndefined();
+});
+
+it.each(['missing','error'] as const)('recognizes a Google traffic redirect when injection returns a %s result',async kind=>{
+  const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  Object.assign(chrome,{tabs:{get:vi.fn(async()=>({url:'https://ipv6.google.com/sorry/index'}))}});
+  f.executeScript.mockImplementation(async request=>request.func===readExecutionPage?(kind==='missing'?[{result:undefined}]:[{error:{message:'Cannot access contents of url'}}]):original(request));
+  expect(await f.run()).toMatchObject({status:'waiting',issue:{reason:'captcha'},postCount:0});
+});
+
+it.each([
+  ['captcha',false],['captcha',true],['network',false],['network',true],['server_error',false],['server_error',true],
+] as const)('does not fall back or replay a request blocked by %s (final: %s)',async(reason,final)=>{
+  vi.useFakeTimers();const f=fixture(),original=f.executeScript.getMockImplementation()!;
+  const restore=vi.fn();let blockedAt=0;
+  f.executeScript.mockImplementation(async request=>{
+    if(request.func===restoreDirectNativePage){restore();return [{result:true}];}
+    const result=await original(request);
+    if(request.func===postExecutionPage&&!request.args[0].validateOnly&&(final?request.args[0].final:request.args[0].http)){
+      blockedAt=f.posts.length;
+      return [{result:{scheduled:true,issue:{reason,message:'Google chưa xác nhận request.'}}}];
+    }
+    return result;
+  });
+  const running=f.run({mode:'live',fastSubmit:!final});await vi.runAllTimersAsync();
+  expect(await running).toMatchObject({status:final?'uncertain':'waiting',issue:{reason}});
+  expect(restore).not.toHaveBeenCalled();
+  expect(f.posts.filter(p=>p.final)).toHaveLength(final?1:0);
+  expect(blockedAt).toBeGreaterThan(0);expect(f.posts).toHaveLength(blockedAt);
+  expect(f.posts.at(-1)).toMatchObject(final?{final:true}:{http:true,final:false});
+  expect(f.data[f.key]?.status).toBe(final?'pending':undefined);
+});
+
+it.each([false,true])('keeps the last Google document untouched for a blocked HTTP response (final: %s)',async final=>{
+  const request={...form(),final,http:!final,route:[0,1]};
+  document.body.insertAdjacentHTML('beforeend','<form id="hanuDirectState" hidden><input name="pageHistory" value="0"><input name="fbzx" value="ACCEPTED_STATE"></form>');
+  const before=document.body.innerHTML;
+  const fetch=vi.fn(async()=>({status:429,ok:false,url:'https://docs.google.com/forms/u/0/d/e/fixture/formResponse',text:async()=>'<html><body><iframe src="about:blank"></iframe>Our systems have detected unusual traffic from your computer network. IP address: PRIVATE_IP. URL: PRIVATE_QUERY<script>window.challengeExecuted=true</script></body></html>'}));
+  vi.stubGlobal('fetch',fetch);
+  const result=await postExecutionPage(request);
+  expect(result).toMatchObject({scheduled:true,issue:{reason:'captcha'}});
+  expect(result.finalResult).toBeUndefined();expect(result.error).toBeUndefined();
+  expect(JSON.stringify(result)).not.toMatch(/PRIVATE_IP|PRIVATE_QUERY|ACCEPTED_STATE/);
+  expect(document.body.innerHTML).toBe(before);expect(document.querySelector('#hanuDirectConfirmation')).toBeNull();
+  expect((window as any).challengeExecuted).toBeUndefined();
+  await expect(postExecutionPage(request)).rejects.toThrow('không gửi lặp');expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  {url:'https://www.google.com/sorry/index',html:'<body>Traffic check unavailable</body>'},
+  {url:'https://ipv4.google.com/sorry/index',html:'<body>Traffic check unavailable</body>'},
+  {url:'https://docs.google.com/forms/fixture',html:'<body>Cannot contact reCAPTCHA. Check your connection and try again.</body>'},
+])('never accepts an HTTP 200 security document as confirmation: $url',async({url,html})=>{
+  const request={...form(),final:true};
+  vi.stubGlobal('fetch',vi.fn(async()=>({status:200,ok:true,url,text:async()=>html})));
+  expect(await postExecutionPage(request)).toMatchObject({issue:{reason:'captcha'}});
+  expect(document.querySelector('#hanuDirectConfirmation')).toBeNull();
+});
+
+it.each(['fetch','body'] as const)('pauses an unreadable %s without diagnosing CAPTCHA or replaying the POST',async stage=>{
+  const request={...form(),http:true,route:[0,1]},before=document.body.innerHTML;
+  const failure=new TypeError('Failed to fetch PRIVATE_URL');
+  const fetch=vi.fn(async()=>{if(stage==='fetch')throw failure;return {text:async()=>{throw failure;}};});
+  vi.stubGlobal('fetch',fetch);
+  expect(await postExecutionPage(request)).toMatchObject({issue:{reason:'network',message:expect.not.stringContaining('PRIVATE_URL')}});
+  expect(document.body.innerHTML).toBe(before);
+  await expect(postExecutionPage(request)).rejects.toThrow('không gửi lặp');expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('pauses an explicit HTTP rate limit even without a recognizable CAPTCHA document',async()=>{
+  const request={...form(),http:true,route:[0,1]};
+  vi.stubGlobal('fetch',vi.fn(async()=>({status:429,ok:false,text:async()=>'<body>Slow down</body>'})));
+  expect(await postExecutionPage(request)).toMatchObject({issue:{reason:'server_error',message:expect.stringContaining('HTTP 429')}});
 });
 
 it('consumes the prepared waiting tab for a fresh Direct run instead of creating another tab',async()=>{

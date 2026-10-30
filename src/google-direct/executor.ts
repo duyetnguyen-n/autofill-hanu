@@ -4,7 +4,6 @@ import {hasSubmissionConfirmation} from '../submission-confirmation';
 import {directQuestionSummary} from './verification';
 import type {BlockingIssue,Profile} from '../shared';
 import {directFormId,directSchemaFingerprint,parseDirectSchema} from './schema';
-import {repeatableDirectLab} from './repeat';
 import {buildDirectPlan} from './plan';
 import {readExecutionPage,postExecutionPage,inspectExecutionUpload,refreshExecutionDraft,beginExecutionSession,cancelExecutionPage,resetExecutionPage,prepareUploadAnswer,type ExecutionPage,type PagePost} from './execute-page';
 import {DirectPageDialogs} from './dialogs';
@@ -32,22 +31,30 @@ export class DirectExecutor {
         const data=await chrome.storage.local.get(['executionLease','submissionLocks','googleDirectLease']);
         if(data.googleDirectLease?.active&&data.googleDirectLease.runId!==runId)throw new Error('Lượt thử nghiệm khác đang giữ profile.');
         if(data.executionLease?.active)throw new Error('Luồng Google Forms cũ đang chạy; dừng lượt đó trước khi dùng Direct.');
-        if(Object.values(data.submissionLocks??{}).some((v:any)=>v.formId===formId&&v.resolution!=='not_received'))throw new Error('Luồng cũ đang giữ khóa gửi của form này.');
+        if(Object.values(data.submissionLocks??{}).some((v:any)=>v.formId===formId&&!['not_received','received'].includes(v.resolution)))throw new Error('Luồng cũ đang giữ khóa gửi chưa rõ kết quả của form này.');
       };
       const read=async()=>{
         await guard();
+        const redirectIssue=async()=>{
+          // Chrome can return a missing result/error entry instead of rejecting
+          // executeScript when a tab leaves the permitted responder origin.
+          const tab=await chrome.tabs?.get?.(tabId).catch(()=>undefined),url=tab?.pendingUrl??tab?.url??'';
+          if(/^https:\/\/(?:(?:www|ipv4|ipv6)\.)?google\.com\/sorry(?:\/|[?#]|$)/i.test(url))return {reason:'captcha' as const,message:'Google yêu cầu xác minh lưu lượng. Nếu CAPTCHA không hiển thị, giữ nguyên tab và dữ liệu; không tự tải lại hoặc gửi lại liên tục.'};
+          if(/^https:\/\/accounts\.google\.com\//i.test(url))return {reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản trên tab hiện tại rồi bấm Tiếp tục.'};
+        };
         let results:chrome.scripting.InjectionResult<ExecutionPage>[];
         try{results=await chrome.scripting.executeScript({target:{tabId},func:readExecutionPage});}
         catch(error){
           // Injection can fail on Google's account/CAPTCHA redirects. Inspect
           // only the tab URL; no new permissions or session data are needed.
-          const tab=await chrome.tabs?.get?.(tabId).catch(()=>undefined),url=tab?.url??'';
-          if(/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(url))throw new DirectPageProblem({reason:'captcha',message:'Google yêu cầu xác thực lưu lượng. Giữ nguyên tab để xử lý CAPTCHA.'});
-          if(/^https:\/\/accounts\.google\.com\//i.test(url))throw new DirectPageProblem({reason:'account',message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản trên tab hiện tại rồi bấm Tiếp tục.'});
+          const issue=await redirectIssue();if(issue)throw new DirectPageProblem(issue);
           throw error;
         }
         let page=results[0]?.result;
-        if(results.length!==1||!page||directFormId(page.url)!==formId)throw new Error('Direct chỉ chạy trên đúng form đã chọn.');
+        if(results.length!==1||!page||directFormId(page.url)!==formId){
+          const issue=await redirectIssue();if(issue)throw new DirectPageProblem(issue);
+          throw new Error('Direct chỉ chạy trên đúng form đã chọn.');
+        }
         if(page.blocked)throw new DirectPageProblem(page.issue??{reason:'captcha',message:'Google đang yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'});
         if(page.draftRefresh&&!attempted){
           await input.onProgress('Google có bản nháp mới hơn. Tool đang đối chiếu lại trước khi áp dụng snapshot hồ sơ.');
@@ -121,7 +128,7 @@ export class DirectExecutor {
         if(!account)throw new Error('Chưa xác định được tài khoản Google của form.');
         lockKey=`googleDirectSubmit:${formId}:${account.toLowerCase()}`;
         const prior=(await chrome.storage.local.get(lockKey))[lockKey];
-        if(prior&&prior.status!=='not_received'&&!(prior.status==='received'&&repeatableDirectLab('direct',formId)))throw new Error(prior.status==='received'?'Google đã xác nhận gửi form này. Không tạo đăng ký trùng.':'Lượt Direct trước chưa rõ kết quả. Đối chiếu phản hồi trước khi tạo lượt mới.');
+        if(prior&&(prior.runId===runId||!['not_received','received'].includes(prior.status)))throw new Error('Lượt Direct đã gửi hoặc chưa rõ kết quả. Đối chiếu phản hồi trước khi tạo lượt mới; không gửi lại cùng lượt.');
         await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:resetExecutionPage});
         const effectiveOverrides=await input.onSchema?.(tabId)??input.overrides;
         const schema=parseDirectSchema(page.script);
@@ -293,6 +300,7 @@ export class DirectExecutor {
           const posted=await chrome.scripting.executeScript({target:{tabId},world:final||committedUpload?'MAIN':'ISOLATED',func:postExecutionPage,args:[request]});
           const injectionError=(posted[0] as {error?:unknown})?.error;
           if(injectionError)throw new Error(`Không thực thi được request trong trang Google: ${typeof injectionError==='object'&&injectionError&&'message' in injectionError?String(injectionError.message):String(injectionError)}`);
+          if(posted[0]?.result?.issue)throw new DirectPageProblem(posted[0].result.issue);
           if(posted[0]?.result?.error){
             if(!request.http)throw new Error(posted[0].result.error);
             // No final submit has been sent. Restore Google's real page from

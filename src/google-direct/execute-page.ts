@@ -52,7 +52,12 @@ export function readExecutionPage(): ExecutionPage {
   const html = document.documentElement;
   if (!html.dataset.hanuDirectDocument) html.dataset.hanuDirectDocument = crypto.randomUUID();
   let issue:BlockingIssue|undefined;
-  if(hasUnsatisfiedCaptcha())issue={reason:'captcha',message:'Google yêu cầu xác thực. Giữ nguyên tab, hoàn tất CAPTCHA trên Google rồi bấm Tiếp tục.'};
+  // A Google traffic-check document can have a broken/missing challenge frame.
+  // Do not infer a traffic check from text in a real responder question.
+  const trafficCheck=!form&&/unusual traffic from your computer network|lưu lượng truy cập bất thường từ mạng/i.test(text);
+  const captchaUnavailable=!form&&/cannot contact recaptcha|could not connect to (?:the )?recaptcha|không thể (?:kết nối|liên hệ).*recaptcha/i.test(text);
+  if(trafficCheck||captchaUnavailable)issue={reason:'captcha',message:'Google đang yêu cầu xác minh lưu lượng; khung CAPTCHA có thể chưa tải được. Tool đã dừng tự động. Giữ nguyên tab và dữ liệu; không tải lại hoặc gửi lại liên tục.'};
+  else if(hasUnsatisfiedCaptcha())issue={reason:'captcha',message:'Google yêu cầu xác thực. Giữ nguyên tab, hoàn tất CAPTCHA trên Google rồi bấm Tiếp tục.'};
   else if(location.pathname.endsWith('/closedform')||/không còn chấp nhận|không còn nhận câu trả lời|no longer accepting|form (?:is )?closed/i.test(text))issue={reason:'form_closed',message:'Google Form đã ngừng nhận phản hồi.'};
   else if(/too many requests|unusual traffic|quá nhiều yêu cầu/i.test(text))issue={reason:'server_error',message:'Google đang giới hạn truy cập. Giữ nguyên trang để kiểm tra.'};
   const validationErrors=[...document.querySelectorAll<HTMLElement>('[role="alert"],[id^="i.err."],[aria-invalid="true"]')].filter(visible).map(e=>e.getAttribute('aria-invalid')==='true'?'Có trường chưa hợp lệ. Kiểm tra các câu được Google đánh dấu.':e.textContent?.trim()??'').filter(Boolean).slice(0,10).map(t=>t.slice(0,300));
@@ -82,7 +87,7 @@ export interface PagePost {
   validateOnly?:boolean;
 }
 export interface FinalPostResult {status:number;received:boolean;message:string}
-export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult;error?:string}> {
+export async function postExecutionPage(request: PagePost): Promise<{scheduled:true;finalResult?:FinalPostResult;error?:string;issue?:BlockingIssue}> {
   if (location.origin !== 'https://docs.google.com' || !location.pathname.includes(`/d/e/${request.formId}/`) || document.documentElement.dataset.hanuDirectDocument !== request.documentKey) throw new Error('Document/form đã thay đổi trước khi gửi request.');
   const original = document.querySelector<HTMLFormElement>('form[action*="/formResponse"]');
   if (!original) throw new Error('Không còn form để gửi.');
@@ -162,11 +167,24 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
     document.documentElement.dataset.hanuDirectPost=request.requestId;
     const controller=new AbortController(),stop=()=>controller.abort(),timer=setTimeout(stop,35000);
     document.addEventListener('hanu-direct-stop',stop,{once:true});
+    let responseRead=false;
     try{
       const response=await fetch(action.href,{method:'POST',credentials:'include',redirect:'follow',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body.toString(),signal:controller.signal});
       const html=await response.text();
+      responseRead=true;
       // Parse only inert text/structural markers. Do not insert response HTML
       // into Google's document or create a Trusted Types policy in MAIN.
+      const hasForm=/<form\b[^>]*action\s*=\s*["'][^"']*\/formResponse(?:[?"'])/i.test(html);
+      const captcha=/<iframe\b[^>]*src\s*=\s*["'][^"']*(?:recaptcha|hcaptcha)/i.test(html);
+      const text=html.replace(/<(script|style|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,' ').replace(/<input\b[^>]*>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&#(\d+);/g,(_all,n)=>String.fromCodePoint(Number(n))).replace(/&nbsp;|&#xA0;/gi,' ').replace(/&amp;/gi,'&').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase().replace(/\s+/g,' ').trim();
+      const responseUrl=response.url?new URL(response.url):undefined;
+      const trafficRedirect=responseUrl?.protocol==='https:'&&/^(?:(?:www|ipv4|ipv6)\.)?google\.com$/i.test(responseUrl.hostname)&&/^\/sorry(?:\/|$)/.test(responseUrl.pathname);
+      if(trafficRedirect||!hasForm&&(captcha||/unusual traffic from your computer network|luu luong truy cap bat thuong tu mang|cannot contact recaptcha|could not connect to (?:the )?recaptcha|khong the (?:ket noi|lien he).*recaptcha/.test(text))){
+        // Keep the last accepted state and file references. Never switch a
+        // blocked fetch to a native POST; a final one retains its pending lock.
+        return {scheduled:true,issue:{reason:'captcha',message:'Google đã chặn request và yêu cầu xác minh lưu lượng. Khung CAPTCHA có thể chưa tải được. Tool đã dừng, không tự chuyển sang request khác. Giữ tab và dữ liệu; nếu đã bắt đầu Gửi, cần đối chiếu kết quả trước khi gửi lại.'}};
+      }
+      if(response.status===429)return {scheduled:true,issue:{reason:'server_error',message:'Google đang giới hạn truy cập (HTTP 429). Tool đã dừng, không tự gửi lại hoặc chuyển sang request khác. Giữ tab và dữ liệu để kiểm tra.'}};
       if(!request.final){
         if(!response.ok)throw new Error(`Google từ chối chuyển trang HTTP ${response.status}.`);
         const decode=(s:string)=>s.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi,(_all,v)=>v[0]==='#'?String.fromCodePoint(v[1].toLowerCase()==='x'?parseInt(v.slice(2),16):parseInt(v.slice(1),10)):({amp:'&',quot:'"',apos:"'",lt:'<',gt:'>'} as Record<string,string>)[v.toLowerCase()]);
@@ -207,9 +225,6 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
         document.documentElement.dataset.hanuDirectDocument=crypto.randomUUID();delete document.documentElement.dataset.hanuDirectPost;
         return {scheduled:true};
       }
-      const hasForm=/<form\b[^>]*action\s*=\s*["'][^"']*\/formResponse(?:[?"'])/i.test(html);
-      const captcha=/<iframe\b[^>]*src\s*=\s*["'][^"']*(?:recaptcha|hcaptcha)/i.test(html);
-      const text=html.replace(/<(script|style|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,' ').replace(/<input\b[^>]*>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&#(\d+);/g,(_all,n)=>String.fromCodePoint(Number(n))).replace(/&nbsp;|&#xA0;/gi,' ').replace(/&amp;/gi,'&').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase().replace(/\s+/g,' ').trim();
       const received=response.ok&&!hasForm&&!captcha&&/(?:your )?response has been recorded|da ghi lai cau tra loi|cau tra loi cua ban da duoc ghi lai|chuc mung thi sinh da hoan thanh buoc dien thong tin dang ky bieu mau|恭喜您完成填写报名信息/.test(text);
       if(received){
         original.hidden=true;
@@ -222,7 +237,13 @@ export async function postExecutionPage(request: PagePost): Promise<{scheduled:t
       const draft=/ban nhap moi hon|more recent draft|newer draft/.test(text);
       const login=!!response.url&&new URL(response.url).hostname==='accounts.google.com';
       return {scheduled:true,finalResult:{status:response.status,received,message:received?'Google xác nhận đã ghi lại phản hồi.':login?'Google yêu cầu đăng nhập lại cho request Gửi.':draft?'Google trả về xung đột bản nháp, chưa xác nhận gửi.':hasForm?`Google trả lại form để kiểm tra dữ liệu; chưa xác nhận gửi. ${text.slice(-600)}`:`Google chưa trả xác nhận ghi phản hồi (HTTP ${response.status}).`}};
-    }catch(error){return {scheduled:true,error:(error as Error).message};}
+    }catch(error){
+      // A failed/aborted fetch or unreadable redirect does not tell us whether
+      // Google accepted the POST. Do not diagnose CAPTCHA from a network error
+      // or issue a second POST through the native fallback.
+      if(!responseRead)return {scheduled:true,issue:{reason:'network',message:'Không đọc được phản hồi từ Google. Có thể do kết nối hoặc trang chuyển hướng không tải được; chưa xác định nguyên nhân. Tool đã dừng, không tự gửi lại. Giữ tab và dữ liệu; nếu đã bắt đầu Gửi, cần đối chiếu kết quả.'}};
+      return {scheduled:true,error:(error as Error).message};
+    }
     finally{clearTimeout(timer);document.removeEventListener('hanu-direct-stop',stop);}
   }
   // Google pages can declare <base target="_blank">. A dynamically created

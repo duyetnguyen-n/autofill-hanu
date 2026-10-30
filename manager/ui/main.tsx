@@ -5,7 +5,7 @@ import { AddRegular, ArrowSyncRegular, OpenRegular, DismissRegular, PlayRegular,
 import type {SessionView,GroupView} from '../../src/protocol';
 import type {Profile,RunState} from '../../src/shared';
 import {RegistrationSchedulePanel} from './RegistrationSchedule';
-import {canRepeatCompletedLab} from '../../src/google-direct/repeat';
+import {canRepeatCompletedRun} from '../../src/google-direct/repeat';
 import {HSK_LEVELS,activeSchedule,type RegistrationSchedule} from '../../src/registration-schedule';
 import {LiveRunBar,currentRunTarget,type LiveTarget} from './LiveRunBar';
 import {Notice} from './Notice';
@@ -51,7 +51,7 @@ const isRunning=(s:SessionView)=>s.connected&&(s.execution?['running','submittin
 const needsStop=(s:SessionView)=>!!s.execution||!!s.run&&!['idle','completed','ready_to_submit'].includes(s.run.status);
 const profileReady=(s:SessionView)=>s.connected&&s.synced&&!!s.profile&&!s.conflict&&!s.execution&&/^\S+@\S+\.\S+$/.test(s.expectedEmail);
 const sessionReady=(s:SessionView)=>profileReady(s)&&(!s.run||['idle','completed','failed','ready_to_submit'].includes(s.run.status))&&(!s.error||!!s.run&&['idle','failed','ready_to_submit'].includes(s.run.status));
-const canRestart=(s:SessionView)=>(s.run?.engine==='direct')===directWorkspace&&s.connected&&!!s.profile&&!s.conflict&&/^\S+@\S+\.\S+$/.test(s.expectedEmail)&&!!s.run?.url&&(canRepeatCompletedLab(s.run)||!s.run.submitAttempted&&['idle','paused','waiting_manual','failed','ready_to_submit','running'].includes(s.run.status));
+const canRestart=(s:SessionView)=>(s.run?.engine==='direct')===directWorkspace&&s.connected&&!!s.profile&&!s.conflict&&/^\S+@\S+\.\S+$/.test(s.expectedEmail)&&!!s.run?.url&&(canRepeatCompletedRun(s.run)||!s.run.submitAttempted&&['idle','paused','waiting_manual','failed','ready_to_submit','running'].includes(s.run.status));
 async function restartSession(s:SessionView){if(!canRestart(s))throw new Error('Profile chưa sẵn sàng chạy lại.');return api(`sessions/${s.id}/restart`,{expectedRunId:s.run!.runId,requestId:crypto.randomUUID()});}
 const status=(s:SessionView)=>(s.run?.engine==='direct'?'Direct · ':'')+(s.linked===false?'Đã hủy liên kết':!s.connected?'Mất kết nối':s.conflict?'Xung đột hồ sơ':s.execution?`${s.execution.mode==='test'?'Test':'Live'} · ${s.execution.status==='running'&&!isRunning(s)?(s.execution.active===false?'Form không tự chạy, còn giữ profile':'Lượt còn giữ profile'):runStatusLabel({...s.run,...s.execution})}${s.execution.managed?'':' trong extension'}`:s.error&&!s.run?'Cần kiểm tra':s.run?runStatusLabel(s.run):!s.expectedEmail?'Cần gán email':s.synced?'Đã chuẩn bị':'Chưa đồng bộ');
 const step=(s:SessionView)=>commandStatus(s.control,s.run)??(s.linked===false?'Liên kết lại để tiếp tục sử dụng profile':submissionReviewMessage(s.run)??s.run?.activity?.message??(s.execution?(s.execution.message??'Profile đang được giữ bởi lượt này. Bấm Xem form hoặc Dừng.'):(s.error??s.run?.blockingIssue?.message??s.run?.logs.at(-1)?.message??(s.synced?'Chờ link và lệnh bắt đầu':'Mở Chi tiết để chuẩn bị hồ sơ'))));

@@ -68,23 +68,27 @@ it('preserves confirmed submissions when a profile-wide Stop is acknowledged',as
  await a.store.acquireSubmit(a.sessionId,group.id,'fixture-form');await a.store.resolve(a.sessionId,group.id,'received');
  await a.store.acknowledgeStop(a.sessionId,group.id,{execution:null});
  expect((await a.store.session(a.sessionId)).run).toMatchObject({status:'completed',submitAttempted:true});
- expect(await a.store.blocked(a.sessionId,'fixture-form')).toBe(true);
+ expect(await a.store.blocked(a.sessionId,'fixture-form')).toBe(false);
 });
-it('repeats confirmed Direct LAB runs through preflight, durable start and submit grant, but fences uncertain results',async()=>{
+it.each([
+ {engine:undefined,form:'registration-repeat-classic'},
+ {engine:'direct' as const,form:'registration-repeat-direct'},
+ {engine:'direct' as const,form:DIRECT_LAB_FORM_ID},
+])('repeats a confirmed run but fences uncertain results ($engine, $form)',async({engine,form})=>{
  const f=await setup(),a=await f.pair(),c=new Coordinator(a.store,undefined,true);
  c.peers.set(a.sessionId,{} as any);
- c.command=async(_id,kind)=>kind==='PING'?{capabilities:['googleDirect']}:{};
+ c.command=async(_id,kind)=>kind==='PING'?{capabilities:['googleDirect','googleDirectForms']}:{};
  const begin=async()=>{
-   const g=await c.start([a.sessionId],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
-   const s=await a.store.session(a.sessionId);s.run!.formId=DIRECT_LAB_FORM_ID;await a.store.saveSession(s);return g;
+   const g=await c.start([a.sessionId],`https://docs.google.com/forms/d/e/${form}/viewform`,'live',undefined,undefined,undefined,undefined,engine);
+   const s=await a.store.session(a.sessionId);s.run!.formId=form;await a.store.saveSession(s);return g;
  };
- const first=await begin();await a.store.acquireSubmit(a.sessionId,first.id,DIRECT_LAB_FORM_ID);
+ const first=await begin();await a.store.acquireSubmit(a.sessionId,first.id,form);
  await a.store.resolve(a.sessionId,first.id,'received');
- expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID)).toBe(true);
- expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID,'direct')).toBe(false);
- const second=await begin();await a.store.acquireSubmit(a.sessionId,second.id,DIRECT_LAB_FORM_ID);
- await expect(a.store.acquireSubmit(a.sessionId,second.id,DIRECT_LAB_FORM_ID)).rejects.toThrow('khóa');
- expect(await a.store.blocked(a.sessionId,DIRECT_LAB_FORM_ID,'direct')).toBe(true);
+ expect(await a.store.blocked(a.sessionId,form)).toBe(false);
+ expect(await a.store.blocked(a.sessionId,form,engine)).toBe(false);
+ const second=await begin();await a.store.acquireSubmit(a.sessionId,second.id,form);
+ await expect(a.store.acquireSubmit(a.sessionId,second.id,form)).rejects.toThrow('khóa');
+ expect(await a.store.blocked(a.sessionId,form,engine)).toBe(true);
  await expect(begin()).rejects.toThrow('khóa');
  expect((await a.store.history(a.sessionId)).find(r=>r.runId===first.id)).toMatchObject({status:'completed',submitAttempted:true});
 });

@@ -46,13 +46,15 @@ it('requires a Reload for an old LAB-only extension on an unfamiliar form',async
  await expect(f.c.start(['one'],'https://docs.google.com/forms/d/e/new-form/viewform','test',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('1.9.13');
  expect(f.command.mock.calls.some(c=>c[1]==='START')).toBe(false);
 });
-it('keeps a confirmed registration locked on non-LAB forms',async()=>{
+it.each([undefined,'direct'] as const)('allows a new run and Restart after confirmed receipt on any form (engine: %s)',async engine=>{
  const f=fixture(),form='real-registration-form',url=`https://docs.google.com/forms/d/e/${form}/viewform`;
- const first=await f.c.start(['one'],url,'live',undefined,undefined,undefined,undefined,'direct');
+ const first=await f.c.start(['one'],url,'live',undefined,undefined,undefined,undefined,engine);
  const s=f.store.session('one');s.run!.formId=form;f.store.saveSession(s);f.store.acquireSubmit('one',first.id,form);f.store.resolve('one',first.id,'received');
- expect(f.store.blocked('one',form,'direct')).toBe(true);
- await expect(f.c.start(['one'],url,'live',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow('khóa');
- await expect(f.c.restart('one',first.id)).rejects.toThrow('khóa');
+ expect(f.store.blocked('one',form,engine)).toBe(false);
+ const second=await f.c.restart('one',first.id);expect(second.id).not.toBe(first.id);
+ const next=f.store.session('one');next.run!.formId=form;f.store.saveSession(next);f.store.acquireSubmit('one',second.id,form);
+ expect(()=>f.store.acquireSubmit('one',second.id,form)).toThrow();expect(f.store.blocked('one',form,engine)).toBe(true);
+ expect(f.store.history('one').find(run=>run.runId===first.id)).toMatchObject({status:'completed',submitAttempted:true});
 });
 it('retains the chosen engine through a scheduled manual link and group Stop',async()=>{
  const f=fixture();const s=await f.c.scheduler.arm({ids:['one','two'],mode:'test',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL}});
@@ -71,7 +73,7 @@ it('allows fresh and restarted Direct LAB runs after confirmed receipt, preservi
  const first=await f.c.start(['one'],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
  const s=f.store.session('one');s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
  f.store.acquireSubmit('one',first.id,DIRECT_LAB_FORM_ID);f.store.resolve('one',first.id,'received');
- expect(f.store.blocked('one',DIRECT_LAB_FORM_ID)).toBe(true);
+ expect(f.store.blocked('one',DIRECT_LAB_FORM_ID)).toBe(false);
  expect(f.store.blocked('one',DIRECT_LAB_FORM_ID,'direct')).toBe(false);
  const second=await f.c.restart('one',first.id,'restart-lab-received');
  expect(second.id).not.toBe(first.id);expect(second.engine).toBe('direct');
@@ -81,22 +83,23 @@ it('allows fresh and restarted Direct LAB runs after confirmed receipt, preservi
  expect(()=>f.store.acquireSubmit('one',second.id,DIRECT_LAB_FORM_ID)).toThrow();
  expect(f.store.blocked('one',DIRECT_LAB_FORM_ID,'direct')).toBe(true);
 });
-it('keeps unresolved LAB submissions blocked and never applies repeat rules to classic',async()=>{
+it('keeps unresolved submissions blocked but allows Classic after confirmed receipt',async()=>{
  const f=fixture();const first=await f.c.start(['one'],DIRECT_LAB_URL,'live',undefined,undefined,undefined,undefined,'direct');
  const s=f.store.session('one');s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
  f.store.acquireSubmit('one',first.id,DIRECT_LAB_FORM_ID);
  await expect(f.c.start(['one'],DIRECT_LAB_URL,'test',undefined,undefined,undefined,undefined,'direct')).rejects.toThrow();
  f.store.resolve('one',first.id,'received');
- await expect(f.c.start(['one'],DIRECT_LAB_URL,'test')).rejects.toThrow('khóa');
+ await expect(f.c.start(['one'],DIRECT_LAB_URL,'test')).resolves.toMatchObject({mode:'test'});
 });
-it('changes/repeats a scheduled LAB link after a completed Live run without asking for manual resolution',async()=>{
- const f=fixture();await f.c.scheduler.arm({ids:['one'],mode:'live',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL}});
+it.each([undefined,'direct'] as const)('repeats a scheduled link after confirmed receipt without manual resolution (engine: %s)',async engine=>{
+ const form='scheduled-repeat-form',url=`https://docs.google.com/forms/d/e/${form}/viewform`;
+ const f=fixture();await f.c.scheduler.arm({ids:['one'],mode:'live',manualOnly:true,engine,links:{'4':url}});
  await f.c.scheduler.tick();await vi.waitFor(()=>expect(f.c.scheduler.value?.members[0].status).toBe('started'));
- const s=f.store.session('one'),first=s.run!.runId!;s.run!.formId=DIRECT_LAB_FORM_ID;f.store.saveSession(s);
- f.store.acquireSubmit('one',first,DIRECT_LAB_FORM_ID);f.store.resolve('one',first,'received');
- expect(await f.c.scheduler.replace('4',DIRECT_LAB_URL)).toEqual([{id:'one',ok:true}]);
+ const s=f.store.session('one'),first=s.run!.runId!;s.run!.formId=form;f.store.saveSession(s);
+ f.store.acquireSubmit('one',first,form);f.store.resolve('one',first,'received');
+ expect(await f.c.scheduler.replace('4',url)).toEqual([{id:'one',ok:true}]);
  await vi.waitFor(()=>expect(f.store.session('one').run?.runId).not.toBe(first));
- expect(f.store.session('one').run).toMatchObject({engine:'direct',mode:'live',status:'running',submitAttempted:false});
+ expect(f.store.session('one').run).toMatchObject({mode:'live',status:'running',submitAttempted:false});expect(f.store.session('one').run?.engine).toBe(engine);
 });
 it('carries a value-only HSK answer into Direct Start without binding it to a guessed label',async()=>{
  const f=fixture();await f.c.scheduler.arm({ids:['one'],mode:'test',manualOnly:true,engine:'direct',links:{'4':DIRECT_LAB_URL},finalQuestions:{'4':{value:'1350000'}}});await f.c.scheduler.tick();

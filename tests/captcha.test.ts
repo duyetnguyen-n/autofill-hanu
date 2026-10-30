@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 import {afterEach,expect,it,vi} from 'vitest';
-import {hasUnsatisfiedCaptcha} from '../src/captcha';
+import {hasUnsatisfiedCaptcha,googleSecurityIssue} from '../src/captcha';
 import {readExecutionPage} from '../src/google-direct/execute-page';
 import {DIRECT_LAB_URL} from '../src/google-direct/schema';
 
 afterEach(()=>{document.body.replaceChildren();vi.restoreAllMocks();vi.unstubAllGlobals();});
+it.each(['google.com','www.google.com','ipv4.google.com','ipv6.google.com'])('recognizes Google’s traffic-check host %s without needing frame access',host=>{
+  const issue=googleSecurityIssue({url:`https://${host}/sorry/index?continue=PRIVATE_FORM_QUERY`});
+  expect(issue?.reason).toBe('captcha');expect(JSON.stringify(issue)).not.toContain('PRIVATE_FORM_QUERY');
+});
+it.each(['https://not-google.com/sorry/index','https://google.com.example.test/sorry/index','https://google.com/sorry-looking-question','https://www.google.com/search?q=/sorry','http://google.com/sorry/index','not a URL'])('does not infer a Google security block from %s',url=>{
+  expect(googleSecurityIssue({url})).toBeUndefined();
+});
 function fixture(html:string){
   vi.stubGlobal('location',new URL(DIRECT_LAB_URL));
   document.body.innerHTML=`<form action="${DIRECT_LAB_URL.replace('viewform','formResponse')}">${html}</form>`;
@@ -45,4 +52,13 @@ it('reports visible field validation separately and excludes hidden errors',()=>
 it('classifies Google’s closedform URL immediately even without a schema or recognizable language',()=>{
   fixture('');vi.stubGlobal('location',new URL(DIRECT_LAB_URL.replace('viewform','closedform')));document.querySelector('form')!.remove();
   expect(readExecutionPage()).toMatchObject({hasForm:false,blocked:true,issue:{reason:'form_closed'}});
+});
+
+it.each([
+  'Our systems have detected unusual traffic from your computer network. This page checks to see if it is really you sending the requests.',
+  'Hệ thống của chúng tôi đã phát hiện lưu lượng truy cập bất thường từ mạng máy tính của bạn.',
+  'Cannot contact reCAPTCHA. Check your connection and try again.',
+])('Direct recognizes a traffic-check document without a working CAPTCHA frame: %s',text=>{
+  fixture('');document.body.textContent=text;
+  expect(readExecutionPage()).toMatchObject({hasForm:false,blocked:true,issue:{reason:'captcha',message:expect.stringContaining('khung CAPTCHA')}});
 });

@@ -3,6 +3,28 @@ import type { ExtensionMessage, RunState } from '../src/shared';
 
 afterEach(() => { vi.useRealTimers();vi.unstubAllGlobals(); vi.resetModules(); });
 const formUrl = 'https://docs.google.com/forms/d/e/test-form/viewform';
+it('keeps Classic receipt history, allows a fresh run, and refuses another grant for the same run',async()=>{
+ const f=await setup();Object.assign(f.run,{runId:'confirmed',status:'submitting',mode:'live',contentEpoch:'first-doc',submitAttempted:true});
+ f.data.submissionLocks={confirmed:{formId:'test-form',resolution:'uncertain',createdAt:'RETAIN_HISTORY'}};
+ const sender={tab:{id:7,url:formUrl},url:formUrl,frameId:0};
+ expect(await f.ask({type:'FORM_EVENT',runId:'confirmed',epoch:'first-doc',event:{type:'completed',message:'Google recorded response'}},sender)).toMatchObject({ok:true});
+ expect(f.data.submissionLocks).toMatchObject({confirmed:{resolution:'received',createdAt:'RETAIN_HISTORY'}});
+ expect(await f.ask({type:'REQUEST_SUBMIT',runId:'confirmed',epoch:'first-doc'},sender)).toMatchObject({ok:false});
+ f.data['run:7']={...f.data['run:7'] as RunState,runId:'new-requested-run',status:'running',submitAttempted:false,contentEpoch:'new-doc'};
+ expect(await f.ask({type:'REQUEST_SUBMIT',runId:'new-requested-run',epoch:'new-doc'},sender)).toMatchObject({granted:true});
+ expect(await f.ask({type:'REQUEST_SUBMIT',runId:'new-requested-run',epoch:'new-doc'},sender)).toMatchObject({ok:false});
+ expect(f.data.submissionLocks).toMatchObject({confirmed:{resolution:'received'},'new-requested-run':{resolution:'uncertain'}});
+});
+
+it.each(['completed','idle','submit_uncertain'] as const)('upgrades an old Classic lock only from confirmed retained state (%s)',async status=>{
+ const f=await setup();f.data['run:8']={...f.run,runId:'old-run',status,submitAttempted:true};
+ Object.assign(f.run,{runId:'new-run',status:'running',mode:'live',contentEpoch:'new-doc',submitAttempted:false});
+ f.data.submissionLocks={'old-run':{formId:'test-form',resolution:'uncertain'}};
+ vi.mocked(chrome.storage.local.get).mockImplementation(async(key:any)=>key===null?{...f.data}:{[key]:f.data[key]});
+ const result=await f.ask({type:'REQUEST_SUBMIT',runId:'new-run',epoch:'new-doc'},{tab:{id:7,url:formUrl},url:formUrl,frameId:0});
+ expect(result).toMatchObject(status==='completed'?{granted:true}:{ok:false});
+ expect(f.data.submissionLocks).toMatchObject({'old-run':{resolution:status==='completed'?'received':'uncertain'}});
+});
 async function setup(sidePanel?: object) {
   let clicked: (tab: { id: number; url: string }) => void;
   let message: (msg: ExtensionMessage, sender: object, respond: (value: unknown) => void) => void;
@@ -274,6 +296,30 @@ it('authorizes a returned-form retry only in a new document and preserves the pr
  await expect(f.ask({type:'AUTO_RESUME',source:'page_ready',runId:'return',epoch:'new'},{tab:{id:7,url:formUrl},url:formUrl})).resolves.toMatchObject({resumed:true});
  expect(f.data['run:7']).toMatchObject({status:'running',submitAttempted:false,submissionRetries:1});
  expect((f.data.submissionLocks as any).return).toMatchObject({resolution:'uncertain',retryReady:true});await f.ask({type:'STOP_RUN',tabId:7});
+});
+
+it('keeps a CAPTCHA-after-submit lock and does not auto-resubmit even after a late generic block and a healthy page return',async()=>{
+ const f=await setup();Object.assign(f.run,{runId:'security',mode:'live',status:'submitting',contentEpoch:'sent-page',submissionEpoch:'sent-page',submitAttempted:true,autoContinue:true,retryOnReturn:true,profileSnapshot:{values:{fullName:'KEEP PROFILE'}}});
+ const lock={security:{formId:'test-form',resolution:'uncertain',createdAt:'KEEP_HISTORY'}};f.data.submissionLocks=lock;
+ const sender={tab:{id:7,url:formUrl},url:formUrl};
+ expect(await f.ask({type:'FORM_EVENT',runId:'security',epoch:'sent-page',event:{type:'block',issue:{reason:'captcha',message:'Google traffic check; frame failed'}}},sender)).toMatchObject({ok:true});
+ expect(f.data['run:7']).toMatchObject({status:'submit_uncertain',submitAttempted:true,autoContinue:false,blockingIssue:{reason:'captcha'},profileSnapshot:{values:{fullName:'KEEP PROFILE'}}});
+ await f.ask({type:'FORM_EVENT',runId:'security',epoch:'sent-page',event:{type:'block',issue:{reason:'submit_uncertain',message:'Late generic timeout'}}},sender);
+ const current=f.data['run:7'] as RunState;current.contentEpoch='returned-page';f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_HEALTH'?{ready:true} as any:{ok:true});
+ expect(await f.ask({type:'AUTO_RESUME',source:'page_ready',runId:'security',epoch:'returned-page'},sender)).toMatchObject({ok:false});
+ expect(f.sendMessage.mock.calls.some(([,m])=>m.type==='RUN_CURRENT_PAGE')).toBe(false);expect(f.data.submissionLocks).toEqual(lock);
+});
+
+it.each([false,true])('parks a loaded traffic-check document without GET recovery (after submit: %s)',async submitted=>{
+ vi.useFakeTimers();const f=await setup();Object.assign(f.run,{runId:'warning',status:submitted?'submitting':'running',mode:'live',contentEpoch:'doc',submissionEpoch:'old',submitAttempted:submitted,autoContinue:true,retryOnReturn:true});
+ const {classifyPage}=await import('../src/recovery');
+ const health=classifyPage({text:'Our systems have detected unusual traffic from your computer network.',hasQuestions:false,hasNavigation:false,captcha:false,online:true});
+ const update=vi.fn();Object.assign(chrome.tabs,{update});f.sendMessage.mockImplementation(async(_id,m)=>m.type==='PAGE_HEALTH'?health as any:{ok:true});
+ f.updated({status:'complete'});await vi.advanceTimersByTimeAsync(60000);
+ expect(f.data['run:7']).toMatchObject({status:submitted?'submit_uncertain':'waiting_manual',submitAttempted:submitted,blockingIssue:{reason:'captcha'},...(submitted?{autoContinue:false}:{})});
+ expect((f.data['run:7'] as RunState).recovery?.automatic).not.toBe(true);
+ expect(update.mock.calls.some(([,options])=>options?.url)).toBe(false);expect(f.sendMessage.mock.calls.some(([,m])=>m.type==='RUN_CURRENT_PAGE')).toBe(false);
+ await f.ask({type:'STOP_RUN',tabId:7});
 });
 
 it('schedules a safe GET recovery when Back returns an unreadable pre-submit document while waiting for CAPTCHA',async()=>{

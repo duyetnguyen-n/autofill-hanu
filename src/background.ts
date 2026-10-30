@@ -5,6 +5,7 @@ import { StoredPickerUploads } from './stored-picker-upload';
 import { createNativeClient } from './native-client';
 import {automaticRecoveryAllowed,pageReadyResumeAllowed,returnedSubmissionAllowed,recoveryDelay,MAX_RECOVERY_ATTEMPTS,NAVIGATION_SLOW_MS,NAVIGATION_LIMIT_MS,validCorrections,type PageHealth} from './recovery';
 import { cloudOrigin } from './coordinator-transport';
+import {googleSecurityIssue} from './captcha';
 import { canonicalFormId, allowedFormUrl, sha256, type Command, type ExecutionView } from './protocol';
 import {FacebookWatcher,enableFacebookWatch,facebookAccessStatus} from './facebook-watch';
 
@@ -228,6 +229,12 @@ async function getRun(tabId: number): Promise<RunState | undefined> {
 async function writeRunNow(run:RunState,returnedRetry=false):Promise<void>{
     const previous=await getRun(run.tabId);
     if(previous&&previous.runId===run.runId){if((run.submissionRetries??0)!==(previous.submissionRetries??0)&&!(returnedRetry&&(run.submissionRetries??0)===(previous.submissionRetries??0)+1))throw new Error('Sự kiện thuộc lần gửi cũ.');run.eventSeq=Math.max(previous?.eventSeq??0,run.eventSeq??0);run.contentEpoch??=previous?.contentEpoch;if(previous?.submitAttempted&&!returnedRetry)run.submitAttempted=true;}
+    if(run.status==='completed'&&run.submitAttempted&&run.runId){
+      const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};
+      if(locks[run.runId]?.formId===run.formId&&locks[run.runId].resolution!=='received'){
+        locks[run.runId]={...locks[run.runId],resolution:'received'};await chrome.storage.local.set({submissionLocks:locks});
+      }
+    }
     if(run.managed&&interruptedRuns.has(run.runId!)&&run.status==='running'){run.status=run.submitAttempted?'submit_uncertain':'paused';run.recoveryRequired=true;}
     storedPickerUploads.reconcile(run.tabId, run);
     run.eventSeq = (run.eventSeq ?? 0) + 1;
@@ -260,7 +267,7 @@ async function repairLeaseNow():Promise<RunState|undefined>{
  const opening=run.tabId<0&&Date.now()-Date.parse(run.startedAt??run.updatedAt)<30000;
  // Error/login documents still belong to this run. Keep its lease while the
  // page-health handler parks it or schedules a bounded safe GET.
- if(tab&&/^(?:chrome-error:|https:\/\/(?:accounts\.google\.com\/|(?:www\.)?google\.com\/sorry))/i.test(tab.url??''))return run;
+ if(tab&&(googleSecurityIssue({url:tab.url})||/^(?:chrome-error:|https:\/\/accounts\.google\.com\/)/i.test(tab.url??'')))return run;
  if(!opening&&(!tab||run.formId&&canonicalFormId(tab.url??tab.pendingUrl??'')!==run.formId)){
    if(tab)await haltDocument(run.tabId);
    const stopped=addLog({...run,status:run.submitAttempted?'submit_uncertain':'idle',recoveryRequired:false,blockingIssue:run.submitAttempted?run.blockingIssue:undefined},'warning','Tab của lượt đã đóng hoặc chuyển sang form khác. Đã dừng lượt và giải phóng profile.');
@@ -362,14 +369,20 @@ async function blockPageProblem(runId:string,health:PageHealth,tabId?:number,exp
     const current=tabId===undefined?await getManaged():await getRun(tabId);if(!current||current.runId!==runId||!(['running','submitting','submit_uncertain'].includes(current.status)||pageReadyResumeAllowed(current))||interruptedRuns.has(runId)&&!current.submitAttempted)return;
     if(expectedEpoch!==undefined&&current.contentEpoch!==expectedEpoch)return;
     newCaptcha=health.issue?.reason==='captcha'&&current.blockingIssue?.reason!=='captcha';
-    if(current.submitAttempted){current.status='submit_uncertain';current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt này chưa thể kết luận chưa gửi. Giữ nguyên trang để kiểm tra; nếu lượt cho phép thử lại, extension tự tiếp tục khi đúng form sẵn sàng trở lại.`};current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;}
+    if(current.submitAttempted){
+      current.status='submit_uncertain';
+      const security=health.issue?.reason==='captcha';if(security)current.autoContinue=false;
+      current.blockingIssue={reason:health.issue&&['captcha','account','form_closed'].includes(health.issue.reason)?health.issue.reason:'submit_uncertain',message:`${health.issue?.message??'Google chưa xác nhận sau khi khóa gửi.'} Lượt này chưa thể kết luận chưa gửi. ${security?'Đã dừng tự gửi lại. Cần đối chiếu kết quả trước khi gửi tiếp.':'Giữ nguyên trang để kiểm tra; nếu lượt cho phép thử lại, extension tự tiếp tục khi đúng form sẵn sàng trở lại.'}`};
+      current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;
+    }
     else if(health.retryable&&health.issue&&['network','server_error','navigation'].includes(health.issue.reason)){
       const next=transientState(current,health.issue.reason as 'network'|'server_error'|'navigation',health.issue.message);await writeRunNow(next);return next;
     }else{
       current.status='waiting_manual';current.recoveryRequired=false;current.blockingIssue=health.issue??{reason:'account',message:'Không xác minh được trang hoặc tài khoản. Kiểm tra rồi bấm Tiếp tục.'};
       current.activity={phase:'waiting_user',message:current.blockingIssue.message,at:now()};if(current.recovery)current.recovery.automatic=false;
     }
-    await writeRunNow(current);return current;
+    const next=newCaptcha?addLog(current,'warning',`${current.submitAttempted?'Sau khi cấp quyền Gửi':'Trước khi Gửi'}: ${current.blockingIssue?.message}`):current;
+    await writeRunNow(next);return next;
   });
   if(result){scheduleRecovery(result);await haltDocument(result.tabId,true);if(newCaptcha)await focusCaptchaRun(result).catch(()=>{});}
   return result;
@@ -394,6 +407,7 @@ async function prepareResume(run:RunState,automatic=false,recovering=false):Prom
       if(recovering&&run.url&&allowedFormUrl(run.url))await chrome.tabs.update(run.tabId,{url:run.url});
       await waitForForm(run.tabId,run.runId);await valid();tab=await chrome.tabs.get(run.tabId);
     }
+    const security=googleSecurityIssue({url:tab.url});if(security)throw new PageProblem({issue:security});
     const actual=canonicalFormId(tab.url??'');
     const expected=run.formId||canonicalFormId(run.url??'');
     if(actual&&expected&&actual!==expected||!actual&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))throw new PageProblem({issue:{reason:'account',message:'Tab đã chuyển sang trang khác. Mở đúng form rồi Tiếp tục hoặc Chạy lại.'}});
@@ -676,7 +690,9 @@ async function processFormEvent(tabId: number, event: FormEvent, scope?:{runId?:
     if (event.skipped && !run.skipped.includes(event.skipped)) run.skipped = [...run.skipped, event.skipped];
   } else if (event.type === "block") {
     if(event.issue.reason==='captcha'&&current.blockingIssue?.reason!=='captcha')captchaRun=current;
-    run = addLog({ ...run, status: run.submitAttempted?"submit_uncertain":"waiting_manual", blockingIssue: event.issue,activity:{phase:'waiting_user',message:event.issue.message,at:now()},recovery:run.recovery?{...run.recovery,automatic:false}:undefined }, "warning", event.issue.message);
+    const review=run.submitAttempted&&event.issue.reason==='captcha';
+    const issue=review?{...event.issue,message:`${event.issue.message} Đã dừng tự gửi lại. Chưa rõ Google đã nhận phản hồi; cần đối chiếu trước khi gửi tiếp.`}:event.issue;
+    run = addLog({ ...run,...(review?{autoContinue:false}:{}),status: run.submitAttempted?"submit_uncertain":"waiting_manual", blockingIssue: issue,activity:{phase:'waiting_user',message:issue.message,at:now()},recovery:run.recovery?{...run.recovery,automatic:false}:undefined }, "warning", issue.message);
   } else if (event.type === "ready_to_submit") {
     run = addLog({ ...run, status: "ready_to_submit",activity:undefined,recovery:undefined }, "success", "Đã điền xong. Chế độ Test dừng trước nút Gửi.");
   } else if (event.type === "submit_attempt") {
@@ -758,7 +774,7 @@ async function inspectLoadedDocument(tabId:number):Promise<void>{
   const work=(async()=>{
     const before=await getRun(tabId);if(!before||!(['running','submitting','submit_uncertain'].includes(before.status)||pageReadyResumeAllowed(before))||before.recoveryRequired)return;
     const tab=await chrome.tabs.get(tabId).catch(()=>undefined);if(!tab)return;
-    const externalIssue=/^https:\/\/accounts\.google\.com\//i.test(tab.url??'')?{reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản rồi bấm Tiếp tục.'}:/^https:\/\/(?:www\.)?google\.com\/sorry/i.test(tab.url??'')?{reason:'captcha' as const,message:'Google chặn lưu lượng và yêu cầu xác thực. Giữ nguyên tab để kiểm tra.'}:undefined;
+    const externalIssue=googleSecurityIssue({url:tab.url})??(/^https:\/\/accounts\.google\.com\//i.test(tab.url??'')?{reason:'account' as const,message:'Google yêu cầu đăng nhập lại. Xử lý tài khoản rồi bấm Tiếp tục.'}:undefined);
     if(externalIssue){await blockPageProblem(before.runId!,{issue:externalIssue},tabId);return;}
     if(canonicalFormId(tab.url??'')!==before.formId&&!/^(?:chrome-error:|about:blank)/.test(tab.url??''))return;
     let health:PageHealth;
@@ -927,7 +943,18 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 });
 
 async function getManaged():Promise<RunState|undefined>{return (await chrome.storage.local.get('managedRun')).managedRun;}
-async function hasLocalLock(formId:string,retryingRun?:string){const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{};return Object.entries(locks).some(([id,v]:[string,any])=>v.formId===formId&&v.resolution!=='not_received'&&!(id===retryingRun&&v.retryReady===true));}
+async function hasLocalLock(formId:string,retryingRun?:string){
+  const locks=(await chrome.storage.local.get('submissionLocks')).submissionLocks??{},data=await chrome.storage.local.get(null);let changed=false;
+  // Upgrade a pre-1.9.19 local lock only when its retained run explicitly
+  // confirms completion. Never infer success from an idle/closed tab.
+  for(const [id,lock]of Object.entries(locks) as [string,any][]){
+    if(lock.formId!==formId||lock.resolution==='received')continue;
+    const completed=Object.entries(data).some(([key,value]:[string,any])=>(key==='managedRun'||key.startsWith('run:'))&&value?.runId===id&&value.formId===formId&&value.status==='completed'&&value.submitAttempted===true);
+    if(completed){locks[id]={...lock,resolution:'received'};changed=true;}
+  }
+  if(changed)await chrome.storage.local.set({submissionLocks:locks});
+  return Object.entries(locks).some(([id,v]:[string,any])=>v.formId===formId&&(id===retryingRun||!['not_received','received'].includes(v.resolution))&&!(id===retryingRun&&v.retryReady===true));
+}
 async function checkAccount(tabId:number,expected:string){
   let result=await sendToForm<{email?:string;error?:string;health?:PageHealth}>(tabId,{type:'PAGE_ACCOUNT'});
   // Occluded Forms can have zero-width account headers before autofill starts.
@@ -960,7 +987,7 @@ async function waitForForm(tabId:number,runId?:string):Promise<string>{
     if(runId&&interruptedRuns.has(runId))throw new Error('Lượt đã dừng.');
     const tab=await chrome.tabs.get(tabId),id=canonicalFormId(tab.url??'');
     if(tab.status==='complete'&&tab.url?.startsWith('https://accounts.google.com/'))throw new PageProblem({issue:{reason:'account',message:'Cần đăng nhập Google.'}});
-    if(tab.status==='complete'&&/https:\/\/(?:www\.)?google\.com\/sorry/.test(tab.url??''))throw new PageProblem({issue:{reason:'captcha',message:'Google yêu cầu xác thực. Hãy xử lý trong trình duyệt rồi Tiếp tục.'}});
+    const security=googleSecurityIssue({url:tab.url});if(tab.status==='complete'&&security)throw new PageProblem({issue:security});
     if(id){
       if(tab.status==='complete')return id;
       // DOM readiness, rather than every image/analytics request finishing,

@@ -1,4 +1,9 @@
-# Google Forms Direct — cập nhật 1.9.16 ngày 29/10/2026
+# Google Forms Direct — cập nhật 1.9.19 ngày 30/10/2026
+
+Từ 1.9.19, kết quả gửi thành công không khóa một lượt chạy mới, cho cả
+Classic lẫn Direct và mọi form. Chạy lại tạo run ID mới; cùng lượt không
+được Gửi lần hai. Khóa chưa rõ kết quả vẫn cần đối chiếu. Quy tắc này thay
+phần giới hạn lặp LAB trong các ghi chép QA của phiên bản trước.
 
 Kiểm tra Chrome Windows và sửa dropdown trong bản 1.9.5: xem
 [báo cáo ngày 28/10/2026](GOOGLE-FORMS-DIRECT-QA-20261028.md).
@@ -34,8 +39,8 @@ Hai LAB sau được giữ làm ví dụ và để đối chiếu hồi quy:
 
 Đáp án lệ phí `1234567` chỉ là dữ liệu giả của LAB. Không suy ra đáp án từ biểu
 thức validation. Test dừng trước request Gửi; Live tạo phản hồi trên form đã
-chọn. Form đăng ký ngoài LAB giữ khóa sau khi xác nhận gửi để tránh đăng ký
-trùng; chỉ hai LAB có ngoại lệ cho phép chủ động tạo lượt thử mới.
+chọn. Sau xác nhận thành công, người dùng có thể chủ động tạo lượt mới;
+không cần đổi kết quả cũ sang “chưa nhận” hoặc xóa lịch sử để chạy lại.
 
 ## Tách phần thử nghiệm
 

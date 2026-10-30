@@ -1,5 +1,4 @@
 import {returnedSubmissionAllowed} from '../../src/recovery';
-import {repeatableDirectLab} from '../../src/google-direct/repeat';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
@@ -58,13 +57,12 @@ export class Store implements DataStore {
   groupForRequest(requestId:string){const row=this.db.prepare("SELECT data FROM groups WHERE json_extract(data,'$.requestId')=? LIMIT 1").get(requestId) as {data:string}|undefined;return row?JSON.parse(row.data) as GroupView:undefined;}
   saveRun(session: string, run: RunState) { this.db.prepare('INSERT OR REPLACE INTO runs VALUES(?,?,?,?)').run(run.runId!,session,JSON.stringify(run),run.eventSeq ?? 0); }
   history(session: string) { return (this.db.prepare('SELECT data FROM runs WHERE session=? ORDER BY rowid DESC').all(session) as {data:string}[]).map(r=>JSON.parse(r.data) as RunState); }
-  blocked(session: string, form: string,engine?:import('../../src/shared').FormEngine) { return !!this.db.prepare("SELECT run FROM locks WHERE session=? AND form=? AND resolution!='not_received' AND (?=0 OR resolution!='received')").get(session,form,Number(repeatableDirectLab(engine,form))); }
+  blocked(session: string, form: string,_engine?:import('../../src/shared').FormEngine) { return !!this.db.prepare("SELECT run FROM locks WHERE session=? AND form=? AND resolution NOT IN ('not_received','received')").get(session,form); }
   acquireSubmit(session: string, run: string, form: string) { return this.transaction(()=>{
     const s=this.session(session);
-    const repeatable=repeatableDirectLab(this.group(run).engine,form);
     const locks=this.db.prepare("SELECT run,resolution FROM locks WHERE session=? AND form=? AND resolution!='not_received'").all(session,form) as {run:string;resolution:string}[];
     const old=this.db.prepare('SELECT resolution FROM locks WHERE session=? AND form=? AND run=?').get(session,form,run) as {resolution:string}|undefined;
-    if (!s.run || s.run.runId !== run || s.run.mode !== 'live' || !['running','submitting'].includes(s.run.status) || this.group(run).paused || old&&old.resolution!=='local_reserved' || locks.some(l=>!(repeatable&&l.resolution==='received'&&l.run!==run)&&(l.run!==run||l.resolution!=='local_reserved'))) throw new Error('Quyền gửi đã bị khóa hoặc lượt không hoạt động.');
+    if (!s.run || s.run.runId !== run || s.run.mode !== 'live' || !['running','submitting'].includes(s.run.status) || this.group(run).paused || old&&old.resolution!=='local_reserved' || locks.some(l=>!(l.resolution==='received'&&l.run!==run)&&(l.run!==run||l.resolution!=='local_reserved'))) throw new Error('Quyền gửi đã bị khóa hoặc lượt không hoạt động.');
     this.db.prepare('INSERT OR REPLACE INTO locks VALUES(?,?,?,?,?)').run(session,form,run,'uncertain',new Date().toISOString());
     s.run.pendingReturnedRetry=undefined;s.run.submitAttempted=true; s.run.status='submitting'; this.saveRun(session,s.run); this.saveSession(s); this.audit(session,run,'submit_lock','Đã khóa quyền gửi.');
   }); }

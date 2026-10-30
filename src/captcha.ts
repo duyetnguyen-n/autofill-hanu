@@ -1,3 +1,18 @@
+import type {BlockingIssue} from './shared';
+
+/** A traffic-check page remains blocked even when its challenge frame fails.
+ * Inspect only the URL and visible text; never read a CAPTCHA frame/token. */
+export function googleSecurityIssue(input:{url?:string;text?:string;hasForm?:boolean}):BlockingIssue|undefined {
+  let redirect=false;
+  if(input.url)try{
+    const url=new URL(input.url);
+    redirect=url.protocol==='https:'&&/^(?:(?:www|ipv4|ipv6)\.)?google\.com$/i.test(url.hostname)&&/^\/sorry(?:\/|$)/.test(url.pathname);
+  }catch{/* A malformed/non-Google URL is not evidence of a traffic check. */}
+  const text=(input.text??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase().replace(/\s+/g,' ');
+  const warning=!input.hasForm&&/\bunusual traffic\b|luu luong truy cap bat thuong|cannot contact recaptcha|could not connect to (?:the )?recaptcha|khong the (?:ket noi|lien he).*recaptcha/.test(text);
+  if(redirect||warning)return {reason:'captcha',message:'Google đang yêu cầu xác minh lưu lượng; khung CAPTCHA có thể chưa tải được. Tool giữ lượt và không tự tải lại trang cảnh báo. Giữ nguyên tab và dữ liệu để xử lý xác minh.'};
+}
+
 /** Observe the rendered challenge only. An invisible badge is not a request
  * for human input. Do not read frames, solve challenges, or alter Google state.
  * Keep the serialized copies in execute-page/recovery-page covered by the same tests. */

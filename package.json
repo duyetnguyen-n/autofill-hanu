@@ -1,6 +1,6 @@
 {
   "name": "hanu-hsk-autofill",
-  "version": "1.9.16",
+  "version": "1.9.19",
   "private": true,
   "type": "module",
   "scripts": {
