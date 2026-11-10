@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Textarea } from "@fluentui/react-components";
 import { type AssistantContext, type AssistantProposal, type AssistantReply, runObservation, runResultText } from "../assistant";
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
 import { type AccountPlan, planForSchedule } from "./planning";
-import { HcmueNotice, type HcmueProblem } from "./HcmueNotice";
+import { NoticeCenter } from "./HcmueNotice";
 
 export interface AssistantScope {
   noticeCode?: string;
@@ -16,7 +16,7 @@ const localTime = (value: string) => new Date(value).toLocaleString("vi-VN", { t
 const emptyPlan: AccountPlan = { examKey: "", target: "", test: true };
 const actionLabel = { prepare: "Xem trước lịch nháp", edit: "Xem trước thay đổi", arm: "Mở xác nhận bật lịch", reconcile: "Kiểm tra kết quả" };
 
-export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled, ready, canPrepare, busy, getContext, onClose, onPrepare, onScheduleAction }: {
+export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled, ready, canPrepare, busy, getContext, onClose, onPrepare, onScheduleAction, noticeHost }: {
   scope: AssistantScope;
   schedules: Schedule[];
   exams: Exam[];
@@ -25,6 +25,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
   ready: boolean;
   canPrepare: boolean;
   busy: boolean;
+  noticeHost?: ReactNode;
   getContext: (scope: AssistantScope) => Promise<AssistantContext>;
   onClose: () => void;
   onPrepare: (draft: Draft, expectedDraftId: string | null) => void;
@@ -34,11 +35,15 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
   const [message, setMessage] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [pending, setPending] = useState(false);
-  const [problem, setProblem] = useState<HcmueProblem>();
+  const showNotice = useContext(NoticeCenter);
   const [draft, setDraft] = useState<Draft>();
   const requestRef = useRef<AbortController | undefined>(undefined);
   const logRef = useRef<HTMLDivElement>(null);
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => {
+    const request = requestRef.current;
+    requestRef.current = undefined;
+    request?.abort();
+  }, []);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [turns, pending]);
   const schedule = schedules.find(s => s.id === scheduleId);
   const proposal = turns.at(-1)?.reply?.proposal;
@@ -63,7 +68,6 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
     setTurns(old => [...old, { role: "user", text }]);
     setMessage("");
     setDraft(undefined);
-    setProblem(undefined);
     setPending(true);
     try {
       const originalScope = scheduleId === (scope.scheduleId ?? "");
@@ -86,15 +90,18 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
         run, context.run && runObservation(context.run), report, issues && `Cần kiểm tra ${issues}.`,
       ].filter(Boolean).join(" ") }]);
     } catch (error) {
-      setProblem({
+      if (requestRef.current !== controller) return;
+      showNotice({ kind: "error", problem: {
         code: "HC-TRO-LY", title: controller.signal.aborted ? "Trợ lý chưa phản hồi kịp" : (error as Error).message,
         steps: ["Gửi lại câu hỏi sau ít phút. Bạn có thể xem hướng dẫn trong thông báo HCMUE ngay bây giờ."],
-      });
+      } });
       setMessage(text);
     } finally {
       clearTimeout(timeout);
-      requestRef.current = undefined;
-      setPending(false);
+      if (requestRef.current === controller) {
+        requestRef.current = undefined;
+        setPending(false);
+      }
     }
   }
 
@@ -117,7 +124,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
         <DialogContent className="hc-assistant-content">
           {schedules.length > 0 && <Field label="Lịch cần xem">
             <Select value={scheduleId} disabled={pending} onChange={(_, data) => {
-              setScheduleId(data.value); setDraft(undefined); setTurns([]); setProblem(undefined);
+              setScheduleId(data.value); setDraft(undefined); setTurns([]);
             }}>
               <option value="">Hỏi chung về HCMUE</option>
               {[...schedules].reverse().map(s => <option key={s.id} value={s.id}>
@@ -140,7 +147,6 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
             </article>)}
             {pending && <Spinner size="tiny" label="Đang tìm hướng dẫn…" />}
           </div>
-          {problem && <HcmueNotice problem={problem} kind="error" />}
           {proposal && !draft && <div className="hc-assistant-proposal">
             {proposal.action === "prepare" || proposal.action === "edit" ? <>
               <Button onClick={() => openDraft(proposal)} disabled={proposal.action === "edit" && schedule?.status !== "prepared"}>{actionLabel[proposal.action]}</Button>
@@ -149,7 +155,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
               <Button disabled={!schedule || !ready || busy} onClick={() => {
                 if (!schedule || (proposal.action !== "arm" && proposal.action !== "reconcile")) return;
                 const reason = onScheduleAction(proposal.action, schedule.id);
-                if (reason) setProblem({ code: "HC-TRO-LY-LICH", title: "Chưa thể thực hiện thao tác", steps: [reason] });
+                if (reason) showNotice({ kind: "error", problem: { code: "HC-TRO-LY-LICH", title: "Chưa thể thực hiện thao tác", steps: [reason] } });
               }}>{actionLabel[proposal.action]}</Button>
               {(!schedule || !ready || busy) && <small>{!schedule ? "Chọn lịch rồi gửi lại yêu cầu." : !ready ? "Kết nối và đối chiếu Runner để thao tác." : "Chờ thao tác hiện tại hoàn tất."}</small>}
             </>}
@@ -191,6 +197,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
         </DialogContent>
         <DialogActions><Button onClick={onClose}>Đóng trợ lý</Button></DialogActions>
       </DialogBody>
+      {noticeHost}
     </DialogSurface>
   </Dialog>;
 }

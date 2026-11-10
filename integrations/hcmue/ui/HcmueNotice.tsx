@@ -1,8 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { CheckCircle, Info, Warning, X } from "@phosphor-icons/react";
 import type { AssistantScope } from "./HcmueAssistant";
-
-export const NoticeAssistant = createContext<((scope: AssistantScope) => void) | undefined>(undefined);
 
 export interface HcmueProblem {
   code: string;
@@ -11,6 +9,15 @@ export interface HcmueProblem {
   category?: string;
   detail?: string;
 }
+
+export interface HcmueNoticeEntry {
+  problem: HcmueProblem;
+  kind?: "warning" | "error" | "success";
+  action?: ReactNode;
+  assistantScope?: AssistantScope;
+}
+
+export const NoticeCenter = createContext<(entry: HcmueNoticeEntry, showNow?: boolean) => void>(() => {});
 
 export function hcmueError(message: string, operation: string): HcmueProblem {
   const detail = message;
@@ -70,27 +77,27 @@ export function hcmueError(message: string, operation: string): HcmueProblem {
   };
 }
 
-export function HcmueNotice({ problem, kind = "warning", event = false, onDismiss, action, id, assistantScope }: {
-  problem: HcmueProblem;
-  kind?: "warning" | "error" | "success";
-  event?: boolean;
-  onDismiss?: () => void;
-  action?: ReactNode;
-  id?: string;
-  assistantScope?: AssistantScope;
+export function HcmueNoticeLink({ id, label, ...entry }: HcmueNoticeEntry & { id?: string; label?: string }) {
+  const show = useContext(NoticeCenter);
+  return <button id={id} type="button" className="hc-notice-link hc-notice-trigger" title={entry.problem.title}
+    onClick={() => show(entry, true)}>{label ?? entry.problem.title}</button>;
+}
+
+export function HcmueNotice({ problem, kind = "warning", onDismiss, action, timestamp, onAsk }: HcmueNoticeEntry & {
+  timestamp: Date;
+  onDismiss: () => void;
+  onAsk?: () => void;
 }) {
-  const [timestamp] = useState(() => new Date());
-  const ask = useContext(NoticeAssistant);
   const Icon = kind === "success" ? CheckCircle : kind === "error" ? Warning : Info;
   return (
-    <div id={id} className={`hc-alert-card hc-alert-${kind}`} role={kind === "error" ? "alert" : "status"}>
+    <div className={`hc-alert-card hc-alert-${kind}`} role={kind === "error" ? "alert" : "status"}>
       <div className="hc-alert-heading">
         <span className="hc-alert-symbol"><Icon size={17} weight="bold" aria-hidden="true" /></span>
         <div>
           <div className="hc-alert-category">{problem.category ?? "Nghiệp vụ"} · {kind === "success" ? "Hoàn tất" : "Cần xử lý"}</div>
           <strong>{problem.title}</strong>
         </div>
-        {onDismiss && <button type="button" className="hc-alert-dismiss" aria-label="Đóng thông báo" onClick={onDismiss}><X size={15} /></button>}
+        <button type="button" className="hc-alert-dismiss" aria-label="Đóng thông báo" onClick={onDismiss}><X size={15} /></button>
       </div>
       {!!problem.steps.length && <div className="hc-alert-steps">
         <strong>Cách xử lý</strong>
@@ -99,9 +106,12 @@ export function HcmueNotice({ problem, kind = "warning", event = false, onDismis
       </div>}
       <div className="hc-alert-meta">
         <code>{problem.code}</code>
-        {event && <time dateTime={timestamp.toISOString()}>{timestamp.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh" })}</time>}
-        {ask && kind !== "success" && <button className="hc-alert-ask" type="button" onClick={() => ask({ noticeCode: problem.code, ...assistantScope })}>Hỏi AI</button>}
+        <time dateTime={timestamp.toISOString()}>{timestamp.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh" })}</time>
+        {onAsk && kind !== "success" && <button className="hc-notice-link" type="button" onClick={onAsk}>Hỏi AI</button>}
         {problem.detail && <details><summary>Chi tiết</summary><div>{problem.detail}</div></details>}
+      </div>
+      <div className="hc-alert-track" aria-hidden="true">
+        <div className="hc-alert-timer" onAnimationEnd={onDismiss} />
       </div>
     </div>
   );

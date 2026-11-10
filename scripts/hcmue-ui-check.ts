@@ -33,12 +33,21 @@ try {
   await expect(
     page.getByRole("heading", { name: "Sẵn sàng trước giờ mở." }),
   ).toBeVisible();
+  const launcher = page.getByRole("button", { name: "Trợ lý HCMUE", exact: true });
+  await expect(launcher).toHaveCSS("position", "fixed");
+  const launcherBox = (await launcher.boundingBox())!;
+  expect(launcherBox.x + launcherBox.width).toBeGreaterThan(1400);
+  expect(launcherBox.y + launcherBox.height).toBeGreaterThan(1060);
   await page.screenshot({
     path: "test-results/hcmue/onboarding-light.png",
     fullPage: true,
   });
   await page.getByRole("button", { name: "Liên kết máy", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("Chưa nhập mã liên kết")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Chưa nhập mã liên kết" }).click();
+  const pairingNotice = page.getByRole("dialog").locator(".hc-alert-events").getByRole("status");
+  await expect(pairingNotice).toContainText("Cách xử lý");
+  await pairingNotice.getByRole("button", { name: "Đóng thông báo" }).click();
   await page.getByLabel("Mã liên kết", { exact: true }).fill(runner.code);
   await page
     .getByRole("dialog")
@@ -65,14 +74,38 @@ try {
   await expect(errorNotice).toContainText("HCMUE chưa phản hồi");
   await expect(errorNotice).toContainText("Cách xử lý");
   await expect(errorNotice).toContainText("HC-KET-NOI");
+  const errorBox = (await errorNotice.boundingBox())!;
+  expect(errorBox.x + errorBox.width).toBeCloseTo(launcherBox.x + launcherBox.width);
+  expect(errorBox.y + errorBox.height).toBeLessThan(launcherBox.y);
+  const timer = errorNotice.locator(".hc-alert-timer");
+  await expect(timer).toHaveCSS("animation-play-state", "running");
+  await errorNotice.hover();
+  await expect(timer).toHaveCSS("animation-play-state", "paused");
+  const pausedAt = await timer.evaluate(el => el.getAnimations()[0].currentTime);
+  await page.waitForTimeout(250);
+  expect(await timer.evaluate(el => el.getAnimations()[0].currentTime)).toBe(pausedAt);
+  await page.mouse.move(0, 0);
+  await expect(timer).toHaveCSS("animation-play-state", "running");
+  await expect.poll(() => timer.evaluate(el => Number(el.getAnimations()[0].currentTime))).toBeGreaterThan(Number(pausedAt));
   await errorNotice.getByText("Chi tiết", { exact: true }).click();
   await expect(errorNotice.getByText("Trường trả HTTP 500.")).toBeVisible();
   await errorNotice.screenshot({ path: "test-results/hcmue/error-notice.png" });
+  await page.screenshot({ path: "test-results/hcmue/corner-notice.png" });
   await errorNotice.getByRole("button", { name: "Hỏi AI", exact: true }).click();
   const assistant = page.getByRole("dialog", { name: "Trợ lý HCMUE" });
   await assistant.getByRole("button", { name: "Giải thích thông báo" }).click();
   await expect(assistant.getByRole("log")).toContainText("Khi HCMUE phản hồi chậm hoặc lỗi");
+  const assistantBox = (await assistant.boundingBox())!;
+  expect(assistantBox.x + assistantBox.width).toBeGreaterThan(1400);
+  expect(assistantBox.y + assistantBox.height).toBeCloseTo(launcherBox.y + launcherBox.height);
   await assistant.getByRole("button", { name: "Đóng trợ lý" }).click();
+  await page.getByRole("button", { name: "Tải kỳ thi", exact: true }).click();
+  await expect(errorNotice).toBeVisible();
+  await timer.evaluate(el => {
+    const animation = el.getAnimations()[0];
+    animation.currentTime = Number(animation.effect!.getComputedTiming().endTime) - 50;
+  });
+  await expect(errorNotice).toHaveCount(0);
   runner.client.exams = loadExams;
   await page.getByRole("button", { name: "Tải kỳ thi", exact: true }).click();
   await page
@@ -167,6 +200,20 @@ try {
   await page.getByRole("button", { name: "Xác nhận bật lịch" }).click();
   await expect(firstRun).toContainText("Đã bật lịch");
   expect(runner.client.submits).toHaveLength(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const statusNotices = page.locator(".hc-alert-events").getByRole("status");
+  await expect(statusNotices.first()).toBeVisible();
+  while (await statusNotices.count()) {
+    await statusNotices.first().getByRole("button", { name: "Đóng thông báo" }).click();
+  }
+  const previousRun = runner.data.schedules.find(s => s.status === "stopped")!;
+  previousRun.status = "uncertain";
+  previousRun.attempt.message = "Chưa có xác nhận từ trường.";
+  await expect(errorNotice).toContainText("Chưa xác nhận được kết quả");
+  await errorNotice.getByRole("button", { name: "Đóng thông báo" }).click();
+  await expect(page.locator(".hc-runs .hc-alert-card")).toHaveCount(0);
+  await page.locator(".hc-runs").getByRole("button", { name: "Xem lỗi", exact: true }).click();
+  await expect(errorNotice).toContainText("Kiểm tra mã đơn");
 
   // Round trip to the original provider must remain usable.
   await page.getByRole("link", { name: "Google Forms", exact: true }).click();
@@ -175,7 +222,7 @@ try {
   ).toBeVisible();
   expect(errors).toEqual([]);
   console.log(
-    "PASS HCMUE: encrypted relay, scheduled dry-run, assistant guidance and draft create/edit/arm confirmation (0 school POSTs), mobile, return to Google Forms.",
+    "PASS HCMUE: floating assistant and timed notices, encrypted relay, scheduled dry-run, assistant draft create/edit/arm confirmation (0 school POSTs), mobile, return to Google Forms.",
   );
 } finally {
   await browser.close();
