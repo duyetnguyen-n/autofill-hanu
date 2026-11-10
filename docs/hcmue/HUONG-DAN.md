@@ -1,5 +1,13 @@
 # HCMUE Runner
 
+## Trợ lý HCMUE
+
+Mở **Trợ lý HCMUE** trên màn HCMUE, hoặc bấm **Hỏi AI** từ thông báo, báo cáo hay lịch cần xem. Trợ lý tra hướng dẫn theo mã lỗi và câu hỏi. Khi chọn một lịch, trợ lý có thể giải thích trạng thái và các mốc chẩn đoán của lịch đó. Nhật ký gốc nằm trên Runner.
+
+Bạn có thể yêu cầu tạo hoặc sửa lịch nháp, mở bước xác nhận bật lịch và kiểm tra kết quả. Xem lại tài khoản, đợt thi, ngày giờ Việt Nam và chế độ trước khi lưu. Nếu có câu hỏi bổ sung, hoàn thành chúng trong hộp chuẩn bị lịch. Với Runner cũ, cập nhật để đọc các mốc chẩn đoán và lưu lịch nháp từ trợ lý.
+
+Người vận hành cấu hình `OPENROUTER_API_KEY` trong môi trường backend. `HANU_HCMUE_ASSISTANT_MODEL` chọn model và mặc định là `deepseek/deepseek-v3.2`. Khi thiếu key hoặc dịch vụ model gặp lỗi, khung chat trả hướng dẫn từ kho HCMUE. Chat và các thao tác Runner có giới hạn yêu cầu riêng.
+
 HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng luồng hiện tại.
 
 ## Mở runner từ website và dùng nhiều máy

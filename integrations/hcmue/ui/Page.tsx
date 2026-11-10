@@ -14,7 +14,7 @@ import {
   DialogContent,
   DialogActions,
 } from "@fluentui/react-components";
-import { AddRegular, ArrowSyncRegular, CheckmarkCircleRegular, ClockRegular, DesktopRegular, LinkRegular, PlayRegular, ShieldCheckmarkRegular, StopRegular, OpenRegular, DismissRegular } from "@fluentui/react-icons";
+import { AddRegular, ArrowSyncRegular, ClockRegular, DesktopRegular, LinkRegular, PlayRegular, ShieldCheckmarkRegular, StopRegular, OpenRegular } from "@fluentui/react-icons";
 import type { Account } from "../../../src/account";
 import { darkTheme, lightTheme, useTheme } from "../../../manager/ui/theme";
 import { box, open, newReplyKey } from "../crypto";
@@ -31,6 +31,7 @@ import {
   type Command,
   type CommandReply,
   type Inspection,
+  type Schedule,
 } from "../protocol";
 import { vnInput, targetTime, suggestedTarget, planForSchedule, matchesPlan, eachAccount, type AccountPlan } from "./planning";
 import "./page.css";
@@ -38,9 +39,19 @@ import { RunnerLaunch, preferredRunner } from "../../runner/ui/RunnerLaunch";
 import { WorkspaceSidebar } from "../../../manager/ui/WorkspaceSidebar";
 import { WorkspaceHeader } from "../../../manager/ui/WorkspaceHeader";
 import { Users, CalendarCheck, Desktop } from "@phosphor-icons/react";
-async function api<T>(path: string, value?: unknown) {
+import { HcmueNotice, NoticeAssistant, hcmueError, type HcmueProblem } from "./HcmueNotice";
+import { HcmueAssistant, type AssistantScope } from "./HcmueAssistant";
+import { summarizeRun, type AssistantContext, type RunSummary } from "../assistant";
+
+const blocked = (code: string, title: string, ...steps: string[]): HcmueProblem => ({ code, title, steps });
+const busyProblem = blocked("HC-DANG-CHAY", "Đang thực hiện một thao tác", "Chờ runner trả kết quả. Nút sẽ mở lại khi thao tác hoàn tất.");
+const examsProblem = blocked("HC-TAI-KY-THI", "Chưa có danh sách kỳ thi", "Bấm Tải kỳ thi, sau đó chọn cấp thi và đợt thi.");
+const selectProblem = blocked("HC-CHON-TK", "Chưa chọn tài khoản", "Đánh dấu ít nhất một tài khoản cần kiểm tra hoặc chuẩn bị.");
+const liveProblem = blocked("HC-QUYEN-LIVE", "Tài khoản website chưa có quyền đăng ký thật", "Liên hệ quản trị viên để cấp quyền Live, hoặc chọn Diễn tập.");
+const lockedProblem = blocked("HC-LICH-DANG-CHAY", "Tài khoản đang có lịch hoạt động", "Dừng lịch trong phần Lịch gửi và kết quả trước khi chỉnh hoặc đăng xuất.");
+async function api<T>(path: string, value?: unknown, timeout = 95000) {
   const controller = new AbortController(),
-    timer = setTimeout(() => controller.abort(), 95000);
+    timer = setTimeout(() => controller.abort(), timeout);
   try {
     const response = await fetch("/api/hcmue/" + path, {
       method: value === undefined ? "GET" : "POST",
@@ -89,7 +100,8 @@ export function HcmuePage({
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [notice, setNotice] = useState("");
+    [errorOperation, setErrorOperation] = useState("thực hiện thao tác"),
+    [notice, setNotice] = useState<{ problem: HcmueProblem; kind: "success" | "warning" }>();
   const [pairOpen, setPairOpen] = useState(false),
     [pairCode, setPairCode] = useState(""),
     [verify, setVerify] = useState<Device>(),
@@ -109,6 +121,7 @@ export function HcmuePage({
     [rowErrors, setRowErrors] = useState<Record<string, string>>({}),
     [inspections, setInspections] = useState<Record<string, Inspection>>({}),
     [details, setDetails] = useState<Exam>();
+  const [assistant, setAssistant] = useState<AssistantScope>();
   const [questionDraft, setQuestionDraft] = useState<
     | {
         accountId: string;
@@ -147,7 +160,7 @@ export function HcmuePage({
         commandId,
         command,
         box: encrypted,
-      });
+      }, command === "run-summary" ? 3000 : undefined);
       const result = await open<CommandReply>(
         replyKey,
         response.box,
@@ -159,13 +172,14 @@ export function HcmuePage({
     },
     [account.id],
   );
-  async function act(work: () => Promise<void>) {
+  async function act(work: () => Promise<void>, operation = "thực hiện thao tác") {
     if (busyRef.current) return;
     busyRef.current = true;
     revision.current++;
     setBusy(true);
     setError("");
-    setNotice("");
+    setErrorOperation(operation);
+    setNotice(undefined);
     try {
       await work();
     } catch (e) {
@@ -215,6 +229,7 @@ export function HcmuePage({
     setInspections({});
     setQuestionDraft(undefined);
     setArmOpen(false);
+    setAssistant(undefined);
     setTrusted(
       !!device &&
         localStorage.getItem(trustKey(device.id)) === device.fingerprint,
@@ -231,7 +246,10 @@ export function HcmuePage({
         if (!stopped && !busyRef.current && before === revision.current)
           setState(result);
       } catch (e) {
-        if (!stopped) setError((e as Error).message);
+        if (!stopped && !busyRef.current) {
+          setErrorOperation("đọc trạng thái runner");
+          setError((e as Error).message);
+        }
       }
     }
     void poll();
@@ -245,13 +263,20 @@ export function HcmuePage({
   const accounts = state?.accounts ?? [],
     schedules = state?.schedules ?? [],
     chosen = accounts.filter((a) => selected.has(a.id)),
-    prepared = schedules.filter((s) => s.status === "prepared" && Date.parse(s.targetAt) >= now + 2500 && !rowErrors[s.accountId] && matchesPlan(s, plans[s.accountId])),
+    prepared = schedules.filter((s) => s.status === "prepared" && !armProblem(s)),
     arming = prepared.filter((s) => armSelection.includes(s.id)),
     active = schedules.filter((s) => activeStatus(s.status)),
     success = schedules.filter((s) => s.status === "pending_payment"),
     attention = schedules.filter((s) =>
       ["failed", "uncertain"].includes(s.status),
     );
+  function armProblem(s: Schedule): HcmueProblem | undefined {
+    if (!s.test && !account.liveEnabled) return liveProblem;
+    if (!matchesPlan(s, plans[s.accountId])) return blocked("HC-LICH-DA-DOI", "Thiết lập đã thay đổi sau khi chuẩn bị", "Bấm Chuẩn bị lại để lưu giờ, kỳ thi hoặc chế độ mới.");
+    if (Date.parse(s.targetAt) < now + 2500) return blocked("HC-GIO-GUI", "Giờ gửi đã qua hoặc còn quá ít thời gian", "Chọn giờ mới trong khung đăng ký, sau đó chuẩn bị lại.");
+    if (rowErrors[s.accountId]) return hcmueError(rowErrors[s.accountId], "chuẩn bị lịch");
+    if (schedules.some(other => other.accountId === s.accountId && activeStatus(other.status))) return lockedProblem;
+  }
   const next = active
     .filter((s) => ["armed", "reserved"].includes(s.status))
     .sort((a, b) => Date.parse(a.targetAt) - Date.parse(b.targetAt))[0];
@@ -279,7 +304,10 @@ export function HcmuePage({
   async function loadExams() {
     const data = await request("exams", { accountId: chosen[0]?.id ?? accounts[0]?.id });
     setExams(data);
-    if (!data.length) setNotice("API trường chưa trả kỳ thi nào. Không có bộ lọc ẩn đợt cũ.");
+    if (!data.length) publishNotice("HCMUE chưa trả kỳ thi nào", ["Chờ trường cập nhật, rồi bấm Tải kỳ thi để kiểm tra lại."], "warning");
+  }
+  function publishNotice(title: string, steps: string[] = [], kind: "success" | "warning" = "success") {
+    setNotice({ problem: blocked("HC-THONG-BAO", title, ...steps), kind });
   }
   const failRow = (a: { id: string }, message: string) => setRowErrors(old => ({ ...old, [a.id]: message }));
   async function inspectChosen() {
@@ -291,21 +319,49 @@ export function HcmuePage({
       const result = await request("inspect", { accountId: a.id, examKey: p.examKey, location: e.dia_diem_code ?? "HCMUE" });
       setInspections(old => ({ ...old, [a.id]: result }));
     }, failRow);
-    setNotice(`Đã nhận báo cáo cho ${completed}/${chosen.length} tài khoản. Xem từng mục bên dưới. Không tạo lịch và không gửi đơn.`);
+    publishNotice(`Đã nhận báo cáo cho ${completed}/${chosen.length} tài khoản.`, ["Xem từng mục trong Báo cáo API của tài khoản."], completed < chosen.length ? "warning" : "success");
   }
-  async function prepare() {
+  async function prepare(items: { accountId: string; plan: AccountPlan; expectedDraftId?: string | null }[] = chosen.map(a => ({ accountId: a.id, plan: planFor(a.id) }))) {
     const drafts: NonNullable<typeof questionDraft> = [];
-    setRowErrors(old => ({ ...old, ...Object.fromEntries(chosen.map(a => [a.id, ""])) }));
-    const completed = await eachAccount(chosen, async a => {
-      const p = planFor(a.id), e = exams.find(x => examKey(x) === p.examKey);
+    setRowErrors(old => ({ ...old, ...Object.fromEntries(items.map(a => [a.accountId, ""])) }));
+    const completed = await eachAccount(items, async ({ accountId, plan: p, expectedDraftId }) => {
+      const e = exams.find(x => examKey(x) === p.examKey);
       if (!e) throw new Error("Chọn kỳ thi riêng cho tài khoản này.");
-      const args = { accountId: a.id, examKey: p.examKey, targetAt: targetTime(p.target), test: p.test, location: e.dia_diem_code ?? "HCMUE" };
+      const args = { accountId, examKey: p.examKey, targetAt: targetTime(p.target), test: p.test, location: e.dia_diem_code ?? "HCMUE", expectedDraftId };
       const result = await request("prepare", args);
-      if (result.questions.questions.length) drafts.push({ accountId: a.id, q: result.questions, args, answers: {} });
-      else setState(await request("prepare", { ...args, answers: {} }));
-    }, failRow);
+      if (result.questions.questions.length) drafts.push({ accountId, q: result.questions, args, answers: {} });
+      else {
+        setState(await request("prepare", { ...args, answers: {} }));
+        if (expectedDraftId !== undefined) editPlan(accountId, p);
+      }
+    }, (a, message) => failRow({ id: a.accountId }, message));
     if (drafts.length) setQuestionDraft(drafts);
-    setNotice(`Đã xử lý ${completed}/${chosen.length} tài khoản${drafts.length ? `; ${drafts.length} tài khoản cần trả lời câu hỏi` : ""}. Lịch sẵn sàng vẫn cần bật và xác nhận; tài khoản lỗi được ghi riêng.`);
+    publishNotice(`Đã xử lý ${completed}/${chosen.length} tài khoản`, [
+      ...(completed < items.length ? ["Xem lỗi trên từng tài khoản chưa chuẩn bị được."] : []),
+      ...(drafts.length ? [`Trả lời câu hỏi bổ sung của ${drafts.length} tài khoản.`] : []),
+      ...(completed > 0 ? ["Với lịch đã sẵn sàng, bấm Bật lịch và xác nhận."] : []),
+    ], completed < items.length || drafts.length ? "warning" : "success");
+  }
+  async function assistantContext(scope: AssistantScope): Promise<AssistantContext> {
+    const schedule = schedules.find(s => s.id === scope.scheduleId);
+    const report = scope.accountId ? inspections[scope.accountId] : undefined;
+    let run = schedule && summarizeRun(schedule);
+    if (schedule && ready && !busy && !active.length && (state?.protocolVersion ?? 1) >= 3) {
+      try { run = await request("run-summary", { id: schedule.id }) as RunSummary; }
+      catch { /* The local snapshot is sufficient when diagnostics are unavailable. */ }
+    }
+    return {
+      noticeCode: scope.noticeCode,
+      runnerConnected: ready,
+      liveEnabled: account.liveEnabled,
+      run,
+      inspection: report && {
+        checkedAt: report.checkedAt,
+        passed: report.checks.filter(c => c.ok).length,
+        total: report.checks.length,
+        issues: report.checks.filter(c => !c.ok).map(c => ({ check: c.label, code: hcmueError(c.message, "kiểm tra hồ sơ/API").code })),
+      },
+    };
   }
   const accountIds = accounts.map((a) => a.id).join(",");
   useEffect(() => {
@@ -316,11 +372,36 @@ export function HcmuePage({
   }, [accountIds]);
   const ready = !!device?.connected && trusted && !!state;
   const updatedRunner = (state?.protocolVersion ?? 1) >= 2;
+  const connectionProblem = !device
+    ? blocked("HC-LIEN-KET", "Chưa chọn máy chạy HCMUE", "Mở HCMUE Runner trên máy, sau đó bấm Liên kết máy.")
+    : !device.connected
+      ? blocked("HC-RUNNER-OFFLINE", "Runner chưa kết nối với website", "Mở Runner trên máy và kiểm tra mạng.", "Bấm Đọc lại trạng thái sau khi Runner kết nối.")
+      : !trusted
+        ? blocked("HC-DOI-CHIEU-MAY", "Chưa đối chiếu thiết bị", "Bấm Đối chiếu máy và so sánh dấu vân tay với cửa sổ Runner.")
+        : !state ? blocked("HC-DOC-TRANG-THAI", "Chưa đọc được trạng thái Runner", "Chờ vài giây rồi bấm Đọc lại trạng thái.") : undefined;
+  const addProblem = busy ? busyProblem : connectionProblem ?? (accounts.length >= capacity
+    ? blocked("HC-GIOI-HAN", "Đã đạt giới hạn tài khoản", "Đăng xuất một tài khoản không có lịch hoạt động để thêm tài khoản khác.") : undefined);
+  const accountProblem = busy ? busyProblem : !updatedRunner
+    ? blocked("HC-BAN-CU", "Runner đang dùng bản cũ", "Tải bản mới trong Cài Runner, đóng bản cũ rồi mở bản mới.")
+    : !chosen.length ? selectProblem : !exams.length ? examsProblem : undefined;
+  const loadProblem = busy ? busyProblem : !accounts.length
+    ? blocked("HC-CHUA-TK", "Chưa có tài khoản để tải kỳ thi", "Bấm Thêm tài khoản và đăng nhập HCMUE trước.") : undefined;
+  const bulkProblem = busy ? busyProblem : !chosen.length ? selectProblem : !exam
+    ? blocked("HC-CHON-MAU", "Chưa chọn kỳ thi trong mẫu", "Tải kỳ thi nếu cần, rồi chọn kỳ thi và giờ gửi cho mẫu.") : undefined;
+  const armAllProblem = busy ? busyProblem : !prepared.length
+    ? schedules.some(s => s.status === "prepared")
+      ? blocked("HC-LICH-CHUA-HOP-LE", "Các lịch đã chuẩn bị chưa đủ điều kiện bật", "Xem lý do trên từng lịch bên dưới và xử lý trước khi bật.")
+      : blocked("HC-CHUA-CHUAN-BI", "Chưa có lịch sẵn sàng để bật", "Chọn tài khoản và kỳ thi, nhập giờ gửi, rồi bấm Chuẩn bị.")
+    : undefined;
+  const stopProblem = busy ? busyProblem : !active.length
+    ? blocked("HC-KHONG-CO-LICH-CHAY", "Chưa có lịch đang hoạt động", "Dùng Bỏ lịch nếu muốn xóa một lịch đã chuẩn bị khỏi danh sách chờ bật.") : undefined;
+  const modalOpen = pairOpen || loginOpen || armOpen || !!questionDraft || !!assistant;
   return (
     <FluentProvider
       theme={dark ? darkTheme : lightTheme}
       className={`hc-app ${dark ? "hc-dark" : ""}`}
     >
+      <NoticeAssistant.Provider value={setAssistant}>
       <WorkspaceSidebar page="hcmue" hcmueEnabled chinesetestEnabled={chinesetestEnabled} connected={ready} email={account.email} logout={()=>void logout()} items={[
         {label:'Tài khoản và lịch',href:'#hc-accounts',icon:<Users size={19}/>,count:accounts.length},
         {label:'Kết quả đăng ký',href:'#hc-results',icon:<CalendarCheck size={19}/>,count:success.length},
@@ -335,32 +416,24 @@ export function HcmuePage({
               <h1>Sẵn sàng trước giờ mở.</h1>
               <p>Chuẩn bị tài khoản. Đặt lịch gửi. Theo dõi từng kết quả.</p>
             </div>
+            <div className="hc-heading-actions">
+            <Button onClick={() => setAssistant({})}>Trợ lý HCMUE</Button>
             <Button
               appearance="primary"
               icon={<AddRegular />}
-              disabled={!ready || busy || accounts.length >= capacity}
+              disabled={!!addProblem}
+              aria-describedby={addProblem ? "hc-add-reason" : undefined}
               onClick={() => setLoginOpen(true)}
             >
               Thêm tài khoản
             </Button>
+            </div>
           </div>
-          {error && (
-            <div className="hc-message hc-error" role="alert">
-              <span>{error}</span>
-              <Button
-                appearance="transparent"
-                icon={<DismissRegular />}
-                aria-label="Đóng lỗi"
-                onClick={() => setError("")}
-              />
-            </div>
-          )}
-          {notice && (
-            <div className="hc-message" role="status">
-              <CheckmarkCircleRegular />
-              <span>{notice}</span>
-            </div>
-          )}
+          {addProblem && !loading && <HcmueNotice id="hc-add-reason" problem={addProblem} />}
+          {!modalOpen && (error || notice) && <div className="hc-alert-events">
+            {error ? <HcmueNotice key={error} kind="error" event problem={hcmueError(error, errorOperation)} onDismiss={() => setError("")} />
+              : notice && <HcmueNotice key={notice.problem.title} kind={notice.kind} event problem={notice.problem} onDismiss={() => setNotice(undefined)} />}
+          </div>}
           <section className="hc-runway" aria-label="Lịch sắp gửi">
             <div className="hc-next">
               <span>LỊCH GỬI TIẾP THEO</span>
@@ -570,7 +643,7 @@ export function HcmuePage({
                               </td>
                               <td data-label="Giờ gửi · Việt Nam">
                                 <Input aria-label={`Giờ gửi cho ${a.identity.name}`} type="datetime-local" step={1} value={p.target} disabled={busy || locked} onChange={(_, d) => editPlan(a.id, { target: d.value })} />
-                                <small>{locked ? "Đã bật lịch trên máy; dừng lịch trước khi sửa." : "Chuẩn bị xong vẫn cần bật lịch."}</small>
+                                {locked ? <HcmueNotice problem={lockedProblem} /> : <small>Chuẩn bị xong vẫn cần bật lịch.</small>}
                               </td>
                               <td data-label="Chế độ và kết quả">
                                 <Select aria-label={`Chế độ cho ${a.identity.name}`} value={p.test ? "test" : "live"} disabled={busy || locked} onChange={event => {
@@ -580,17 +653,23 @@ export function HcmuePage({
                                   <option value="test">Diễn tập hẹn giờ, không gửi đơn</option>
                                   <option value="live" disabled={!account.liveEnabled}>Đăng ký thật</option>
                                 </Select>
-                                <small className="hc-profile-ready">{a.identity.hasPhoto && a.identity.verified ? "Hồ sơ có ảnh và email xác thực" : "Hồ sơ cần hoàn thiện"}</small>
+                                {a.identity.hasPhoto && a.identity.verified
+                                  ? <small className="hc-profile-ready">Hồ sơ có ảnh và email xác thực</small>
+                                  : <HcmueNotice problem={hcmueError([!a.identity.hasPhoto && "Thiếu ảnh thẻ", !a.identity.verified && "Chưa xác thực email"].filter(Boolean).join(". "), "kiểm tra hồ sơ")} />}
                                 <span className={`hc-status hc-status-${run?.status ?? "draft"}`}>{run ? statusLabel[run.status] : "Đã đăng nhập"}</span>
                                 {run && <small>Lịch gần nhất: {run.exam.ten_cap_thi} · {time(run.targetAt)} · {run.test ? "Diễn tập" : "Đăng ký thật"}</small>}
-                                {run?.status === "prepared" && !matchesPlan(run, p) && <small className="hc-row-error">Thiết lập đã đổi. Chuẩn bị lại để thay lịch cũ.</small>}
-                                {run?.status === "prepared" && Date.parse(run.targetAt) < now + 2500 && <small className="hc-row-error">Giờ bật lịch đã quá sát hoặc đã qua. Chọn giờ mới và chuẩn bị lại.</small>}
-                                {rowErrors[a.id] && <p role="alert" className="hc-row-error">{rowErrors[a.id]}</p>}
+                                {rowErrors[a.id] && <HcmueNotice event kind="error" problem={hcmueError(rowErrors[a.id], "kiểm tra hoặc chuẩn bị tài khoản")} assistantScope={{ accountId: a.id }} />}
                                 {report && <details className="hc-inspection" open={report.checks.some(c => !c.ok)}>
                                   <summary>Báo cáo API · {shortTime(report.checkedAt)}</summary>
                                   <small>{report.exam.ten_cap_thi} · Đợt mở {report.exam.ngay_mo_dang_ky}</small>
-                                  {report.checks.map(c => <p key={c.label} className={c.ok ? "" : "hc-row-error"}><strong>{c.label}: {c.ok ? "Đọc được" : "Lỗi"}</strong> {c.message}</p>)}
+                                  {report.checks.map(c => {
+                                    if (c.ok) return <p key={c.label}><strong>{c.label}: Đọc được</strong> {c.message}</p>;
+                                    const problem = hcmueError(c.message, `kiểm tra ${c.label}`);
+                                    return <HcmueNotice key={c.label} kind="error" problem={problem} assistantScope={{ accountId: a.id }}
+                                      action={problem.code === "HC-PHIEN" && c.label === "Hồ sơ" && <Button size="small" appearance="subtle" disabled={busy || locked} onClick={() => { setError(""); setLoginOpen(true); }}>Đăng nhập lại HCMUE</Button>} />;
+                                  })}
                                   <small>Chỉ đọc thông tin. Không tạo lịch hoặc gửi đăng ký.</small>
+                                  <Button size="small" onClick={() => setAssistant({ accountId: a.id })}>Hỏi AI về báo cáo</Button>
                                 </details>}
                                 <Button size="small" appearance="subtle" disabled={busy || locked} onClick={() => void act(async () => setState(await request("logout", { id: a.id })))}>Đăng xuất</Button>
                               </td>
@@ -603,9 +682,10 @@ export function HcmuePage({
                 )}
                 {!!accounts.length && <div className="hc-compose-footer hc-account-footer">
                   <p>Kiểm tra API dùng được cả với đợt cũ. Chuẩn bị tạo lịch riêng cho từng người; chỉ gửi sau khi bật lịch và xác nhận.</p>
-                  <Button disabled={busy || !chosen.length || !updatedRunner} onClick={() => void act(inspectChosen)}>Kiểm tra hồ sơ/API</Button>
-                  <Button appearance="primary" disabled={busy || !chosen.length || !updatedRunner} onClick={() => void act(prepare)}>{busy && <Spinner size="tiny" />}Chuẩn bị {chosen.length || ""} tài khoản</Button>
+                  <Button disabled={!!accountProblem} aria-describedby={accountProblem ? "hc-account-reason" : undefined} onClick={() => void act(inspectChosen)}>Kiểm tra hồ sơ/API</Button>
+                  <Button appearance="primary" disabled={!!accountProblem} aria-describedby={accountProblem ? "hc-account-reason" : undefined} onClick={() => void act(prepare)}>{busy && <Spinner size="tiny" />}Chuẩn bị {chosen.length || ""} tài khoản</Button>
                 </div>}
+                {!!accounts.length && accountProblem && <HcmueNotice id="hc-account-reason" problem={accountProblem} />}
               </section>
               <section className="hc-compose">
                 <div className="hc-section-heading">
@@ -615,8 +695,9 @@ export function HcmuePage({
                       Giữ mọi đợt API trả về, kể cả quá hạn hoặc hết chỗ. Chọn để xem; áp dụng hàng loạt khi cần.
                     </p>
                   </div>
-                  <Button icon={<ArrowSyncRegular />} disabled={busy || !accounts.length} onClick={() => void act(loadExams)}>Tải kỳ thi</Button>
+                  <Button icon={<ArrowSyncRegular />} disabled={!!loadProblem} aria-describedby={loadProblem ? "hc-load-reason" : undefined} onClick={() => void act(loadExams, "tải kỳ thi")}>Tải kỳ thi</Button>
                 </div>
+                {(loadProblem || !exams.length) && <HcmueNotice id="hc-load-reason" problem={loadProblem ?? examsProblem} />}
                 <div className="hc-compose-fields">
                   <Field label="Kỳ thi">
                     <div className="hc-exam-select">
@@ -678,16 +759,18 @@ export function HcmuePage({
                 </div>}
                 <div className="hc-compose-footer">
                   <p>Mẫu chỉ thay các tài khoản đang chọn và chưa bật lịch. Bạn vẫn có thể sửa riêng từng dòng; chưa tạo lịch hoặc gửi đơn.</p>
-                  <Button disabled={busy || !chosen.length || !exam} onClick={() => {
+                  <Button disabled={!!bulkProblem} aria-describedby={bulkProblem ? "hc-bulk-reason" : undefined} onClick={() => {
                     if (!exam) return;
                     let applied = 0;
                     for (const a of chosen) {
                       if (schedules.some(s => s.accountId === a.id && activeStatus(s.status))) continue;
                       editPlan(a.id, { examKey: examId, target, test }); applied++;
                     }
-                    setNotice(`Đã áp dụng mẫu cho ${applied} tài khoản. Kiểm tra từng dòng trước khi chuẩn bị.`);
+                    publishNotice(`Đã áp dụng mẫu cho ${applied}/${chosen.length} tài khoản`, ["Kiểm tra thiết lập từng dòng trước khi chuẩn bị."], applied < chosen.length ? "warning" : "success");
                   }}>Áp dụng mẫu cho tài khoản đã chọn</Button>
                 </div>
+                {bulkProblem && <HcmueNotice id="hc-bulk-reason" problem={bulkProblem} />}
+                {!account.liveEnabled && <HcmueNotice problem={liveProblem} />}
               </section>
               <section id="hc-results" className="hc-section">
                 <div className="hc-section-heading">
@@ -698,11 +781,12 @@ export function HcmuePage({
                   <div className="hc-toolbar">
                     <Button
                       icon={<StopRegular />}
-                      disabled={busy || !active.length}
+                      disabled={!!stopProblem}
+                      aria-describedby={stopProblem ? "hc-stop-reason" : undefined}
                       onClick={() =>
                         void act(async () => {
                           setState(await request("stop-all"));
-                          setNotice(
+                          publishNotice(
                             "Máy đã xác nhận dừng. Các yêu cầu đã gửi vẫn cần kiểm tra kết quả.",
                           );
                         })
@@ -713,7 +797,8 @@ export function HcmuePage({
                     <Button
                       appearance="primary"
                       icon={<PlayRegular />}
-                      disabled={busy || !prepared.length}
+                      disabled={!!armAllProblem}
+                      aria-describedby={armAllProblem ? "hc-arm-reason" : undefined}
                       onClick={() => {
                         setArmSelection(prepared.map((s) => s.id));
                         setArmOpen(true);
@@ -723,6 +808,8 @@ export function HcmuePage({
                     </Button>
                   </div>
                 </div>
+                {armAllProblem && <HcmueNotice id="hc-arm-reason" problem={armAllProblem} />}
+                {stopProblem && <small id="hc-stop-reason">{stopProblem.title}. {stopProblem.steps[0]}</small>}
                 {!schedules.length ? (
                   <div className="hc-empty hc-empty-small">
                     <ClockRegular />
@@ -749,9 +836,11 @@ export function HcmuePage({
                             {accounts.find((a) => a.id === s.accountId)
                               ?.identity.name ?? "Tài khoản đã đăng xuất"}
                           </p>
-                          <small>
-                            {s.attempt.message ?? "Đã chuẩn bị, chưa bật lịch."}
-                          </small>
+                          {s.status === "failed" || s.status === "uncertain" ? <HcmueNotice kind="error" problem={hcmueError(s.attempt.message ?? statusLabel[s.status], "gửi đăng ký")} assistantScope={{ scheduleId: s.id, accountId: s.accountId }} /> : <small>{s.attempt.message ?? "Đã chuẩn bị, chưa bật lịch."}</small>}
+                          {s.status === "prepared" && (() => {
+                            const reason = armProblem(s);
+                            return reason && <HcmueNotice id={`hc-arm-${s.id}`} problem={reason} assistantScope={{ scheduleId: s.id, accountId: s.accountId }} />;
+                          })()}
                           {s.attempt.registrationCode && (
                             <p className="hc-result-code">
                               Mã đơn{" "}
@@ -783,6 +872,7 @@ export function HcmuePage({
                           )}
                         </div>
                         <div className="hc-run-actions">
+                          <Button size="small" appearance="subtle" onClick={() => setAssistant({ scheduleId: s.id, accountId: s.accountId })}>Hỏi AI về lịch</Button>
                           {activeStatus(s.status) ? (
                             <Button
                               size="small"
@@ -802,6 +892,7 @@ export function HcmuePage({
                                 size="small"
                                 appearance="primary"
                                 disabled={busy || !prepared.some(p => p.id === s.id)}
+                                aria-describedby={armProblem(s) ? `hc-arm-${s.id}` : busy ? "hc-arm-reason" : undefined}
                                 onClick={() => {
                                   setArmSelection([s.id]);
                                   setArmOpen(true);
@@ -866,7 +957,7 @@ export function HcmuePage({
         </main>
       </div>
       <Dialog
-        open={pairOpen}
+        open={pairOpen && !assistant}
         onOpenChange={(_, d) => {
           setPairOpen(d.open);
           setPairCode("");
@@ -884,17 +975,15 @@ export function HcmuePage({
                   autoComplete="off"
                 />
               </Field>
-              {error && (
-                <p role="alert" className="hc-dialog-error">
-                  {error}
-                </p>
-              )}
+              {error ? <HcmueNotice key={error} event kind="error" problem={hcmueError(error, "liên kết máy")} />
+                : (busy || !pairCode.trim()) && <HcmueNotice id="hc-pair-reason" problem={busy ? busyProblem : blocked("HC-MA-LIEN-KET", "Chưa nhập mã liên kết", "Sao chép mã đang hiển thị trong Runner và dán vào ô Mã liên kết.")} />}
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setPairOpen(false)}>Đóng</Button>
               <Button
                 appearance="primary"
                 disabled={busy || !pairCode.trim()}
+                aria-describedby={!error && (busy || !pairCode.trim()) ? "hc-pair-reason" : undefined}
                 onClick={() =>
                   void act(async () => {
                     const d = await api<Device>("pair", { code: pairCode });
@@ -947,7 +1036,7 @@ export function HcmuePage({
         </DialogSurface>
       </Dialog>
       <Dialog
-        open={loginOpen}
+        open={loginOpen && !assistant}
         onOpenChange={(_, d) => {
           setLoginOpen(d.open);
           if (!d.open) setPassword("");
@@ -976,11 +1065,8 @@ export function HcmuePage({
                   onChange={(_, d) => setPassword(d.value)}
                 />
               </Field>
-              {error && (
-                <p role="alert" className="hc-dialog-error">
-                  {error}
-                </p>
-              )}
+              {error ? <HcmueNotice key={error} event kind="error" problem={hcmueError(error, "đăng nhập")} />
+                : (busy || !cccd || !password) && <HcmueNotice id="hc-login-reason" problem={busy ? busyProblem : blocked("HC-THIEU-DANG-NHAP", "Thiếu thông tin đăng nhập HCMUE", "Nhập CCCD và mật khẩu của tài khoản HCMUE.")} />}
             </DialogContent>
             <DialogActions>
               <Button
@@ -995,6 +1081,7 @@ export function HcmuePage({
               <Button
                 appearance="primary"
                 disabled={busy || !cccd || !password}
+                aria-describedby={!error && (busy || !cccd || !password) ? "hc-login-reason" : undefined}
                 onClick={() =>
                   void act(async () => {
                     const secret = password;
@@ -1004,7 +1091,7 @@ export function HcmuePage({
                     );
                     setCccd("");
                     setLoginOpen(false);
-                    setNotice("Đã đăng nhập và kiểm tra hồ sơ trên máy.");
+                    publishNotice("Đã đăng nhập và kiểm tra hồ sơ trên máy", ["Chọn kỳ thi và chạy Kiểm tra hồ sơ/API."]);
                   })
                 }
               >
@@ -1014,7 +1101,7 @@ export function HcmuePage({
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <Dialog open={armOpen} onOpenChange={(_, d) => setArmOpen(d.open)}>
+      <Dialog open={armOpen && !assistant} onOpenChange={(_, d) => setArmOpen(d.open)}>
         <DialogSurface>
           <DialogBody>
             <DialogTitle>Bật {arming.length} lịch trên máy?</DialogTitle>
@@ -1035,24 +1122,22 @@ export function HcmuePage({
                 Giữ Runner hoạt động và máy có mạng. Khi website mất kết nối,
                 dùng Dừng tất cả trực tiếp trên máy.
               </p>
-              {error && (
-                <p role="alert" className="hc-dialog-error">
-                  {error}
-                </p>
-              )}
+              {error ? <HcmueNotice key={error} event kind="error" problem={hcmueError(error, "bật lịch")} />
+                : (busy || arming.length !== armSelection.length) && <HcmueNotice id="hc-confirm-reason" problem={busy ? busyProblem : blocked("HC-XAC-NHAN-LICH", "Lịch đã thay đổi khi đang xem lại", "Đóng hộp thoại và kiểm tra lý do trên từng lịch trước khi bật lại.")} />}
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setArmOpen(false)}>Chưa bật</Button>
               <Button
                 appearance="primary"
-                disabled={busy || !arming.length}
+                disabled={busy || !arming.length || arming.length !== armSelection.length}
+                aria-describedby={!error && (busy || arming.length !== armSelection.length) ? "hc-confirm-reason" : undefined}
                 onClick={() =>
                   void act(async () => {
                     setState(
                       await request("arm", { ids: arming.map((s) => s.id) }),
                     );
                     setArmOpen(false);
-                    setNotice(
+                    publishNotice(
                       "Máy đã nhận và lưu lịch. Sẵn sàng thực hiện đúng giờ.",
                     );
                   })
@@ -1072,7 +1157,7 @@ export function HcmuePage({
         </DialogBody></DialogSurface>
       </Dialog>
       <Dialog
-        open={!!questionDraft}
+        open={!!questionDraft && !assistant}
         onOpenChange={(_, d) => {
           if (!d.open) setQuestionDraft(undefined);
         }}
@@ -1087,7 +1172,7 @@ export function HcmuePage({
                     {accounts.find((a) => a.id === d.accountId)?.identity.name}
                   </h3>
                   <p>{exams.find(e => examKey(e) === d.args.examKey)?.ten_cap_thi} · {d.args.test ? "Diễn tập" : "Đăng ký thật"}</p>
-                  {rowErrors[d.accountId] && <p role="alert" className="hc-row-error">{rowErrors[d.accountId]}</p>}
+                  {rowErrors[d.accountId] && <HcmueNotice event kind="error" problem={hcmueError(rowErrors[d.accountId], "lưu câu trả lời")} />}
                   {d.q.questions.map((q) => (
                     <Field key={q.ma_cau_hoi} label={q.noi_dung}>
                       <Select
@@ -1134,10 +1219,11 @@ export function HcmuePage({
                     const failed: NonNullable<typeof questionDraft> = [];
                     const completed = await eachAccount(questionDraft ?? [], async d => {
                       setState(await request("prepare", { ...d.args, answers: d.answers }));
+                      if (d.args.expectedDraftId !== undefined) editPlan(d.accountId, { examKey: d.args.examKey, target: vnInput(d.args.targetAt), test: d.args.test });
                       setRowErrors(old => ({ ...old, [d.accountId]: "" }));
                     }, (d, message) => { failed.push(d); failRow({ id: d.accountId }, message); });
                     setQuestionDraft(failed.length ? failed : undefined);
-                    setNotice(`Đã chuẩn bị ${completed} lịch. ${failed.length ? "Tài khoản lỗi giữ lại câu trả lời; xem lỗi trên từng dòng." : "Bật lịch để máy thực hiện."}`);
+                    publishNotice(`Đã chuẩn bị ${completed} lịch`, [failed.length ? "Xem lỗi từng dòng. Các câu trả lời đã nhập vẫn có trong hộp này." : "Bấm Bật lịch để máy thực hiện."], failed.length ? "warning" : "success");
                   })
                 }
               >
@@ -1147,6 +1233,31 @@ export function HcmuePage({
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      </NoticeAssistant.Provider>
+      {assistant && <HcmueAssistant scope={assistant} schedules={schedules} exams={exams} accounts={accounts}
+        liveEnabled={account.liveEnabled} ready={ready && updatedRunner} canPrepare={(state?.protocolVersion ?? 1) >= 3} busy={busy} getContext={assistantContext}
+        onClose={() => setAssistant(undefined)}
+        onPrepare={(draft, expectedDraftId) => {
+          if (!ready || (state?.protocolVersion ?? 1) < 3 || busyRef.current) return;
+          setAssistant(undefined);
+          void act(async () => { await prepare([{ ...draft, expectedDraftId }]); }, "chuẩn bị lịch");
+        }}
+        onScheduleAction={(action, id) => {
+          const schedule = schedules.find(s => s.id === id);
+          if (!schedule || !ready || !updatedRunner || busyRef.current) return "Đọc lại trạng thái Runner rồi thử lại.";
+          if (action === "arm") {
+            if (schedule.status !== "prepared") return "Chỉ có thể bật lịch đã chuẩn bị.";
+            const reason = armProblem(schedule);
+            if (reason) return [reason.title, ...reason.steps].join(" ");
+            setAssistant(undefined);
+            setArmSelection([id]);
+            setArmOpen(true);
+          } else {
+            if (!["uncertain", "pending_payment", "failed"].includes(schedule.status)) return "Lịch chưa ở trạng thái cần kiểm tra kết quả.";
+            setAssistant(undefined);
+            void act(async () => setState(await request("reconcile", { id })), "kiểm tra kết quả");
+          }
+        }} />}
     </FluentProvider>
   );
 }

@@ -2,6 +2,8 @@ import { parentPort, workerData } from "node:worker_threads";
 import { join } from "node:path";
 import { Vault, systemKey, runnerDirectory } from "./vault";
 import { Engine, freshData, type RunnerData } from "./engine";
+import { HcmueClient } from "./client";
+import { scheduleEvents, schoolErrorKind, type ReportDiagnostic } from "./diagnostics";
 import { unbox, seal } from "../crypto";
 import type { SecretCommand, CommandReply } from "../protocol";
 async function start() {
@@ -11,8 +13,14 @@ async function start() {
   const data =
     (await vault.load(() => null as unknown as RunnerData)) ??
     (await freshData(workerData?.name ?? "Máy HCMUE"));
-  const engine = new Engine(data, vault, undefined, () =>
-    parentPort!.postMessage({ type: "CHANGED", state: engine.snapshot() }),
+  const report: ReportDiagnostic = event => parentPort!.postMessage({ type: "DIAGNOSTIC", event });
+  const engine = new Engine(
+    data,
+    vault,
+    session => new HcmueClient(session, undefined, undefined, report),
+    () => parentPort!.postMessage({ type: "CHANGED", state: engine.snapshot() }),
+    report,
+    id => scheduleEvents(dir, id).catch(() => []),
   );
   await engine.persist();
   parentPort!.postMessage({
@@ -66,9 +74,11 @@ async function start() {
           error: "Lệnh đã xử lý. Đọc trạng thái để đối chiếu.",
         };
       else {
-        data.seen.push(m.commandId);
-        data.seen = data.seen.slice(-500);
-        await engine.persist();
+        if (command.command !== "run-summary") {
+          data.seen.push(m.commandId);
+          data.seen = data.seen.slice(-500);
+          await engine.persist();
+        }
         try {
           reply = {
             ok: true,
@@ -78,6 +88,10 @@ async function start() {
           reply = { ok: false, error: (e as Error).message };
         }
       }
+      if (!["state", "run-summary"].includes(command.command) || !reply.ok) report({
+        event: "command_result", command: command.command, ok: reply.ok,
+        reason: schoolErrorKind(reply.error),
+      });
       const box = await seal(command.replyKey, reply, m.commandId);
       parentPort!.postMessage({
         type: "RESULT",
@@ -86,6 +100,7 @@ async function start() {
         state: engine.snapshot(),
       });
     } catch {
+      report({ event: "command_rejected" });
       parentPort!.postMessage({
         type: "COMMAND_ERROR",
         commandId: m.commandId,

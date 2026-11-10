@@ -10,6 +10,7 @@ export interface CloudConfig {
   // Render starts a replacement before terminating the existing instance.
   rollingDeploy?: boolean;
   hcmueEnabled?: boolean;
+  hcmueAssistant?: { apiKey: string; model?: string };
   chinesetestEnabled?: boolean;
   bootstrapAdminEmail?: string;
 }
@@ -34,7 +35,8 @@ export function cloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
     supabaseUrl: supabaseUrl.origin, publishableKey: required('SUPABASE_PUBLISHABLE_KEY'),
     secretKey: required('SUPABASE_SECRET_KEY'), databaseUrl: required('DATABASE_URL'),
     databaseCa: env.PGSSLROOTCERT ? readFileSync(env.PGSSLROOTCERT, 'utf8') : undefined,trustProxy:env.TRUST_PROXY==='1',
-    rollingDeploy: env.RENDER === 'true', hcmueEnabled:env.HANU_HCMUE_ENABLED==='1', chinesetestEnabled:env.HANU_CHINESETEST_ENABLED==='1', bootstrapAdminEmail };
+    rollingDeploy: env.RENDER === 'true', hcmueEnabled:env.HANU_HCMUE_ENABLED==='1', chinesetestEnabled:env.HANU_CHINESETEST_ENABLED==='1', bootstrapAdminEmail,
+    hcmueAssistant: env.OPENROUTER_API_KEY?.trim() ? { apiKey: env.OPENROUTER_API_KEY.trim(), model: env.HANU_HCMUE_ASSISTANT_MODEL?.trim() } : undefined };
 }
 export function databasePool(config: CloudConfig) {
   const url = new URL(config.databaseUrl);

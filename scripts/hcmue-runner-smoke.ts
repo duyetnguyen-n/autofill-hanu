@@ -81,6 +81,10 @@ try {
   const vault = await readFile(join(dir, "state.enc"), "utf8");
   if (vault.includes(device.id) || vault.includes("privateKey"))
     throw new Error("Plaintext vault");
+  const diagnosticPath = join(dir, "diagnostics.jsonl");
+  const journal = await readFile(diagnosticPath, "utf8");
+  if (!journal.includes('"event":"runner_start"') || !journal.includes('"event":"relay_connected"') || journal.includes(device.id))
+    throw new Error("Runner diagnostics missing or exposed device identity");
   await mkdir("test-results/hcmue", { recursive: true });
   await writeFile(
     "test-results/hcmue/native-smoke.json",

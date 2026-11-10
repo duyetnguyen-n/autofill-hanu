@@ -1,4 +1,5 @@
 import {HcmueRelay} from '../../integrations/hcmue/cloud/relay';
+import {answerAssistant} from '../../integrations/hcmue/cloud/assistant';
 import {ChineseTestRelay} from '../../integrations/chinesetest/cloud/relay';
 import {createReadStream} from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -87,6 +88,7 @@ export async function serveCloud(options: {
   const browserRevisions = new WeakMap<WebSocket, number>();
   const lastSeen = new Map<WebSocket, number>();
   const rate = new RateLimit();
+  const assistantRate = new RateLimit();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let emergencyError = '', closing = false;
   let ready = false, ownsLease = false;
@@ -261,6 +263,12 @@ export async function serveCloud(options: {
         }
         if (emergencyError) throw new CloudError(emergencyError, 503);
         if (!ready || closing) { res.setHeader('Retry-After', '2'); throw new CloudError(updating, 503); }
+        if (path === '/api/hcmue/assistant/chat') {
+          assertAccess(account);
+          if (!hcmue || req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý HCMUE.', 404);
+          assistantRate.check(user.id, 12, 60000);
+          return json(res, await answerAssistant(await body(req, 24 * 1024), config.hcmueAssistant ?? {}));
+        }
         rate.check(`api:${user.id}`, 300, 60000);
         if (path === '/api/account' && req.method === 'PATCH') {
           rate.check(`account:${user.id}`, 10, 60000);

@@ -10,6 +10,7 @@ import {
   transportMessage,
 } from "../../integrations/hcmue/runner/client";
 import { exam } from "./support";
+import type { DiagnosticEvent } from "../../integrations/hcmue/runner/diagnostics";
 it("uses strict TLS and isolated bearer/device/cookie sessions without redirects", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hcmue-tls-"));
   let a: HcmueClient | undefined, b: HcmueClient | undefined;
@@ -206,7 +207,8 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
     } finally {
       untrusted.close();
     }
-    a = new HcmueClient(undefined, origin, ca);
+    const diagnostics: DiagnosticEvent[] = [];
+    a = new HcmueClient(undefined, origin, ca, event => diagnostics.push(event));
     b = new HcmueClient(undefined, origin, ca);
     const [sa, sb] = await Promise.all([
       a.login("000000000001", "fixture-a"),
@@ -253,6 +255,15 @@ it("uses strict TLS and isolated bearer/device/cookie sessions without redirects
       retryAfterMs: 3000,
     });
     await expect(a.call("/broken")).rejects.toBeInstanceOf(ApiFailure);
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "api_result", endpoint: "login", result: "http_ok", httpStatus: 200 }),
+      expect.objectContaining({ event: "api_result", endpoint: "submit", result: "http_ok", httpStatus: 200 }),
+      expect.objectContaining({ event: "api_result", result: "http_error", httpStatus: 429, retryAfterMs: 3000 }),
+    ]));
+    const journal = JSON.stringify(diagnostics);
+    for (const secret of ["000000000001", "fixture-a", "fixture@example.test", "fixture-job", "FIXTURE-TLS"]) {
+      expect(journal).not.toContain(secret);
+    }
     for (const [id, message] of [
       ["000000000003", "Số CCCD không tồn tại"],
       ["000000000004", "chưa xác thực email"],

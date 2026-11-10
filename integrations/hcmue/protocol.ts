@@ -60,6 +60,7 @@ export interface Attempt {
   elapsedMs?: number;
   latenessMs?: number;
   httpStatus?: number;
+  submitError?: string;
   jobId?: string;
   registrationCode?: string;
   paymentDeadline?: string;
@@ -99,6 +100,7 @@ export type Command =
   | "remove"
   | "exams"
   | "inspect"
+  | "run-summary"
   | "prepare"
   | "arm"
   | "stop"
@@ -111,6 +113,7 @@ export const COMMANDS: Command[] = [
   "remove",
   "exams",
   "inspect",
+  "run-summary",
   "prepare",
   "arm",
   "stop",

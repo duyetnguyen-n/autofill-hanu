@@ -8,6 +8,7 @@ import { mkdir, readFile, unlink, open as fsOpen } from "node:fs/promises";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { runnerDirectory } from "./vault";
+import { diagnosticFile } from "./diagnostics";
 import { activeStatus, type RunnerState } from "../protocol";
 import { startupOrigin, reuseRunner, saveRunnerWindow, openRunnerWindow, rememberWebsite } from "../../runner/startup";
 const dir = runnerDirectory();
@@ -44,6 +45,8 @@ try {
 await lock.writeFile(String(process.pid));
 await lock.close();
 await rememberWebsite(dir, origin);
+const diagnostics = diagnosticFile(dir);
+diagnostics.record({ event: "runner_start" });
 const worker = new Worker(new URL("./worker.mjs", import.meta.url), {
   workerData: { name: hostname(), dir },
 });
@@ -181,6 +184,7 @@ function connect() {
           return;
         }
         connected = true;
+        diagnostics.record({ event: "relay_connected" });
         error = "";
         owner = m.owner ?? undefined;
         if (owner) {
@@ -211,16 +215,23 @@ function connect() {
     }
   });
   ws.on("error", () => {
+    diagnostics.record({ event: "relay_error" });
     error = "Chưa kết nối được website. Lịch đã bật vẫn chạy trên máy.";
   });
-  ws.on("close", () => {
+  ws.on("close", (closeCode) => {
+    diagnostics.record({ event: "relay_closed", closeCode, wasConnected: connected });
     connected = false;
     clearInterval(ping);
     if (!closing && !revoked) retry = setTimeout(connect, 3000);
   });
 }
 worker.on("message", (m) => {
+  if (m.type === "DIAGNOSTIC") {
+    diagnostics.record(m.event);
+    return;
+  }
   if (m.type === "READY") {
+    diagnostics.record({ event: "worker_ready" });
     identity = m.identity;
     state = m.state;
     if (m.cloud?.origin === origin) {
@@ -240,6 +251,7 @@ worker.on("message", (m) => {
       JSON.stringify({ type: "RESULT", commandId: m.commandId, box: m.box }),
     );
   if (m.type === "FATAL") {
+    diagnostics.record({ event: "worker_fatal" });
     error = m.error;
     console.error(error);
   }
@@ -250,6 +262,7 @@ worker.on("message", (m) => {
       "Lệnh không hợp lệ hoặc không giải mã được. Đối chiếu dấu vân tay máy.";
 });
 worker.on("error", () => {
+  diagnostics.record({ event: "worker_error" });
   error =
     "Worker dừng bất thường. Mở lại Runner để đối chiếu, không gửi lại tự động.";
 });
@@ -273,6 +286,8 @@ async function close() {
   server.close();
   await unlink(join(dir, "runner-open.json")).catch(() => {});
   await unlink(lockFile).catch(() => {});
+  diagnostics.record({ event: "runner_stop" });
+  await diagnostics.flush();
   process.exit(0);
 }
 process.on("SIGINT", () => void close());

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { atDeadline } from "./deadline";
 import { HcmueClient, ApiFailure, type Session } from "./client";
+import { schoolErrorKind, type ReportDiagnostic } from "./diagnostics";
+import { summarizeRun, type RunSummary } from "../assistant";
 import { identityKeys, fingerprint } from "../crypto";
 import {
   MAX_ACCOUNTS,
@@ -60,6 +62,8 @@ export class Engine {
     private persistence: Persistence,
     private factory: (s?: Session) => HcmueClient = (s) => new HcmueClient(s),
     private changed: () => void = () => {},
+    private report?: ReportDiagnostic,
+    private readEvents?: (id: string) => Promise<RunSummary["events"]>,
   ) {
     for (const a of data.accounts)
       this.clients.set(a.view.id, factory(a.session));
@@ -88,7 +92,7 @@ export class Engine {
   }
   snapshot(): RunnerState {
     return structuredClone({
-      protocolVersion: 2,
+      protocolVersion: 3,
       deviceId: this.data.deviceId,
       name: this.data.name,
       platform: process.platform,
@@ -115,6 +119,7 @@ export class Engine {
   ) {
     s.status = status;
     if (message) s.attempt.message = message;
+    this.report?.({ event: "schedule_status", scheduleId: s.id, status, attempts: s.attempt.count, httpStatus: s.attempt.httpStatus, hasRegistration: !!s.attempt.registrationCode, reason: schoolErrorKind(message) });
     await this.save();
     this.changed();
   }
@@ -146,6 +151,7 @@ export class Engine {
       s.status = "stopped";
       s.attempt.message = message;
     }
+    this.report?.({ event: "schedule_stopped", scheduleId: s.id, status: s.status, attempts: s.attempt.count, reason: /đồng hồ/i.test(message) ? "clock_changed" : undefined });
     void this.save().catch(() => {});
     this.changed();
   }
@@ -155,6 +161,12 @@ export class Engine {
     limits: Limits,
   ) {
     if (command === "state") return this.snapshot();
+    if (command === "run-summary") {
+      const schedule = this.schedule(String(args.id));
+      const busy = this.data.schedules.some(s => activeStatus(s.status));
+      const events = !busy && this.readEvents ? await this.readEvents(schedule.id) : undefined;
+      return { ...summarizeRun(schedule), events };
+    }
     if (command === "stop-all") {
       for (const s of this.data.schedules)
         if (activeStatus(s.status)) this.stop(s);
@@ -300,6 +312,11 @@ export class Engine {
       if (args.runNow === true) target = args.test === true ? Date.now() + 7000 : Math.max(Date.now() + 7000, starts);
       const problem = scheduleProblem(exam, target, Date.now(), args.test === true);
       if (problem) throw new Error(problem);
+      if (Object.hasOwn(args, "expectedDraftId")) {
+        const currentDraft = this.data.schedules.find(s => s.accountId === accountId && s.status === "prepared");
+        if ((currentDraft?.id ?? null) !== args.expectedDraftId)
+          throw new Error("Lịch nháp đã thay đổi. Đọc lại trạng thái và mở đề xuất mới.");
+      }
       if (
         this.data.schedules.some(
           (s) =>
@@ -369,6 +386,7 @@ export class Engine {
         }
       this.data.schedules.push(s);
       await this.save();
+      this.report?.({ event: "schedule_prepared", scheduleId: s.id, targetAt: s.targetAt, test: s.test });
       return this.snapshot();
     }
     if (command === "arm") {
@@ -417,34 +435,25 @@ export class Engine {
     throw new Error("Lệnh không hỗ trợ.");
   }
   private install(s: Schedule) {
+    this.report?.({ event: "schedule_armed", scheduleId: s.id, targetAt: s.targetAt, test: s.test });
     const generation = (this.generation.get(s.id) ?? 0) + 1;
     this.generation.set(s.id, generation);
-    const remaining = Date.parse(s.targetAt) - Date.now(),
+    const target = Date.parse(s.targetAt),
+      remaining = target - Date.now(),
       deadline = performance.now() + remaining;
+    const openingLead = !s.test && target === schoolTime(s.exam.ngay_mo_dang_ky)
+      ? Math.min(10000, Math.max(0, remaining - 2000))
+      : 0;
     const valid = () =>
       !this.closing &&
       this.generation.get(s.id) === generation &&
       ["armed", "reserved"].includes(s.status);
-    const step = (offset: number, fn: () => Promise<void>) => {
-      const wait = remaining - offset;
-      if (wait <= 0) return;
-      setTimeout(
-        () => {
-          if (valid())
-            void fn().catch((e) =>
-              valid()
-                ? this.update(s, "failed", (e as Error).message).catch(() => {})
-                : undefined,
-            );
-        },
-        Math.min(wait, 2147483647),
-      );
-    };
-    if (remaining > 35000) step(30000, () => this.preflight(s));
-    const prepareAt = Math.max(0, remaining - 5000);
+    const leadTime = openingLead > 0 ? 25000 : !s.test && remaining >= 20000 ? 20000 : 5000;
+    const prepareAt = Math.max(0, remaining - leadTime);
     const prepareTimer = setTimeout(() => {
       if (!valid()) return;
-      void this.preflight(s)
+      this.report?.({ event: "preflight_start", scheduleId: s.id });
+      void this.preflightWithRetry(s, deadline - 2000, valid)
         .then(async () => {
           if (!valid()) return;
           const body = payload(
@@ -461,41 +470,60 @@ export class Engine {
               "Không lưu xong lịch trước giờ gửi 2 giây. Chuẩn bị lại.",
             );
           this.bodies.set(s.id, body);
+          this.report?.({ event: "preflight_ready", scheduleId: s.id });
           this.changed();
         })
-        .catch((e) =>
-          valid()
-            ? this.update(s, "failed", (e as Error).message).catch(() => {})
-            : undefined,
-        );
+        .catch((e: Error) => {
+          this.report?.({ event: "preflight_failed", scheduleId: s.id, reason: schoolErrorKind(e.message), httpStatus: e instanceof ApiFailure ? e.status : undefined });
+          if (valid()) return this.update(s, "failed", e.message).catch(() => {});
+        });
     }, prepareAt);
-    this.timers.set(
-      s.id,
-      atDeadline(deadline, () => {
-        if (!valid()) return;
-        clearTimeout(prepareTimer);
-        if (
-          Math.abs(Date.now() - Date.parse(s.targetAt)) > 100 ||
-          s.status !== "reserved" ||
-          !this.bodies.has(s.id)
-        ) {
-          void this.update(
-            s,
-            "failed",
-            "Chưa sẵn sàng hoặc đồng hồ thay đổi trước giờ gửi.",
-          ).catch(() => {});
-          return;
-        }
-        // No disk/cloud await occurs in this dispatch callback.
-        void this.dispatch(s, generation).catch(() =>
-          this.update(
-            s,
-            "uncertain",
-            "Không lưu hoặc xác nhận được kết quả.",
-          ).catch(() => {}),
-        );
-      }),
-    );
+    const cancelDeadline = atDeadline(deadline - openingLead, () => {
+      if (!valid()) return;
+      if (!openingLead) clearTimeout(prepareTimer);
+      const latenessMs = Date.now() - (target - openingLead);
+      const reserved = s.status === "reserved" && this.bodies.has(s.id);
+      if (Math.abs(latenessMs) > 100 || (!openingLead && !reserved)) {
+        this.report?.({ event: "deadline_rejected", scheduleId: s.id, latenessMs, reserved });
+        void this.update(
+          s,
+          "failed",
+          "Chưa sẵn sàng hoặc đồng hồ thay đổi trước giờ gửi.",
+        ).catch(() => {});
+        return;
+      }
+      const run = s.test
+        ? this.dispatch(s, generation)
+        : this.dispatchWhenOpen(s, generation, valid, openingLead > 0);
+      void run.catch(() =>
+        this.update(
+          s,
+          "uncertain",
+          "Không lưu hoặc xác nhận được kết quả.",
+        ).catch(() => {}),
+      );
+    });
+    this.timers.set(s.id, () => {
+      clearTimeout(prepareTimer);
+      cancelDeadline();
+    });
+  }
+  private async preflightWithRetry(s: Schedule, cutoff: number, valid: () => boolean) {
+    try {
+      await this.preflight(s);
+    } catch (error) {
+      if (
+        !(error instanceof ApiFailure) ||
+        (error.status !== undefined && error.status < 500 && error.status !== 429)
+      ) throw error;
+      const wait = Math.max(1000, error.retryAfterMs ?? 0);
+      if (!valid() || performance.now() + wait >= cutoff) throw error;
+      this.report?.({ event: "preflight_retry", scheduleId: s.id, waitMs: wait, httpStatus: error.status });
+      await delay(wait);
+      if (!valid()) return;
+      if (performance.now() >= cutoff) throw error;
+      await this.preflight(s);
+    }
   }
   private async preflight(s: Schedule) {
     const client = this.client(s.accountId),
@@ -526,11 +554,89 @@ export class Engine {
     if (c.hasConflict && !s.test)
       throw new Error("Phát hiện xung đột lịch hoặc địa điểm.");
   }
-  private async dispatch(s: Schedule, generation: number): Promise<void> {
+  private async dispatchWhenOpen(
+    s: Schedule,
+    generation: number,
+    valid: () => boolean,
+    allowSchoolClock: boolean,
+  ) {
+    const client = this.client(s.accountId);
+    const key = examKey(s.exam);
+    const target = Date.parse(s.targetAt);
+    const until = Math.min(
+      target + 30000,
+      s.expiresAt,
+      schoolTime(s.exam.ngay_ket_thuc_dang_ky),
+    );
+    let message = "Trường chưa xác nhận mở đăng ký.";
+    this.report?.({ event: "opening_wait", scheduleId: s.id, waitMs: Math.max(0, until - Date.now()) });
+    s.attempt.message = "Đang chờ trường xác nhận mở đăng ký.";
+    this.changed();
+    while (valid() && Date.now() < until) {
+      let exams: Exam[];
+      let serverTime = 0;
+      try {
+        exams = await client.exams(
+          "",
+          s.exam.dia_diem_code ?? "HCMUE",
+          Math.min(3000, until - Date.now()),
+          timestamp => { serverTime = timestamp; },
+        );
+      } catch (error) {
+        message =
+          error instanceof Error ? error.message : "Không đọc được trạng thái kỳ thi.";
+        const status = error instanceof ApiFailure ? error.status : undefined;
+        this.report?.({ event: "opening_error", scheduleId: s.id, httpStatus: status, reason: schoolErrorKind(message) });
+        if (status !== undefined && status < 500 && status !== 429) break;
+        const retryAfter = error instanceof ApiFailure ? error.retryAfterMs ?? 0 : 0;
+        await delay(
+          Math.min(Math.max(1000, retryAfter), Math.max(0, until - Date.now())),
+        );
+        continue;
+      }
+      if (!valid() || Date.now() >= until) break;
+      const exam = exams.find((item) => examKey(item) === key);
+      const schoolReachedTarget = allowSchoolClock && serverTime >= target;
+      if (
+        !exam ||
+        exam.hasRegisterCode !== 0 ||
+        !["open", "upcoming"].includes(exam.trang_thai)
+      ) {
+        this.report?.({ event: "opening_check", scheduleId: s.id, found: !!exam, eligible: false, schoolReachedTarget });
+        message = "Trường không còn mở đợt thi cho thí sinh tự do.";
+        break;
+      }
+      const full = Number(exam.so_luong) >= Number(exam.so_luong_toi_da);
+      // HCMUE's exam card treats upcoming as open during the registration window.
+      const openBySchoolTime = exam.trang_thai === "upcoming" &&
+        serverTime >= schoolTime(exam.ngay_mo_dang_ky) &&
+        serverTime < schoolTime(exam.ngay_ket_thuc_dang_ky);
+      const open = exam.trang_thai === "open" || openBySchoolTime;
+      this.report?.({ event: "opening_check", scheduleId: s.id, found: true, catalogStatus: exam.trang_thai, open, full, openBySchoolTime, schoolReachedTarget, schoolTime: serverTime > 0 ? new Date(serverTime).toISOString() : undefined });
+      if (full) {
+        message = "Trường báo đã hết chỗ.";
+        break;
+      }
+      if (open) {
+        if (s.status === "reserved" && this.bodies.has(s.id) && (Date.now() >= target || schoolReachedTarget)) {
+          await this.dispatch(s, generation, schoolReachedTarget);
+          return;
+        }
+        message = "Trường báo đã mở nhưng chưa xác nhận đủ điều kiện gửi theo lịch.";
+      } else {
+        message = "Trường vẫn báo chưa mở đăng ký.";
+      }
+      await delay(Math.min(1000, until - Date.now()));
+    }
+    if (valid()) await this.update(s, "failed", `${message} Chưa gửi đơn.`);
+  }
+  private async dispatch(s: Schedule, generation: number, schoolReachedTarget = false): Promise<void> {
     if (this.closing || this.generation.get(s.id) !== generation) return;
     if (
-      Date.now() < Date.parse(s.targetAt) ||
-      (!s.test && Date.now() < schoolTime(s.exam.ngay_mo_dang_ky)) ||
+      (!schoolReachedTarget && (
+        Date.now() < Date.parse(s.targetAt) ||
+        (!s.test && Date.now() < schoolTime(s.exam.ngay_mo_dang_ky))
+      )) ||
       Date.now() > s.expiresAt
     ) {
       await this.update(s, "failed", "Đã ngoài thời gian cho phép gửi.");
@@ -543,6 +649,7 @@ export class Engine {
       sentAt: new Date().toISOString(),
       latenessMs: Date.now() - Date.parse(s.targetAt),
     };
+    this.report?.({ event: "schedule_dispatch", scheduleId: s.id, test: s.test, attempt: s.attempt.count, latenessMs: s.attempt.latenessMs });
     this.changed();
     if (s.test) {
       s.attempt.receivedAt = new Date().toISOString();
@@ -560,8 +667,10 @@ export class Engine {
       response = await client.submit(this.bodies.get(s.id));
       s.attempt.httpStatus = 200;
     } catch (e) {
+      s.attempt.elapsedMs = Math.round(performance.now() - start);
       if (e instanceof ApiFailure) {
         s.attempt.httpStatus = e.status;
+        if (e.status !== undefined) s.attempt.receivedAt = new Date().toISOString();
         if (
           !e.mayHaveSent &&
           s.attempt.count < 2 &&
@@ -569,7 +678,7 @@ export class Engine {
           Date.now() < schoolTime(s.exam.ngay_ket_thuc_dang_ky)
         ) {
           await delay(500);
-          return this.dispatch(s, generation);
+          return this.dispatch(s, generation, schoolReachedTarget);
         }
         if (e.response?.code === "EXAM_FULL") {
           await this.update(s, "failed", "Trường báo đã hết chỗ.");
@@ -580,6 +689,7 @@ export class Engine {
           await this.reconcile(s, true, generation);
           return;
         }
+        if (e.status !== undefined) s.attempt.submitError = e.message;
       }
       await this.update(
         s,
@@ -696,12 +806,14 @@ export class Engine {
         }
       } catch {}
     }
-    if (s.status !== "pending_payment")
+    if (s.status !== "pending_payment") {
+      const message = "Chưa đủ bằng chứng kết quả. Không tự gửi lại.";
       await this.update(
         s,
         "uncertain",
-        "Chưa đủ bằng chứng kết quả. Không tự gửi lại.",
+        s.attempt.submitError ? `${s.attempt.submitError} ${message}` : message,
       );
+    }
   }
   async revoke() {
     this.closing = true;

@@ -51,7 +51,7 @@ export class FakeClient {
   async profile() {
     return this.who;
   }
-  async exams() {
+  async exams(_date?: string, _location?: string, _timeout?: number, _onServerTime?: (timestamp: number) => void) {
     return [exam];
   }
   async questions() {

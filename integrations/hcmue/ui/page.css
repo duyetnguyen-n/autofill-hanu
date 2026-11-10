@@ -26,6 +26,65 @@
 .hc-app * {
   box-sizing: border-box;
 }
+.hc-alert-events {
+  position: fixed;
+  z-index: 10;
+  inset: 76px 20px auto auto;
+  width: min(400px, calc(100% - 32px));
+}
+.hc-alert-card {
+  --hc-alert-ink: #2b54b8;
+  --hc-alert-tint: #eef4ff;
+  --hc-alert-edge: #aec9ff;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--hc-alert-edge);
+  border-radius: 12px;
+  background: var(--hc-surface, #fff);
+  color: var(--hc-text, #192e26);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.hc-alert-events .hc-alert-card { box-shadow: 0 10px 30px rgb(22 42 72 / 14%); }
+.hc-alert-card.hc-alert-error { --hc-alert-ink: #a12b28; --hc-alert-tint: #fff0ed; --hc-alert-edge: #ebbbb5; }
+.hc-alert-card.hc-alert-success { --hc-alert-ink: #216951; --hc-alert-tint: #edf6ef; --hc-alert-edge: #abd6c1; }
+.hc-dark .hc-alert-card { --hc-alert-ink: #b2ccff; --hc-alert-tint: #22334f; --hc-alert-edge: #48608a; }
+.hc-dark .hc-alert-error { --hc-alert-ink: #ffb4ac; --hc-alert-tint: #442b2a; --hc-alert-edge: #795351; }
+.hc-dark .hc-alert-success { --hc-alert-ink: #a3dfc4; --hc-alert-tint: #243b31; --hc-alert-edge: #496c5d; }
+.hc-alert-heading { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 9px; align-items: start; }
+.hc-alert-symbol { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--hc-alert-tint); color: var(--hc-alert-ink); }
+.hc-alert-category { margin-bottom: 2px; color: var(--hc-alert-ink); font-size: 10px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.hc-alert-dismiss { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.hc-alert-dismiss:hover { background: var(--hc-alert-tint); }
+.hc-alert-steps { padding: 8px 10px; border-radius: 8px; background: var(--hc-alert-tint); }
+.hc-alert-steps ol { margin: 3px 0 0; padding-inline-start: 18px; }
+.hc-alert-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; color: var(--hc-muted, #60746a); font-size: 11px; }
+.hc-alert-meta code { border-radius: 99px; background: var(--hc-alert-tint); padding: 2px 7px; color: var(--hc-alert-ink); }
+.hc-alert-meta details { max-width: 100%; }
+.hc-alert-meta summary { color: var(--hc-alert-ink); cursor: pointer; font-weight: 650; }
+.hc-alert-ask { border: 0; padding: 0; background: transparent; color: var(--hc-alert-ink); cursor: pointer; font: inherit; font-weight: 700; }
+.hc-alert-ask:hover { text-decoration: underline; }
+.hc-heading-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.hc-assistant { width: min(620px, calc(100vw - 24px)); }
+.hc-assistant-content, .hc-assistant-turns, .hc-assistant-form, .hc-assistant-proposal { display: grid; gap: 10px; }
+.hc-assistant-turns { align-content: start; min-height: 76px; max-height: min(34vh, 320px); overflow: auto; overscroll-behavior: contain; }
+.hc-assistant-turn { border: 1px solid var(--colorNeutralStroke2); border-radius: 10px; padding: 9px 12px; overflow-wrap: anywhere; }
+.hc-assistant-user { background: var(--colorNeutralBackground3); }
+.hc-assistant-turn p { margin: 4px 0; white-space: pre-wrap; }
+.hc-assistant-result { font-weight: 600; }
+.hc-assistant-turn small, .hc-assistant-form small, .hc-assistant-proposal small { color: var(--colorNeutralForeground3); }
+.hc-assistant-prompts { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+.hc-assistant-proposal { border: 1px solid var(--colorNeutralStroke2); padding: 10px; border-radius: 10px; }
+.hc-assistant-form button, .hc-assistant-proposal button { justify-self: start; }
+.hc-alert-meta details[open] { flex: 1 0 100%; }
+.hc-alert-meta details div { margin-top: 4px; }
+.hc-alert-success { border-bottom: 3px solid var(--hc-alert-edge); }
+@media (max-width: 600px) { .hc-alert-events { inset: auto 16px 18px; width: auto; } }
 .hc-app a {
   color: var(--hc-accent);
   text-decoration: none;

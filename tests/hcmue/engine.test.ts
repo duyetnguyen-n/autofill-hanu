@@ -50,6 +50,104 @@ describe("isolated HCMUE execution", () => {
     expect(s.attempt.paymentDeadline).toBe("2026-12-06T16:00:00.000Z");
     await expect(f.prepare(false)).rejects.toThrow("khóa gửi");
   });
+  it("waits for HCMUE to open even if the local clock has reached the scheduled time", async () => {
+    const f = await setup();
+    const opensAt = Date.now() + 12000;
+    vi.spyOn(f.client, "exams").mockImplementation(async () => [
+      { ...exam, trang_thai: Date.now() >= opensAt ? "open" : "upcoming" },
+    ]);
+    const s = await f.prepare(false);
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(11999);
+    expect(s.status).toBe("reserved");
+    expect(f.client.submits).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(11);
+    expect(f.client.submits).toHaveLength(1);
+    expect(s.status).toBe("pending_payment");
+  });
+  it("checks ten seconds before opening and uses HCMUE time when Windows is five seconds behind", async () => {
+    const f = await setup();
+    const target = Date.now() + 30000;
+    const timedExam = { ...exam, ngay_mo_dang_ky: new Date(target).toISOString() };
+    const openingReads: number[] = [];
+    vi.spyOn(f.client, "exams").mockImplementation(async (_date, _location, timeout, onServerTime) => {
+      const serverTime = Date.now() + 5000;
+      if (timeout !== undefined) openingReads.push(Date.now());
+      onServerTime?.(serverTime);
+      return [{ ...timedExam, trang_thai: serverTime >= target - 1000 ? "open" : "upcoming" }];
+    });
+    await f.engine.execute("prepare", { accountId: "account-1", examKey: examKey(timedExam), targetAt: target, answers: {}, test: false }, limits);
+    const s = f.data.schedules[0];
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(24999);
+    expect(openingReads[0]).toBe(target - 10000);
+    expect(f.client.submits).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(f.client.submits).toHaveLength(1);
+    expect(s.attempt.latenessMs).toBe(-5000);
+    expect(s.status).toBe("pending_payment");
+  });
+  it("uses the school time window when the catalog still says upcoming after opening", async () => {
+    const f = await setup();
+    const target = Date.now() + 30000;
+    const timedExam = { ...exam, ngay_mo_dang_ky: new Date(target).toISOString(), trang_thai: "upcoming" };
+    vi.spyOn(f.client, "exams").mockImplementation(async (_date, _location, _timeout, onServerTime) => {
+      onServerTime?.(Date.now() - 5000);
+      return [timedExam];
+    });
+    await f.engine.execute("prepare", { accountId: "account-1", examKey: examKey(timedExam), targetAt: target, answers: {}, test: false }, limits);
+    const s = f.data.schedules[0];
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(34999);
+    expect(f.client.submits).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(f.client.submits).toHaveLength(1);
+    expect(s.status).toBe("pending_payment");
+  });
+  it("recovers from a temporary exam-list failure but stops if the exam fills", async () => {
+    const f = await setup();
+    const s = await f.prepare(false);
+    const target = Date.parse(s.targetAt);
+    let openingChecks = 0;
+    vi.spyOn(f.client, "exams").mockImplementation(async () => {
+      if (Date.now() < target) return [exam];
+      if (++openingChecks === 1) throw new ApiFailure("Unavailable", true, 503);
+      return [{ ...exam, so_luong: exam.so_luong_toi_da }];
+    });
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(openingChecks).toBe(2);
+    expect(f.client.submits).toHaveLength(0);
+    expect(s.status).toBe("failed");
+    expect(s.attempt.message).toContain("đã hết chỗ");
+  });
+  it("retries an unavailable preflight and sends once after it recovers", async () => {
+    const f = await setup();
+    const s = await f.prepare(false, Date.now() + 40000);
+    const profiles = vi.spyOn(f.client, "profile")
+      .mockRejectedValueOnce(new ApiFailure("Unavailable", true, 503));
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(21001);
+    expect(profiles).toHaveBeenCalledTimes(2);
+    expect(s.status).toBe("reserved");
+    expect(f.client.submits).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(19000);
+    expect(f.client.submits).toHaveLength(1);
+    expect(s.status).toBe("pending_payment");
+  });
+  it("does not send if stopped while waiting for the school to open", async () => {
+    const f = await setup();
+    const exams = vi.spyOn(f.client, "exams").mockResolvedValue([{ ...exam, trang_thai: "upcoming" }]);
+    const s = await f.prepare(false);
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(7500);
+    expect(s.status).toBe("reserved");
+    await f.engine.execute("stop", { id: s.id }, limits);
+    exams.mockResolvedValue([exam]);
+    await vi.advanceTimersByTimeAsync(35000);
+    expect(f.client.submits).toHaveLength(0);
+    expect(s.status).toBe("stopped");
+  });
   it("never resends an ambiguous timeout", async () => {
     const f = await setup();
     f.client.result = new ApiFailure("Timeout", true);
@@ -58,6 +156,20 @@ describe("isolated HCMUE execution", () => {
     await vi.advanceTimersByTimeAsync(80000);
     expect(f.client.submits).toHaveLength(1);
     expect(s.status).toBe("uncertain");
+  });
+  it("keeps the school's HTTP error after checking registration without resending", async () => {
+    const f = await setup();
+    f.client.result = new ApiFailure("Chưa đến giờ đăng ký.", true, 400);
+    const s = await f.prepare(false);
+    await f.arm(s.id);
+    await vi.advanceTimersByTimeAsync(80000);
+    expect(f.client.submits).toHaveLength(1);
+    expect(s.status).toBe("uncertain");
+    expect(s.attempt).toMatchObject({
+      httpStatus: 400,
+      submitError: "Chưa đến giờ đăng ký.",
+      message: "Chưa đến giờ đăng ký. Chưa đủ bằng chứng kết quả. Không tự gửi lại.",
+    });
   });
   it("retries only a known pre-transport failure, at most once", async () => {
     const f = await setup();

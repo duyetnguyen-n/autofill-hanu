@@ -1,6 +1,8 @@
 import { Agent, request } from "node:https";
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { schoolCertificateAuthorities } from "./tls";
+import { schoolErrorKind, type ReportDiagnostic } from "./diagnostics";
 import { CookieJar } from "tough-cookie";
 import {
   HCMUE_ORIGIN,
@@ -39,6 +41,7 @@ export class HcmueClient {
     private session?: Session,
     private origin = HCMUE_ORIGIN,
     fixtureCa?: string,
+    private report?: ReportDiagnostic,
   ) {
     if (
       origin !== HCMUE_ORIGIN &&
@@ -64,6 +67,7 @@ export class HcmueClient {
     method = "GET",
     body?: unknown,
     timeout = 15000,
+    onServerTime?: (timestamp: number) => void,
   ): Promise<any> {
     if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
       throw new Error("Đường dẫn API không hợp lệ.");
@@ -82,12 +86,31 @@ export class HcmueClient {
       headers["Content-Type"] = "application/json";
       headers["Content-Length"] = String(Buffer.byteLength(text));
     }
+    const endpoint = diagnosticEndpoint(url.pathname);
+    const requestId = this.report ? randomUUID() : undefined;
+    const started = performance.now();
+    this.report?.({ event: "api_start", endpoint, requestId, method, timeoutMs: timeout });
     return new Promise((resolve, reject) => {
       let connected = false,
-        settled = false;
-      const fail = (e: ApiFailure) => {
+        settled = false,
+        httpStatus: number | undefined,
+        schoolDate: string | undefined;
+      const finish = (result: string, data?: any, transport?: string, retryAfterMs?: number) => {
+        const message = data?.message;
+        const businessCode = typeof data?.code === "string" && /^[A-Z][A-Z0-9_]{2,48}$/.test(data.code) ? data.code : undefined;
+        const envelope = typeof data?.status === "string" && ["success", "error", "queued", "failed", "email_not_verified"].includes(data.status)
+          ? data.status : typeof data?.success === "boolean" ? String(data.success) : undefined;
+        this.report?.({
+          event: "api_result", endpoint, requestId, method, result, httpStatus, connected, schoolDate,
+          elapsedMs: Math.round(performance.now() - started),
+          businessCode, envelope, transport, retryAfterMs,
+          reason: result === "http_ok" ? undefined : schoolErrorKind(message),
+        });
+      };
+      const fail = (e: ApiFailure, result: string, transport?: string) => {
         if (!settled) {
           settled = true;
+          finish(result, e.response, transport, e.retryAfterMs);
           reject(e);
         }
       };
@@ -95,6 +118,9 @@ export class HcmueClient {
         url,
         { agent: this.agent, method, headers },
         (res) => {
+          httpStatus = res.statusCode;
+          const serverTime = Date.parse(res.headers.date ?? "");
+          if (Number.isFinite(serverTime)) schoolDate = new Date(serverTime).toISOString();
           const chunks: Buffer[] = [];
           let size = 0;
           for (const cookie of res.headers["set-cookie"] ?? [])
@@ -103,14 +129,14 @@ export class HcmueClient {
             size += chunk.length;
             if (size > 2 * 1024 * 1024) {
               req.destroy();
-              fail(new ApiFailure("Phản hồi quá lớn."));
+              fail(new ApiFailure("Phản hồi quá lớn."), "response_too_large");
             } else chunks.push(chunk);
           });
           res.on("aborted", () =>
-            fail(new ApiFailure("Phản hồi bị ngắt.", true)),
+            fail(new ApiFailure("Phản hồi bị ngắt.", true), "response_aborted"),
           );
           res.on("error", () =>
-            fail(new ApiFailure("Mất kết nối khi đọc phản hồi.", true)),
+            fail(new ApiFailure("Mất kết nối khi đọc phản hồi.", true), "response_error"),
           );
           res.on("end", () => {
             if (settled) return;
@@ -124,6 +150,7 @@ export class HcmueClient {
                   true,
                   res.statusCode,
                 ),
+                "invalid_json",
               );
               return;
             }
@@ -149,16 +176,23 @@ export class HcmueClient {
                   data,
                   delay,
                 ),
+                "http_error",
               );
               return;
             }
             settled = true;
+            if (Number.isFinite(serverTime)) onServerTime?.(serverTime);
+            const rejected = ["error", "failed", "email_not_verified"].includes(data?.status) || data?.success === false;
+            finish(rejected ? "business_error" : "http_ok", data);
             resolve(data);
           });
         },
       );
       const timer = setTimeout(
-        () => req.destroy(new Error("timeout")),
+        () => {
+          fail(new ApiFailure(transportMessage(undefined, connected), connected), "timeout", "ETIMEDOUT");
+          req.destroy();
+        },
         timeout,
       );
       req.on("socket", (socket) => {
@@ -169,11 +203,10 @@ export class HcmueClient {
           });
       });
       req.on("close", () => clearTimeout(timer));
-      req.on("error", (error: NodeJS.ErrnoException) =>
-        fail(
-          new ApiFailure(transportMessage(error.code, connected), connected),
-        ),
-      );
+      req.on("error", (error: NodeJS.ErrnoException) => {
+        const code = error.code && /^[A-Z][A-Z0-9_]{2,48}$/.test(error.code) ? error.code : undefined;
+        fail(new ApiFailure(transportMessage(error.code, connected), connected), "transport_error", code);
+      });
       req.end(text);
     });
   }
@@ -239,14 +272,25 @@ export class HcmueClient {
           Number.isFinite(Date.parse(user.email_verified_at))),
     };
   }
-  async exams(date = "", location = "HCMUE"): Promise<Exam[]> {
+  async exams(
+    date = "",
+    location = "HCMUE",
+    timeout?: number,
+    onServerTime?: (timestamp: number) => void,
+  ): Promise<Exam[]> {
     const query = new URLSearchParams({
       limit: "1000",
       dia_diem_code: location,
       hasRegisterCode: "0",
     });
     if (date) query.set("ngay_thi", date);
-    const r = await this.call("/ky-thi-mo/comming-exam?" + query);
+    const r = await this.call(
+      "/ky-thi-mo/comming-exam?" + query,
+      "GET",
+      undefined,
+      timeout,
+      onServerTime,
+    );
     if (r?.success !== true || !Array.isArray(r.data))
       throw new Error("Không đọc được kỳ thi.");
     return r.data;
@@ -299,6 +343,20 @@ export class HcmueClient {
   close() {
     this.agent.destroy();
   }
+}
+
+function diagnosticEndpoint(path: string) {
+  switch (path) {
+    case "/v1/api/auth/login": return "login";
+    case "/v1/api/me/profile": return "profile";
+    case "/v1/api/ky-thi-mo/comming-exam": return "exams";
+    case "/v1/api/dang-ky-thi/check-registration": return "registration_check";
+    case "/v1/api/dang-ky-thi/check-schedule-conflict": return "conflict_check";
+    case "/v1/api/dang-ky-thi": return "submit";
+  }
+  if (path.startsWith("/v1/api/dang-ky-thi/jobs/")) return "queue";
+  if (path.endsWith("/cau-hoi-va-tra-loi")) return "questions";
+  return "other";
 }
 
 function apiMessage(data: any, fallback: string) {
