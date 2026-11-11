@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowUpRight, Browsers, Exam, ShieldCheck, SignOut, Graph } from '@phosphor-icons/react';
+import { productAtPath, targetMarker } from './assistant/guide';
 
 export type WorkspaceNavItem = {
   label: string;
@@ -34,11 +35,13 @@ export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=f
     </a>
     <div className="ws-workspace-label"><span className="ws-workspace-monogram">H</span><span>Không gian cá nhân<small>Điều phối đăng ký HSK</small></span></div>
     <div className="ws-nav-label">ỨNG DỤNG</div>
-    <nav className="ws-products" aria-label="Ứng dụng đăng ký">{products.map(product =>
-      <a key={product.id} href={product.href} className={`ws-nav-item ${page===product.id?'is-active':''}`} aria-current={page===product.id?'page':undefined}>
+    <nav className="ws-products" aria-label="Ứng dụng đăng ký">{products.map(product => {
+      const match = productAtPath(product.href);
+      return <a key={product.id} href={product.href} data-guide-target={match && targetMarker(match.id)}
+        className={`ws-nav-item ${page===product.id?'is-active':''}`} aria-current={page===product.id?'page':undefined}>
         {product.icon}<span>{product.label}</span>{page===product.id&&<span className="ws-active-dot"/>}
-      </a>
-    )}</nav>
+      </a>;
+    })}</nav>
     <div className="ws-nav-label ws-manage-label">QUẢN LÝ</div>
     <nav className="ws-secondary" aria-label="Điều hướng">
     {!local&&<a className="ws-nav-item" href="/knowledge"><Graph size={20}/><span>Kho tri thức & vector</span></a>}

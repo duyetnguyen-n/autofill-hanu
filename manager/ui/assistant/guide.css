@@ -32,7 +32,8 @@
   color: #f2fbf7;
   box-shadow: 0 5px 18px #112b232b;
   font: 550 11px/1.4 "Geist Variable", sans-serif;
-  white-space: nowrap;
+  width: max-content;
+  max-width: 210px;
   transform: translate(-50%, -100%);
   transition: left .24s ease, top .24s ease;
 }
@@ -82,6 +83,14 @@
   color: var(--colorBrandForegroundLink);
 }
 .guide-action:hover { text-decoration: underline; }
+.guide-action:disabled { opacity: .55; cursor: default; text-decoration: none; }
+.guide-account-apps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px clamp(16px, 4vw, 48px);
+}
+#root:has(.ai-panel) .hc-assistant-launcher { visibility: hidden; }
 .ai-panel[data-has-step=true] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
 /* Fluent UI copies the workspace class to its portal. Only the menu itself
    should receive pointer events while the chat stays usable. */

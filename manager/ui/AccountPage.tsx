@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Avatar, Button } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowRightRegular, CheckmarkCircleRegular, ClockRegular, LockClosedRegular, ShieldCheckmarkRegular } from '@fluentui/react-icons';
 import type { Account, AccountStatus } from '../../src/account';
-import { guideTargets } from './assistant/guide';
+import { guideTargets, targetMarker, useGuide } from './assistant/guide';
 
 export const accessLabels: Record<AccountStatus, string> = { pending: 'Chờ duyệt', active: 'Đang hoạt động', blocked: 'Bị khóa', rejected: 'Chưa được chấp thuận', expired: 'Hết hạn' };
 export function AccessBadge({ status }: { status: AccountStatus }) {
@@ -14,11 +14,15 @@ export function Brand() {
 export function AccountPage({ account, logout, refresh }: { account: Account; logout: () => Promise<void>; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const usable = account.status === 'active' && account.emailVerified;
+  const { switching, availableProducts } = useGuide();
   const titles = { pending: 'Yêu cầu của bạn đang chờ duyệt.', active: 'Không gian của bạn đã sẵn sàng.', blocked: 'Tài khoản đang bị khóa.', rejected: 'Yêu cầu chưa được chấp thuận.', expired: 'Quyền sử dụng đã hết hạn.' };
   const descriptions = { pending: 'Bạn đã đăng nhập thành công. Quản trị viên sẽ duyệt tài khoản Google này và cấp quyền sử dụng.', active: 'Quản lý các Chrome profile và bắt đầu lượt đăng ký trong phạm vi quyền được cấp.', blocked: 'Các kết nối và lượt chạy online đã được tạm dừng. Liên hệ quản trị viên để được hỗ trợ.', rejected: 'Liên hệ quản trị viên nếu bạn muốn được xem xét lại quyền sử dụng.', expired: 'Liên hệ quản trị viên để gia hạn. Hồ sơ và lịch sử của bạn vẫn được giữ lại.' };
   async function perform(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <div className="account-page">
     <header className="access-topbar"><Brand/><div className="access-top-actions"><span>{account.email}</span><Button appearance="subtle" disabled={busy} onClick={() => void perform(logout)}>Đăng xuất</Button></div></header>
+    {usable && switching && <nav className="guide-account-apps" aria-label="Ứng dụng">
+      {availableProducts.map(product => <Button key={product.id} as="a" href={product.href} data-guide-target={targetMarker(product.id)}>{product.label}</Button>)}
+    </nav>}
     <main className="account-layout">
       <section className="account-intro">
         <span className="access-section-label">Tài khoản HANU</span>
@@ -36,7 +40,7 @@ export function AccountPage({ account, logout, refresh }: { account: Account; lo
         <div className="account-status-content">
           <AccessBadge status={account.status}/><h2>{usable ? 'Quyền sử dụng của bạn' : 'Tài khoản của bạn'}</h2>
           {!account.emailVerified && <p className="access-error" role="alert">Email Google chưa được xác minh. Liên hệ quản trị viên để kiểm tra.</p>}
-          <dl className="account-facts"><div><dt>Tên Google</dt><dd>{account.name || 'Chưa có tên'}</dd></div><div><dt>Ngày đăng ký</dt><dd>{new Date(account.createdAt).toLocaleDateString('vi-VN')}</dd></div>{usable && <><div><dt>Profile tối đa</dt><dd>{account.maxProfiles}</dd></div><div><dt>Chạy đồng thời</dt><dd>{account.maxConcurrent} profile</dd></div><div><dt>Chế độ Live</dt><dd>{account.liveEnabled ? 'Được phép' : 'Chưa cấp quyền'}</dd></div><div><dt>Hạn sử dụng</dt><dd>{account.expiresAt ? new Date(account.expiresAt).toLocaleString('vi-VN') : 'Không giới hạn'}</dd></div></>}</dl>
+          <dl className="account-facts" data-guide-target={guideTargets.access}><div><dt>Tên Google</dt><dd>{account.name || 'Chưa có tên'}</dd></div><div><dt>Ngày đăng ký</dt><dd>{new Date(account.createdAt).toLocaleDateString('vi-VN')}</dd></div>{usable && <><div><dt>Profile tối đa</dt><dd>{account.maxProfiles}</dd></div><div><dt>Chạy đồng thời</dt><dd>{account.maxConcurrent} profile</dd></div><div data-guide-target={guideTargets.live}><dt>Chế độ Live</dt><dd>{account.liveEnabled ? 'Được phép' : 'Chưa cấp quyền'}</dd></div><div><dt>Hạn sử dụng</dt><dd>{account.expiresAt ? new Date(account.expiresAt).toLocaleString('vi-VN') : 'Không giới hạn'}</dd></div></>}</dl>
           {error && <p className="access-error" role="alert">{error}</p>}
           <div className="access-form-actions">{usable ? <Button as="a" href="/" appearance="primary" icon={<ArrowRightRegular/>}>Vào quản lý profile</Button> : <Button disabled={busy} onClick={() => void perform(refresh)}>{busy ? 'Đang kiểm tra…' : 'Kiểm tra trạng thái'}</Button>}</div>
           {account.role === 'admin' && <a className="access-text-link" href="/admin" data-guide-target={guideTargets.admin}><ArrowLeftRegular/> Trang quản trị</a>}

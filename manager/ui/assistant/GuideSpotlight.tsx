@@ -1,19 +1,23 @@
 import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { CursorClick } from "@phosphor-icons/react";
-import { guideTargets } from "./guide";
+import { targetMarker, type GuideTarget } from "./guide";
 import "./guide.css";
 
-export type GuideStep = keyof typeof guideTargets;
-type Target = { step: GuideStep; x: number; y: number; width: number; height: number; below: boolean; labelX: number };
+type Target = { step: GuideTarget; x: number; y: number; width: number; height: number; below: boolean; labelX: number };
 
-export function visibleGuideTarget(step: keyof typeof guideTargets) {
-  return [...document.querySelectorAll<HTMLElement>(`[data-guide-target="${guideTargets[step]}"]`)]
+export function visibleGuideTarget(step: GuideTarget) {
+  return [...document.querySelectorAll<HTMLElement>(`[data-guide-target="${targetMarker(step)}"]`)]
     .find(element => element.getClientRects().length > 0 && !element.closest('[inert], [aria-hidden="true"]') &&
       getComputedStyle(element).visibility === "visible");
 }
 
-export function AdminSpotlight({ onStep }: { onStep(step: GuideStep): void }) {
+export function GuideSpotlight({ destination, fallback, label, onStep }: {
+  destination: GuideTarget;
+  fallback: boolean;
+  label: string;
+  onStep(step: GuideTarget): void;
+}) {
   const [target, setTarget] = useState<Target>();
   useLayoutEffect(() => {
     let frame = 0;
@@ -21,11 +25,10 @@ export function AdminSpotlight({ onStep }: { onStep(step: GuideStep): void }) {
     const resize = new ResizeObserver(schedule);
     const update = () => {
       frame = 0;
-      const admin = visibleGuideTarget("admin");
-      const menu = visibleGuideTarget("menu");
-      const step = admin ? "admin" : "menu";
+      const primary = visibleGuideTarget(destination);
+      const step = primary || !fallback ? destination : "menu";
       onStep(step);
-      const element = admin ?? menu;
+      const element = primary ?? (fallback ? visibleGuideTarget("menu") : undefined);
       if (element !== previous) {
         resize.disconnect();
         if (element) {
@@ -41,7 +44,7 @@ export function AdminSpotlight({ onStep }: { onStep(step: GuideStep): void }) {
       const { left, top, width, height } = element.getBoundingClientRect();
       const below = top < 92;
       const next: Target = { step, x: left - 5, y: top - 5, width: width + 10, height: height + 10, below,
-        labelX: Math.min(Math.max(left + width / 2, 86), window.innerWidth - 86) };
+        labelX: Math.min(Math.max(left + width / 2, 112), window.innerWidth - 112) };
       setTarget(old => old && Object.keys(next).every(key => old[key as keyof Target] === next[key as keyof Target]) ? old : next);
     };
     function schedule() { if (!frame) frame = requestAnimationFrame(update); }
@@ -61,13 +64,13 @@ export function AdminSpotlight({ onStep }: { onStep(step: GuideStep): void }) {
       window.removeEventListener("scroll", schedule, true);
       window.visualViewport?.removeEventListener("resize", schedule);
     };
-  }, [onStep]);
+  }, [destination, fallback, onStep]);
   if (!target) return null;
   return createPortal(<div className="guide-spotlight" aria-hidden="true">
     <div className="guide-halo" data-step={target.step} style={{ left: target.x, top: target.y, width: target.width, height: target.height }} />
     <div className="guide-pin" data-below={target.below} style={{ left: target.labelX, top: target.below ? target.y + target.height + 12 : target.y - 12 }}>
       <CursorClick size={16} weight="fill" />
-      {target.step === "menu" ? "Bấm để mở tài khoản" : "Bấm để vào Quản trị"}
+      {target.step === "menu" ? "Bấm để mở tài khoản" : label}
     </div>
   </div>, document.body);
 }

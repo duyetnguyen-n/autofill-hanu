@@ -4,6 +4,7 @@ import {Button} from '@fluentui/react-components';
 import type {Account} from '../../src/account';
 import {AccountPage} from './AccountPage';
 import {SystemAssistant} from './assistant/SystemAssistant';
+import {products} from './assistant/guide';
 export type {Account} from '../../src/account';
 
 export function CloudLogin({error,onLogin,pending}:{error:string;onLogin:()=>void;pending:boolean}){
@@ -21,7 +22,10 @@ export function CloudLogin({error,onLogin,pending}:{error:string;onLogin:()=>voi
   </main>;
 }
 
-export function CloudGate({children}:{children:(account:Account,logout:()=>Promise<void>)=>React.ReactNode}){
+export function CloudGate({children,hcmueEnabled=false,chinesetestEnabled=false}:{
+  children:(account:Account,logout:()=>Promise<void>)=>React.ReactNode;
+  hcmueEnabled?:boolean; chinesetestEnabled?:boolean;
+}){
   const [account,setAccount]=useState<Account>(),[checking,setChecking]=useState(true),[pending,setPending]=useState(false),[unavailable,setUnavailable]=useState(false),[attempt,setAttempt]=useState(0);
   const [error,setError]=useState(new URLSearchParams(location.search).has('auth_error')?'Đăng nhập chưa hoàn tất. Bấm Tiếp tục với Google để thử lại.':'');
   const monitor=useRef({check:async()=>{},signedOut:()=>{}});
@@ -83,7 +87,9 @@ export function CloudGate({children}:{children:(account:Account,logout:()=>Promi
     const allowed=account.emailVerified&&account.status==='active';
     const accountPage = <AccountPage key={account.id} account={account} logout={logout} refresh={refresh}/>;
     if (!allowed) return accountPage;
-    return <SystemAssistant key={account.id} account={account}>
+    const availableProducts = products.filter(product =>
+      (product.id !== 'hcmue' || hcmueEnabled) && (product.id !== 'chinesetest' || chinesetestEnabled));
+    return <SystemAssistant key={account.id} account={account} availableProducts={availableProducts}>
       {location.pathname === '/account' ? accountPage : children(account, logout)}
     </SystemAssistant>;
   }

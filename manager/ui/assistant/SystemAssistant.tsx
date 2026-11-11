@@ -2,28 +2,38 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowsInSimple, ArrowsOutSimple, ArrowUp, ArrowUpRight, Books, ChatTeardropText, CheckCircle, Compass, X } from "@phosphor-icons/react";
 import type { Account } from "../../../src/account";
 import { AssistantBoundary } from "./AssistantBoundary";
-import { AdminSpotlight, visibleGuideTarget, type GuideStep } from "./AdminSpotlight";
-import { adminGuideIntent, adminPath, GuideContext } from "./guide";
+import { GuideSpotlight, visibleGuideTarget } from "./GuideSpotlight";
+import { guideIntent, GuideContext, pathForGuide, productForGuide, targetMarker, type Guide, type GuideTarget, type Product } from "./guide";
 import { readReply, type SystemReply } from "./reply";
 import "./assistant.css";
 
 type Turn = { role: "user" | "assistant"; text: string; reply?: SystemReply };
-const handoffKey = "hanu-admin-guide";
+type Handoff = { guide: Guide; turns: Turn[] };
+const handoffKey = "hanu-guide";
 
-function restoreTurns(owner: string): Turn[] | undefined {
+function canOpenGuide(guide: Guide, account: Account, availableProducts: readonly Product[]) {
+  if (guide === "admin") return account.role === "admin";
+  const product = productForGuide(guide);
+  return !product || availableProducts.includes(product);
+}
+
+function restoreGuide(account: Account, availableProducts: readonly Product[]): Handoff | undefined {
   try {
     const data = JSON.parse(sessionStorage.getItem(handoffKey) ?? "null");
-    if (location.pathname !== adminPath || data?.owner !== owner || data.expires < Date.now() || !Array.isArray(data.turns)) return;
-    return data.turns.slice(-12).flatMap((turn: Turn) =>
+    if (data?.owner !== account.id || typeof data.expires !== "number" || data.expires < Date.now() || !Array.isArray(data.turns)) return;
+    const guide = data.guide as Guide;
+    if (location.pathname !== pathForGuide(guide) || !canOpenGuide(guide, account, availableProducts)) return;
+    const turns = data.turns.slice(-12).flatMap((turn: Turn) =>
       turn && ["user", "assistant"].includes(turn.role) && typeof turn.text === "string"
         ? [{ role: turn.role, text: turn.text.slice(0, 4000) }] : []);
+    return { guide, turns };
   } catch { return; }
 }
 
-function saveHandoff(owner: string, turns: Turn[]) {
+function saveHandoff(owner: string, guide: Guide, turns: Turn[]) {
   try {
     sessionStorage.setItem(handoffKey, JSON.stringify({
-      owner, expires: Date.now() + 60_000,
+      owner, guide, expires: Date.now() + 60_000,
       turns: turns.slice(-12).map(({ role, text }) => ({ role, text })),
     }));
   } catch { /* The browser can still follow the link when tab storage is unavailable. */ }
@@ -33,14 +43,36 @@ const workspace = () => location.pathname.startsWith("/chinesetest") ? "chineset
   : ["/", "/google-direct"].includes(location.pathname) ? "forms" : "system";
 const workspaceName = () => ({ chinesetest: "ChineseTest", hcmue: "HCMUE", forms: "Google Forms", system: "Toàn hệ thống" })[workspace()];
 
-function Conversation({ account, restored, initialQuestion, active, setActive, onClose }: {
-  account: Account; restored?: Turn[]; initialQuestion?: string; active: boolean;
-  setActive(active: boolean): void; onClose(): void;
+function guideName(guide: Guide) {
+  if (guide === "admin") return "Quản trị";
+  if (guide === "live") return "Quyền Live";
+  if (guide === "access") return "Quyền sử dụng";
+  return productForGuide(guide)!.label;
+}
+
+function arrivalMessage(guide: Guide, account: Account) {
+  if (guide === "live") return account.liveEnabled
+    ? "Tài khoản của bạn đã được cấp quyền Live. Bạn có thể kiểm tra ở dòng Chế độ Live."
+    : "Tài khoản của bạn chưa được cấp quyền Live. Liên hệ quản trị viên nếu cần đăng ký thật.";
+  if (guide === "access") {
+    const expiry = account.expiresAt ? new Date(account.expiresAt).toLocaleString("vi-VN") : "Không giới hạn";
+    return `Tài khoản đang hoạt động. Hạn sử dụng: ${expiry}. Tối đa ${account.maxProfiles} profile và ${account.maxConcurrent} lượt đồng thời.`;
+  }
+  return `Bạn đã vào ${guide === "admin" ? "trang " : ""}${guideName(guide)}. Bạn có thể hỏi tiếp ngay tại đây.`;
+}
+
+function Conversation({ account, availableProducts, restored, initialQuestion, guide, setGuide, active, onClose }: {
+  account: Account; availableProducts: readonly Product[]; restored?: Handoff; initialQuestion?: string;
+  guide?: Guide; setGuide(guide?: Guide): void; active: boolean; onClose(): void;
 }) {
   const [turns, setTurns] = useState<Turn[]>(() => restored ? [
-    ...restored, { role: "assistant", text: "Bạn đã vào trang Quản trị. Bạn có thể hỏi tiếp ngay tại đây." },
+    ...restored.turns, { role: "assistant", text: arrivalMessage(restored.guide, account) },
   ] : []);
-  const [step, setStep] = useState<GuideStep | "done" | undefined>(restored ? "done" : undefined);
+  const [step, setStep] = useState<GuideTarget>();
+  const arrived = Boolean(guide && location.pathname === pathForGuide(guide));
+  const inspectingAccess = arrived && (guide === "live" || guide === "access");
+  const destination = guide === "live" || guide === "access" ? arrived ? guide : "account" : guide;
+  const destinationName = guide ? guideName(guide) : "";
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -61,52 +93,60 @@ function Conversation({ account, restored, initialQuestion, active, setActive, o
   }, [onClose]);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns, pending, error]);
   useEffect(() => {
-    if (!active || account.role !== "admin") return;
+    if (!guide || arrived || !destination) return;
     const remember = (event: MouseEvent) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('[data-guide-target="open-admin"]') : null;
-      if (link?.getAttribute("href") === adminPath) saveHandoff(account.id, turns);
+      const link = event.target instanceof Element
+        ? event.target.closest<HTMLAnchorElement>(`a[data-guide-target="${targetMarker(destination)}"]`) : null;
+      if (link?.getAttribute("href") === pathForGuide(guide)) saveHandoff(account.id, guide, turns);
     };
     document.addEventListener("click", remember, true);
     return () => document.removeEventListener("click", remember, true);
-  }, [account.id, account.role, active, turns]);
-  useEffect(() => { if (account.role !== "admin") setStep(undefined); }, [account.role]);
+  }, [account.id, guide, destination, arrived, turns]);
 
-  function openAdmin(history: Turn[]) {
-    if (account.role !== "admin" || location.pathname === adminPath) return;
-    saveHandoff(account.id, history);
-    location.assign(adminPath);
+  function openDestination(next: Guide, history: Turn[]) {
+    if (!canOpenGuide(next, account, availableProducts)) return;
+    const path = pathForGuide(next);
+    if (location.pathname === path) return;
+    saveHandoff(account.id, next, history);
+    location.assign(path);
   }
 
-  function guideAction() {
-    if (account.role !== "admin") return;
-    if (step === "menu") visibleGuideTarget("menu")?.click();
-    if (step === "admin") openAdmin(turns);
+  function guideAction(history = turns) {
+    if (!guide || arrived) return;
+    if (step === "menu" && visibleGuideTarget("menu")) visibleGuideTarget("menu")?.click();
+    else openDestination(guide, history);
   }
 
   async function send(question: string) {
     if (!question.trim() || request.current) return;
-    const intent = adminGuideIntent(question, active);
+    const intent = guideIntent(question, active && !arrived);
     if (intent) {
       setError("");
       setText("");
       const history: Turn[] = [...turns, { role: "user", text: question.trim() }];
-      if (account.role !== "admin") {
-        setActive(false);
-        setStep(undefined);
-        setTurns([...history, { role: "assistant", text: "Tài khoản của bạn chưa có quyền Quản trị. Liên hệ quản trị viên để được cấp quyền phù hợp." }]);
-      } else if (location.pathname === adminPath) {
-        setStep("done");
-        setTurns([...history, { role: "assistant", text: "Bạn đang ở trang Quản trị. Bạn muốn tìm mục nào?" }]);
-      } else if (intent === "open") {
+      if (intent === "continue") {
         setTurns(history);
-        if (active && step === "menu" && !/quan tri|quản trị|admin/i.test(question)) visibleGuideTarget("menu")?.click();
-        else openAdmin(history);
+        guideAction(history);
+        return;
+      }
+      const next = intent.guide;
+      if (!canOpenGuide(next, account, availableProducts)) {
+        setGuide(undefined);
+        setTurns([...history, { role: "assistant", text: next === "admin"
+          ? "Tài khoản của bạn chưa có quyền Quản trị. Liên hệ quản trị viên để được cấp quyền phù hợp."
+          : `${guideName(next)} hiện chưa được bật trên website này.` }]);
+      } else if (location.pathname === pathForGuide(next)) {
+        setExpanded(false);
+        setGuide(next);
+        setTurns([...history, { role: "assistant", text: arrivalMessage(next, account) }]);
+      } else if (intent.open) {
+        openDestination(next, history);
       } else {
         setExpanded(false);
-        setActive(true);
-        setStep(visibleGuideTarget("admin") ? "admin" : "menu");
-        setTurns([...history, { role: "assistant", text: "Mình sẽ đánh dấu từng nút để bạn vào trang Quản trị. Bạn có thể bấm theo hoặc nhờ mình mở giúp." }]);
+        setStep(undefined);
+        setGuide(next);
+        setTurns([...history, { role: "assistant", text: `Mình sẽ đánh dấu từng nút để bạn mở ${guideName(next)}. Bạn có thể bấm theo hoặc nhờ mình mở giúp.` }]);
       }
       return;
     }
@@ -142,10 +182,11 @@ function Conversation({ account, restored, initialQuestion, active, setActive, o
     initial.current = undefined;
     void send(question);
   }, []);
-  const onAccountPage = location.pathname === "/account";
-  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(step)}
+  const oneStep = location.pathname === "/account" || Boolean(visibleGuideTarget(destination ?? "menu")?.closest(".ws-products"));
+  const targetLabel = inspectingAccess ? destinationName : `Bấm để mở ${destination === "account" ? "Tài khoản" : destinationName}`;
+  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(guide)}
     role="dialog" aria-modal="false" aria-labelledby="system-ai-title">
-    {active && <AdminSpotlight onStep={setStep}/>}
+    {active && destination && <GuideSpotlight destination={destination} fallback={!arrived} label={targetLabel} onStep={setStep}/>}
     <header className="ai-header">
       <span className="ai-mark"><ChatTeardropText size={23} weight="duotone" /></span>
       <div><h2 id="system-ai-title">Trợ lý HANU</h2><span>{workspaceName()} · Tra cứu có nguồn</span></div>
@@ -153,17 +194,19 @@ function Conversation({ account, restored, initialQuestion, active, setActive, o
         {expanded ? <ArrowsInSimple size={18} /> : <ArrowsOutSimple size={18} />}</button>
       <button aria-label="Đóng trợ lý" onClick={onClose}><X size={19} /></button>
     </header>
-    {step && <section className="guide-card" aria-label="Hướng dẫn vào Quản trị">
-      <span className="guide-card-icon">{step === "done" ? <CheckCircle size={20} weight="fill"/> : <Compass size={21} weight="duotone"/>}</span>
+    {guide && <section className="guide-card" aria-label={`Hướng dẫn ${destinationName}`}>
+      <span className="guide-card-icon">{arrived ? <CheckCircle size={20} weight="fill"/> : <Compass size={21} weight="duotone"/>}</span>
       <div className="guide-card-copy" role="status">
-        <span>{step === "done" ? "Hoàn tất" : onAccountPage ? "Bước 1 / 1" : step === "menu" ? "Bước 1 / 2" : "Bước 2 / 2"}</span>
-        <strong>{step === "done" ? "Đã vào trang Quản trị" : step === "menu" ? "Mở Tài khoản và công cụ" : "Chọn Quản trị"}</strong>
+        <span>{arrived ? "Hoàn tất" : oneStep ? "Bước 1 / 1" : !step || step === "menu" ? "Bước 1 / 2" : "Bước 2 / 2"}</span>
+        <strong>{arrived
+          ? inspectingAccess ? destinationName : `Đã vào ${guide === "admin" ? "trang " : ""}${destinationName}`
+          : !step || step === "menu" ? "Mở Tài khoản và công cụ" : `Chọn ${destination === "account" ? "Tài khoản" : destinationName}`}</strong>
       </div>
-      <button className="guide-dismiss" type="button" aria-label="Kết thúc hướng dẫn" onClick={() => { setActive(false); setStep(undefined); }}><X size={15}/></button>
-      {step !== "done" && <>
-        <div className="guide-progress" aria-hidden="true"><i/>{!onAccountPage && <i data-current={step === "admin"}/>}</div>
-        <button type="button" className="guide-action" onClick={guideAction}>
-          {step === "menu" ? "Mở menu giúp tôi" : "Mở Quản trị giúp tôi"} <ArrowUpRight size={14}/>
+      <button className="guide-dismiss" type="button" aria-label="Kết thúc hướng dẫn" onClick={() => { setGuide(undefined); setStep(undefined); }}><X size={15}/></button>
+      {!arrived && <>
+        <div className="guide-progress" aria-hidden="true"><i/>{!oneStep && <i data-current={Boolean(step && step !== "menu")}/>}</div>
+        <button type="button" className="guide-action" disabled={!step} onClick={() => guideAction()}>
+          {step === "menu" ? "Mở menu giúp tôi" : `Mở ${destination === "account" ? "Tài khoản" : destinationName} giúp tôi`} <ArrowUpRight size={14}/>
         </button>
       </>}
     </section>}
@@ -171,7 +214,7 @@ function Conversation({ account, restored, initialQuestion, active, setActive, o
       {!turns.length && <div className="ai-welcome">
         <span className="ai-welcome-mark"><ChatTeardropText size={32} weight="duotone" /></span>
         <h3>Mình có thể giúp gì?</h3><p>Hỏi cách dùng, giải thích lỗi hoặc tìm hướng dẫn cho từng ứng dụng.</p>
-        <div className="ai-suggestions">{["Làm sao vào trang Quản trị?", "Xem bản đồ vector ở đâu?", `Hướng dẫn dùng ${workspaceName()}`].map(question =>
+        <div className="ai-suggestions">{["Làm sao vào trang Quản trị?", "Tôi có quyền Live không?", "Xem bản đồ vector ở đâu?"].map(question =>
           <button key={question} onClick={() => void send(question)}>{question}<ArrowUp size={14} /></button>)}</div>
       </div>}
       {turns.map((turn, index) => <article key={index} className={`ai-message ai-message-${turn.role}`}>
@@ -194,15 +237,17 @@ function Conversation({ account, restored, initialQuestion, active, setActive, o
   </aside>;
 }
 
-export function SystemAssistant({ account, children }: { account: Account; children: ReactNode }) {
-  const [restored, setRestored] = useState(() => account.role === "admin" ? restoreTurns(account.id) : undefined);
+export function SystemAssistant({ account, availableProducts, children }: {
+  account: Account; availableProducts: readonly Product[]; children: ReactNode;
+}) {
+  const [restored, setRestored] = useState(() => restoreGuide(account, availableProducts));
   const [open, setOpen] = useState(Boolean(restored));
-  const [active, setActive] = useState(false);
+  const [guide, setGuide] = useState(restored?.guide);
   const [initialQuestion, setInitialQuestion] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => {
     setOpen(false);
-    setActive(false);
+    setGuide(undefined);
     setRestored(undefined);
     setInitialQuestion(undefined);
     requestAnimationFrame(() => trigger.current?.focus());
@@ -210,20 +255,21 @@ export function SystemAssistant({ account, children }: { account: Account; child
   useEffect(() => {
     try { sessionStorage.removeItem(handoffKey); } catch { /* Tab storage is optional. */ }
   }, []);
-  useEffect(() => { if (account.role !== "admin") setActive(false); }, [account.role]);
+  const allowedGuide = guide && canOpenGuide(guide, account, availableProducts) ? guide : undefined;
+  const active = Boolean(allowedGuide && (allowedGuide === "live" || allowedGuide === "access" || pathForGuide(allowedGuide) !== location.pathname));
   const handoff = (question: string) => {
     setInitialQuestion(question);
     setOpen(true);
     return true;
   };
   const dedicatedHcmue = location.pathname === "/hcmue";
-  return <GuideContext.Provider value={{ active, handoff }}>
+  return <GuideContext.Provider value={{ active, handoff, switching: active && Boolean(allowedGuide && productForGuide(allowedGuide)), availableProducts }}>
     {children}
     {(!dedicatedHcmue || open) && <button ref={trigger} type="button" className="ai-launcher" aria-label="Trợ lý AI" title="Hỏi trợ lý HANU"
       aria-expanded={open} aria-haspopup="dialog" onClick={() => open ? close() : setOpen(true)}>
       {open ? <X size={24} /> : <ChatTeardropText size={27} weight="duotone" />}<span>Hỏi AI</span>
     </button>}
-    {open && <AssistantBoundary onClose={close}><Conversation account={account} restored={restored}
-      initialQuestion={initialQuestion} active={active} setActive={setActive} onClose={close}/></AssistantBoundary>}
+    {open && <AssistantBoundary onClose={close}><Conversation account={account} availableProducts={availableProducts} restored={restored}
+      initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} onClose={close}/></AssistantBoundary>}
   </GuideContext.Provider>;
 }

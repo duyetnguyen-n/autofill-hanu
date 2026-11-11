@@ -9,19 +9,20 @@ import {CloudGate} from '../manager/ui/CloudLogin';
 let root:Root,host:HTMLDivElement,mounts=0;
 const account={id:'user',email:'test@example.test',emailVerified:true,status:'active'};
 const reply=(status:number,data:any)=>new Response(JSON.stringify(data),{status});
-function Workspace(){const [selection,setSelection]=useState('profile-a');useEffect(()=>{mounts++;},[]);return <button onClick={()=>setSelection('profile-b')}>{selection}</button>;}
+function Workspace(){const [selection,setSelection]=useState('profile-a');useEffect(()=>{mounts++;},[]);return <button data-test-workspace onClick={()=>setSelection('profile-b')}>{selection}</button>;}
+const workspaceSelection=()=>host.querySelector('[data-test-workspace]')?.textContent;
 beforeEach(()=>{vi.useFakeTimers();vi.spyOn(document,'visibilityState','get').mockReturnValue('visible');vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);mounts=0;host=document.createElement('div');document.body.append(host);root=createRoot(host);vi.stubGlobal('fetch',vi.fn(async()=>reply(200,account)));});
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();});
 const render=()=>act(async()=>{root.render(<CloudGate>{()=> <Workspace/>}</CloudGate>);});
 it.each(['network','503','html'])('keeps workspace and selection mounted after a temporary %s failure',async kind=>{
- await render();await act(async()=>host.querySelector('button')!.click());expect(host.textContent).toBe('profile-b');
+ await render();await act(async()=>host.querySelector<HTMLButtonElement>('[data-test-workspace]')!.click());expect(workspaceSelection()).toBe('profile-b');
  if(kind==='network')vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'));
  else vi.mocked(fetch).mockResolvedValueOnce(kind==='503'?reply(503,{error:'Busy'}):new Response('<html>gateway</html>',{status:502}));
- await act(async()=>window.dispatchEvent(new Event('hanu-auth-expired')));expect(host.textContent).toBe('profile-b');expect(mounts).toBe(1);
- await act(async()=>vi.advanceTimersByTimeAsync(5000));expect(host.textContent).toBe('profile-b');expect(mounts).toBe(1);
+ await act(async()=>window.dispatchEvent(new Event('hanu-auth-expired')));expect(workspaceSelection()).toBe('profile-b');expect(mounts).toBe(1);
+ await act(async()=>vi.advanceTimersByTimeAsync(5000));expect(workspaceSelection()).toBe('profile-b');expect(mounts).toBe(1);
 });
 it('rechecks an operation-level auth event without unmounting an authenticated workspace',async()=>{
- await render();await act(async()=>window.dispatchEvent(new Event('hanu-auth-expired')));expect(host.textContent).toBe('profile-a');expect(mounts).toBe(1);
+ await render();await act(async()=>window.dispatchEvent(new Event('hanu-auth-expired')));expect(workspaceSelection()).toBe('profile-a');expect(mounts).toBe(1);
 });
 it('still signs out after a confirmed auth/me 401 and restricts a revoked account',async()=>{
  await render();vi.mocked(fetch).mockResolvedValueOnce(reply(200,{...account,status:'blocked'}));
@@ -35,7 +36,7 @@ it('reduces active-account fallback checks from every 30 seconds to every 5 minu
 });
 it('keeps approval discovery for pending accounts, then switches to the slower active fallback',async()=>{
  vi.mocked(fetch).mockResolvedValueOnce(reply(200,{...account,status:'pending'}));await render();
- await act(async()=>vi.advanceTimersByTimeAsync(30000));expect(fetch).toHaveBeenCalledTimes(2);expect(host.textContent).toBe('profile-a');
+ await act(async()=>vi.advanceTimersByTimeAsync(30000));expect(fetch).toHaveBeenCalledTimes(2);expect(workspaceSelection()).toBe('profile-a');
  await act(async()=>vi.advanceTimersByTimeAsync(30000));expect(fetch).toHaveBeenCalledTimes(2);
 });
 it('stops background checks in a hidden tab and rechecks once when returning, ignoring rapid visibility changes',async()=>{
@@ -75,7 +76,7 @@ it('discards an in-flight account response after logout and notifies other tabs'
 });
 it('shows retry, rather than sign-in, when the initial auth service is unavailable',async()=>{
  vi.mocked(fetch).mockResolvedValueOnce(reply(503,{error:'Busy'}));await render();expect(host.textContent).toContain('Thử kết nối lại');expect(host.textContent).not.toContain('Tiếp tục với Google');
- await act(async()=>vi.advanceTimersByTimeAsync(5000));expect(host.textContent).toBe('profile-a');
+ await act(async()=>vi.advanceTimersByTimeAsync(5000));expect(workspaceSelection()).toBe('profile-a');
 });
 it('coalesces focus, expiry and timer checks while a request is pending',async()=>{
  await render();let resolve!:(r:Response)=>void;vi.mocked(fetch).mockImplementationOnce(()=>new Promise(r=>resolve=r));
