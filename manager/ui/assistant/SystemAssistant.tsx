@@ -3,7 +3,7 @@ import { ArrowsInSimple, ArrowsOutSimple, ArrowUp, ArrowUpRight, Books, ChatTear
 import type { Account } from "../../../src/account";
 import { AssistantBoundary } from "./AssistantBoundary";
 import { GuideSpotlight, visibleGuideTarget } from "./GuideSpotlight";
-import { guideIntent, GuideContext, pathForGuide, productForGuide, targetMarker, type Guide, type GuideTarget, type Product } from "./guide";
+import { guideIntent, GuideContext, isFormsGuide, onGuidePage, pathForGuide, productForGuide, targetMarker, type FormsGuideStep, type Guide, type GuideTarget, type Product } from "./guide";
 import { readReply, type SystemReply } from "./reply";
 import "./assistant.css";
 
@@ -13,6 +13,7 @@ const handoffKey = "hanu-guide";
 
 function canOpenGuide(guide: Guide, account: Account, availableProducts: readonly Product[]) {
   if (guide === "admin") return account.role === "admin";
+  if (isFormsGuide(guide)) return availableProducts.some(product => product.id === "forms");
   const product = productForGuide(guide);
   return !product || availableProducts.includes(product);
 }
@@ -22,7 +23,7 @@ function restoreGuide(account: Account, availableProducts: readonly Product[]): 
     const data = JSON.parse(sessionStorage.getItem(handoffKey) ?? "null");
     if (data?.owner !== account.id || typeof data.expires !== "number" || data.expires < Date.now() || !Array.isArray(data.turns)) return;
     const guide = data.guide as Guide;
-    if (location.pathname !== pathForGuide(guide) || !canOpenGuide(guide, account, availableProducts)) return;
+    if (!onGuidePage(guide) || !canOpenGuide(guide, account, availableProducts)) return;
     const turns = data.turns.slice(-12).flatMap((turn: Turn) =>
       turn && ["user", "assistant"].includes(turn.role) && typeof turn.text === "string"
         ? [{ role: turn.role, text: turn.text.slice(0, 4000) }] : []);
@@ -44,6 +45,8 @@ const workspace = () => location.pathname.startsWith("/chinesetest") ? "chineset
 const workspaceName = () => ({ chinesetest: "ChineseTest", hcmue: "HCMUE", forms: "Google Forms", system: "Toàn hệ thống" })[workspace()];
 
 function guideName(guide: Guide) {
+  if (guide === "pair-profile") return "Liên kết Chrome profile";
+  if (guide === "prepare-profile") return "Chuẩn bị hồ sơ";
   if (guide === "admin") return "Quản trị";
   if (guide === "live") return "Quyền Live";
   if (guide === "access") return "Quyền sử dụng";
@@ -51,6 +54,7 @@ function guideName(guide: Guide) {
 }
 
 function arrivalMessage(guide: Guide, account: Account) {
+  if (isFormsGuide(guide)) return `Mình sẽ hướng dẫn bạn ${guideName(guide).toLowerCase()} ngay trên Google Forms. Bạn có thể hỏi tiếp trong lúc thao tác.`;
   if (guide === "live") return account.liveEnabled
     ? "Tài khoản của bạn đã được cấp quyền Live. Bạn có thể kiểm tra ở dòng Chế độ Live."
     : "Tài khoản của bạn chưa được cấp quyền Live. Liên hệ quản trị viên nếu cần đăng ký thật.";
@@ -61,18 +65,20 @@ function arrivalMessage(guide: Guide, account: Account) {
   return `Bạn đã vào ${guide === "admin" ? "trang " : ""}${guideName(guide)}. Bạn có thể hỏi tiếp ngay tại đây.`;
 }
 
-function Conversation({ account, availableProducts, restored, initialQuestion, guide, setGuide, active, onClose }: {
+function Conversation({ account, availableProducts, restored, initialQuestion, guide, setGuide, formsStep, active, onClose }: {
   account: Account; availableProducts: readonly Product[]; restored?: Handoff; initialQuestion?: string;
-  guide?: Guide; setGuide(guide?: Guide): void; active: boolean; onClose(): void;
+  guide?: Guide; setGuide(guide?: Guide): void; formsStep?: FormsGuideStep; active: boolean; onClose(): void;
 }) {
   const [turns, setTurns] = useState<Turn[]>(() => restored ? [
     ...restored.turns, { role: "assistant", text: arrivalMessage(restored.guide, account) },
   ] : []);
   const [step, setStep] = useState<GuideTarget>();
-  const arrived = Boolean(guide && location.pathname === pathForGuide(guide));
+  const arrived = Boolean(guide && onGuidePage(guide));
+  const formsWorkflow = isFormsGuide(guide) && arrived;
   const inspectingAccess = arrived && (guide === "live" || guide === "access");
-  const destination = guide === "live" || guide === "access" ? arrived ? guide : "account" : guide;
+  const destination = isFormsGuide(guide) ? arrived ? formsStep?.target : "forms" : guide === "live" || guide === "access" ? arrived ? guide : "account" : guide;
   const destinationName = guide ? guideName(guide) : "";
+  const navigationName = destination === "account" ? "Tài khoản" : isFormsGuide(guide) ? "Google Forms" : destinationName;
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -107,12 +113,13 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
   function openDestination(next: Guide, history: Turn[]) {
     if (!canOpenGuide(next, account, availableProducts)) return;
     const path = pathForGuide(next);
-    if (location.pathname === path) return;
+    if (onGuidePage(next)) return;
     saveHandoff(account.id, next, history);
     location.assign(path);
   }
 
   function guideAction(history = turns) {
+    if (formsWorkflow && formsStep?.action) { formsStep.action.run(); return; }
     if (!guide || arrived) return;
     if (step === "menu" && visibleGuideTarget("menu")) visibleGuideTarget("menu")?.click();
     else openDestination(guide, history);
@@ -120,7 +127,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
 
   async function send(question: string) {
     if (!question.trim() || request.current) return;
-    const intent = guideIntent(question, active && !arrived);
+    const intent = guideIntent(question, active && (!arrived || Boolean(formsStep?.action)));
     if (intent) {
       setError("");
       setText("");
@@ -136,7 +143,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         setTurns([...history, { role: "assistant", text: next === "admin"
           ? "Tài khoản của bạn chưa có quyền Quản trị. Liên hệ quản trị viên để được cấp quyền phù hợp."
           : `${guideName(next)} hiện chưa được bật trên website này.` }]);
-      } else if (location.pathname === pathForGuide(next)) {
+      } else if (onGuidePage(next)) {
         setExpanded(false);
         setGuide(next);
         setTurns([...history, { role: "assistant", text: arrivalMessage(next, account) }]);
@@ -183,8 +190,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
     void send(question);
   }, []);
   const oneStep = location.pathname === "/account" || Boolean(visibleGuideTarget(destination ?? "menu")?.closest(".ws-products"));
-  const targetLabel = inspectingAccess ? destinationName : `Bấm để mở ${destination === "account" ? "Tài khoản" : destinationName}`;
-  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(guide)}
+  const targetLabel = formsWorkflow ? formsStep?.title ?? "" : inspectingAccess ? destinationName : `Bấm để mở ${navigationName}`;
+  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(guide)} data-forms-guide={formsWorkflow}
     role="dialog" aria-modal="false" aria-labelledby="system-ai-title">
     {active && destination && <GuideSpotlight destination={destination} fallback={!arrived} label={targetLabel} onStep={setStep}/>}
     <header className="ai-header">
@@ -194,19 +201,32 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         {expanded ? <ArrowsInSimple size={18} /> : <ArrowsOutSimple size={18} />}</button>
       <button aria-label="Đóng trợ lý" onClick={onClose}><X size={19} /></button>
     </header>
-    {guide && <section className="guide-card" aria-label={`Hướng dẫn ${destinationName}`}>
+    {formsWorkflow ? <section className="guide-card guide-card-workflow" aria-label={`Hướng dẫn ${destinationName}`}>
+      <span className="guide-card-icon">{formsStep?.done ? <CheckCircle size={20} weight="fill"/> : <Compass size={21} weight="duotone"/>}</span>
+      <div className="guide-card-copy" role="status">
+        <span>{formsStep?.done ? "Hoàn tất" : formsStep ? `Bước ${formsStep.stage} / ${formsStep.total}` : "Google Forms"}</span>
+        <strong>{formsStep?.title ?? "Đang đọc trạng thái màn hình…"}</strong>
+        {formsStep?.detail && <p>{formsStep.detail}</p>}
+      </div>
+      <button className="guide-dismiss" type="button" aria-label="Kết thúc hướng dẫn" onClick={() => setGuide(undefined)}><X size={15}/></button>
+      {formsStep && <div className="guide-progress" aria-hidden="true">
+        {Array.from({ length: formsStep.total }, (_, index) => <i key={index} data-current={index < formsStep.stage}/>)}
+      </div>}
+      {formsStep?.action && <button type="button" className="guide-action" onClick={() => guideAction()}>{formsStep.action.label} <ArrowUpRight size={14}/></button>}
+      {formsStep?.nextGuide && <button type="button" className="guide-action" onClick={() => setGuide(formsStep.nextGuide)}>Hướng dẫn liên kết profile <ArrowUpRight size={14}/></button>}
+    </section> : guide && <section className="guide-card" aria-label={`Hướng dẫn ${destinationName}`}>
       <span className="guide-card-icon">{arrived ? <CheckCircle size={20} weight="fill"/> : <Compass size={21} weight="duotone"/>}</span>
       <div className="guide-card-copy" role="status">
         <span>{arrived ? "Hoàn tất" : oneStep ? "Bước 1 / 1" : !step || step === "menu" ? "Bước 1 / 2" : "Bước 2 / 2"}</span>
         <strong>{arrived
           ? inspectingAccess ? destinationName : `Đã vào ${guide === "admin" ? "trang " : ""}${destinationName}`
-          : !step || step === "menu" ? "Mở Tài khoản và công cụ" : `Chọn ${destination === "account" ? "Tài khoản" : destinationName}`}</strong>
+          : !step || step === "menu" ? "Mở Tài khoản và công cụ" : `Chọn ${navigationName}`}</strong>
       </div>
       <button className="guide-dismiss" type="button" aria-label="Kết thúc hướng dẫn" onClick={() => { setGuide(undefined); setStep(undefined); }}><X size={15}/></button>
       {!arrived && <>
         <div className="guide-progress" aria-hidden="true"><i/>{!oneStep && <i data-current={Boolean(step && step !== "menu")}/>}</div>
         <button type="button" className="guide-action" disabled={!step} onClick={() => guideAction()}>
-          {step === "menu" ? "Mở menu giúp tôi" : `Mở ${destination === "account" ? "Tài khoản" : destinationName} giúp tôi`} <ArrowUpRight size={14}/>
+          {step === "menu" ? "Mở menu giúp tôi" : `Mở ${navigationName} giúp tôi`} <ArrowUpRight size={14}/>
         </button>
       </>}
     </section>}
@@ -214,7 +234,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       {!turns.length && <div className="ai-welcome">
         <span className="ai-welcome-mark"><ChatTeardropText size={32} weight="duotone" /></span>
         <h3>Mình có thể giúp gì?</h3><p>Hỏi cách dùng, giải thích lỗi hoặc tìm hướng dẫn cho từng ứng dụng.</p>
-        <div className="ai-suggestions">{["Làm sao vào trang Quản trị?", "Tôi có quyền Live không?", "Xem bản đồ vector ở đâu?"].map(question =>
+        <div className="ai-suggestions">{["Làm sao vào trang Quản trị?", "Tôi có quyền Live không?", "Xem bản đồ vector ở đâu?", ...(workspace() === "forms" ? ["Cách liên kết Chrome profile?", "Cách chuẩn bị hồ sơ?"] : [])].map(question =>
           <button key={question} onClick={() => void send(question)}>{question}<ArrowUp size={14} /></button>)}</div>
       </div>}
       {turns.map((turn, index) => <article key={index} className={`ai-message ai-message-${turn.role}`}>
@@ -244,6 +264,7 @@ export function SystemAssistant({ account, availableProducts, children }: {
   const [open, setOpen] = useState(Boolean(restored));
   const [guide, setGuide] = useState(restored?.guide);
   const [initialQuestion, setInitialQuestion] = useState<string>();
+  const [formsStep, setFormsStep] = useState<FormsGuideStep>();
   const trigger = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => {
     setOpen(false);
@@ -256,20 +277,22 @@ export function SystemAssistant({ account, availableProducts, children }: {
     try { sessionStorage.removeItem(handoffKey); } catch { /* Tab storage is optional. */ }
   }, []);
   const allowedGuide = guide && canOpenGuide(guide, account, availableProducts) ? guide : undefined;
-  const active = Boolean(allowedGuide && (allowedGuide === "live" || allowedGuide === "access" || pathForGuide(allowedGuide) !== location.pathname));
+  const formsGuide = isFormsGuide(allowedGuide) && onGuidePage(allowedGuide) ? allowedGuide : undefined;
+  const active = Boolean(allowedGuide && (isFormsGuide(allowedGuide) || allowedGuide === "live" || allowedGuide === "access" || !onGuidePage(allowedGuide)));
   const handoff = (question: string) => {
     setInitialQuestion(question);
     setOpen(true);
     return true;
   };
   const dedicatedHcmue = location.pathname === "/hcmue";
-  return <GuideContext.Provider value={{ active, handoff, switching: active && Boolean(allowedGuide && productForGuide(allowedGuide)), availableProducts }}>
+  return <GuideContext.Provider value={{ active, handoff, formsGuide, reportFormsStep: setFormsStep, startFormsGuide: setGuide,
+    switching: active && Boolean(allowedGuide && (productForGuide(allowedGuide) || isFormsGuide(allowedGuide) && !formsGuide)), availableProducts }}>
     {children}
     {(!dedicatedHcmue || open) && <button ref={trigger} type="button" className="ai-launcher" aria-label="Trợ lý AI" title="Hỏi trợ lý HANU"
       aria-expanded={open} aria-haspopup="dialog" onClick={() => open ? close() : setOpen(true)}>
       {open ? <X size={24} /> : <ChatTeardropText size={27} weight="duotone" />}<span>Hỏi AI</span>
     </button>}
     {open && <AssistantBoundary onClose={close}><Conversation account={account} availableProducts={availableProducts} restored={restored}
-      initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} onClose={close}/></AssistantBoundary>}
+      initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} formsStep={formsStep} onClose={close}/></AssistantBoundary>}
   </GuideContext.Provider>;
 }

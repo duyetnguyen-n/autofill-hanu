@@ -2,7 +2,9 @@ import { chromium, expect, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { PerspectiveCamera, Vector3 } from "three";
-import { httpFixture, users } from "../tests/cloud/fixture";
+import { WebSocket } from "ws";
+import { emptyProfile } from "../src/rules";
+import { httpFixture, users, extension } from "../tests/cloud/fixture";
 import { projectVectors } from "../integrations/hcmue/ui/vector-layout";
 import type { KnowledgeMapPoint } from "../integrations/hcmue/knowledge/documents";
 
@@ -19,6 +21,24 @@ const browser = await chromium.launch({
   args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
 });
 await mkdir("test-results/assistant", { recursive: true });
+const peers: WebSocket[] = [];
+let failSync = true;
+async function pairExtension(code: string) {
+  const socket = new WebSocket(app.config.origin.replace("http:", "ws:") + "/extensions", { origin: `chrome-extension://${extension}` });
+  peers.push(socket);
+  let sessionId = crypto.randomUUID(), profile = emptyProfile(), revision = 0;
+  socket.on("message", bytes => {
+    const message = JSON.parse(bytes.toString());
+    if (message.type === "PAIRED") sessionId = message.sessionId;
+    if (message.type !== "COMMAND") return;
+    const ok = message.kind !== "COMMIT_PROFILE" || !failSync;
+    if (message.kind === "COMMIT_PROFILE" && ok) { profile = message.payload.profile; revision++; }
+    socket.send(JSON.stringify({ type: "RESULT", protocol: 1, sessionId, commandId: message.commandId, ok,
+      result: { profile, revision }, error: ok ? undefined : "Extension chưa nhận được hồ sơ" }));
+  });
+  await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+  socket.send(JSON.stringify({ type: "PAIR", protocol: 1, transport: "cloud", accessPolicy: 1, sessionId, extensionId: extension, code }));
+}
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: "reduce", colorScheme: "light" });
   const page = await context.newPage(), errors: string[] = [];
@@ -41,7 +61,7 @@ try {
     await expect(panel.getByRole("navigation", { name: "Nguồn tham khảo" }).getByRole("link").first()).toBeVisible();
     return panel;
   }
-  let panel = await openChat(page, "/", "Quản lý các phiên", "Chuẩn bị profile", "Chuẩn bị profile Google Forms");
+  let panel = await openChat(page, "/", "Quản lý các phiên", "Liên kết extension", "Chuẩn bị profile Google Forms");
   await page.screenshot({ path: "test-results/assistant/chat-desktop.png", animations: "disabled" });
   await panel.getByRole("button", { name: "Mở rộng trợ lý" }).click();
   await expect(panel).toHaveAttribute("data-expanded", "true");
@@ -191,6 +211,86 @@ try {
   await expect(mobile.locator(".guide-halo[data-step=live]")).toBeVisible();
   await mobile.screenshot({ path: "test-results/assistant/guide-live-mobile.png", animations: "disabled" });
 
+  // Start outside Forms; carry the request over to the workflow on the correct page.
+  await page.goto(app.config.origin + "/account");
+  await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
+  panel = page.getByRole("dialog", { name: "Trợ lý HANU" });
+  const ask = async (p: Page, question: string) => {
+    const chat = p.getByRole("dialog", { name: "Trợ lý HANU" });
+    await chat.getByRole("textbox").fill(question);
+    await chat.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  };
+  await ask(page, "Cách chuẩn bị hồ sơ?");
+  await panel.getByRole("button", { name: /Mở .* giúp tôi/ }).click();
+  await expect(page).toHaveURL(app.config.origin + "/");
+  await expect(panel.getByRole("status")).toContainText("Chưa có Chrome profile");
+  await panel.getByRole("button", { name: "Hướng dẫn liên kết profile" }).click();
+  await expect(page.locator(".guide-halo[data-step=pairOpen]")).toBeVisible();
+  await panel.getByRole("button", { name: "Mở Thêm profile giúp tôi" }).click();
+  const pairing = page.getByRole("dialog", { name: "Liên kết Chrome profile" });
+  await expect(pairing).toHaveAttribute("aria-modal", "false");
+  await expect(page.locator(".guide-halo[data-step=pairCreate]")).toBeVisible();
+  await page.route("**/api/pair", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), expiresIn: 0 } });
+  }, { times: 1 });
+  await pairing.getByRole("button", { name: "Tạo mã liên kết" }).click();
+  await expect(panel.getByRole("status")).toContainText("Mã đã hết hạn");
+  await expect(pairing.getByRole("button", { name: "Sao chép mã" })).toBeDisabled();
+  await pairing.getByRole("button", { name: "Tạo mã mới" }).click();
+  await expect(page.locator(".guide-halo[data-step=pairCopy]")).toBeVisible();
+  await ask(page, "Xem bản đồ vector ở đâu?");
+  await expect(panel.getByRole("log")).toContainText("Kho tri thức và bản đồ vector");
+  await expect(pairing).toBeVisible();
+  const code = (await pairing.locator(".pair-code code").textContent())!;
+  await pairExtension((await (await app.api("pair", 0, {})).json()).code);
+  await expect(page.getByRole("table", { name: "Các profile đã liên kết" })).toContainText("Profile 1");
+  await expect(panel.getByRole("status")).toContainText("Nhập mã trong Chrome");
+  await pairExtension(code);
+  await expect(panel.getByRole("status")).toContainText("Đã liên kết Chrome profile");
+  await expect(pairing).toContainText("Đã liên kết Profile 2");
+  await panel.getByRole("button", { name: "Hướng dẫn chuẩn bị hồ sơ" }).click();
+  const drawer = page.getByRole("dialog", { name: "Chi tiết Profile 2" });
+  await expect(drawer).toHaveAttribute("aria-modal", "false");
+  await expect(page.locator(".guide-halo[data-step=profileIdentity]")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Đã kiểm tra tên và email" })).toHaveCount(0);
+  await drawer.getByLabel("Email Google phải hiển thị trên form").fill("profile@example.test");
+  await panel.getByRole("button", { name: "Đã kiểm tra tên và email" }).click();
+  await expect(page.locator(".guide-halo[data-step=profileFields]")).toBeVisible();
+  await drawer.getByLabel("Họ và tên", { exact: true }).fill("Hồ sơ thử nghiệm");
+  await panel.getByRole("button", { name: "Tiếp đến phần ảnh" }).click();
+  await expect(page.locator(".guide-halo[data-step=profileFiles]")).toBeVisible();
+  await panel.getByRole("button", { name: "Tiếp đến bước đồng bộ" }).click();
+  const workflow = panel.getByRole("region", { name: "Hướng dẫn Chuẩn bị hồ sơ" });
+  await expect(page.locator(".guide-halo[data-step=profileSave]")).toBeVisible();
+  await drawer.getByRole("button", { name: "Lưu và đồng bộ" }).click();
+  await expect(workflow).toContainText("Chưa đồng bộ được");
+  await expect(workflow).not.toContainText("Hoàn tất");
+  failSync = false;
+  await drawer.getByRole("button", { name: "Lưu và đồng bộ" }).click();
+  await expect(workflow).toContainText("Hoàn tất");
+  await expect(workflow).toContainText("Extension đã xác nhận");
+
+  await mobile.goto(app.config.origin + "/google-direct");
+  await mobile.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
+  await ask(mobile, "Cách chuẩn bị hồ sơ?");
+  await expect(mobile.locator(".guide-halo[data-step=profiles]")).toBeVisible();
+  await mobile.getByRole("row").filter({ hasText: "Profile 2" }).getByRole("button", { name: "Chi tiết" }).click();
+  const mobileDrawer = mobile.getByRole("dialog", { name: "Chi tiết Profile 2" });
+  const mobileChat = mobile.getByRole("dialog", { name: "Trợ lý HANU" });
+  await expect(mobileDrawer).toHaveAttribute("aria-modal", "false");
+  const [drawerBox, mobileChatBox] = await Promise.all([mobileDrawer.boundingBox(), mobileChat.boundingBox()]);
+  expect(drawerBox!.y + drawerBox!.height).toBeLessThan(mobileChatBox!.y);
+  expect(await mobile.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await ask(mobile, "Xem bản đồ vector ở đâu?");
+  await expect(mobileChat.getByRole("log")).toContainText("Kho tri thức và bản đồ vector");
+  await mobile.screenshot({ path: "test-results/assistant/guide-profile-mobile.png", animations: "disabled" });
+  await ask(mobile, "Cách liên kết Chrome profile?");
+  await expect(mobile.locator(".guide-halo[data-step=profileClose]")).toBeVisible();
+  await expect(mobileDrawer).toHaveAttribute("aria-modal", "false");
+  await mobileDrawer.getByRole("button", { name: "Đóng chi tiết", exact: true }).click();
+  await expect(mobile.locator(".guide-halo[data-step=pairOpen]")).toBeVisible();
+
   app.setLoginUser(1);
   await app.pool.query("UPDATE hanu.accounts SET live_enabled=false WHERE user_id=$1", [users[1]]);
   const member = await browser.newPage();
@@ -222,8 +322,9 @@ try {
   await expect(memberPanel.getByRole("log")).toContainText("Hạn sử dụng: Không giới hạn");
   await expect(member.locator(".guide-halo[data-step=access]")).toBeVisible();
   expect(errors).toEqual([]);
-  console.log("PASS assistant UI: administration, account rights, Live access, workspace switching, desktop/mobile, chat restoration, disabled apps and prior knowledge flows.");
+  console.log("PASS assistant UI: administration, account rights, Live access, workspace switching, profile pairing and sync, desktop/mobile, chat restoration and knowledge.");
 } finally {
+  for (const peer of peers) peer.terminate();
   await browser.close();
   await app.close();
 }

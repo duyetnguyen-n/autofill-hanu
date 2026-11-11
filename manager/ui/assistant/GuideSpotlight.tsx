@@ -34,7 +34,7 @@ export function GuideSpotlight({ destination, fallback, label, onStep }: {
         if (element) {
           resize.observe(element);
           element.scrollIntoView({
-            block: element.closest(".account-page") ? "center" : "nearest",
+            block: element.closest(".account-page, .drawer-content") ? "center" : "nearest",
             inline: "nearest", behavior: "instant",
           });
         }
@@ -42,7 +42,10 @@ export function GuideSpotlight({ destination, fallback, label, onStep }: {
       }
       if (!element) { setTarget(undefined); return; }
       const { left, top, width, height } = element.getBoundingClientRect();
-      const below = top < 92;
+      const scrollArea = element.closest(".drawer-content, .pair-dialog-guided");
+      const bounds = scrollArea?.getBoundingClientRect();
+      if (bounds && (top + height <= bounds.top || top >= bounds.bottom)) { setTarget(undefined); return; }
+      const below = top < 92 || Boolean(bounds && top - bounds.top < 46 && top + height + 72 < bounds.bottom);
       const next: Target = { step, x: left - 5, y: top - 5, width: width + 10, height: height + 10, below,
         labelX: Math.min(Math.max(left + width / 2, 112), window.innerWidth - 112) };
       setTarget(old => old && Object.keys(next).every(key => old[key as keyof Target] === next[key as keyof Target]) ? old : next);

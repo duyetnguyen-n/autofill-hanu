@@ -14,12 +14,12 @@ function socket(origin: string, path: string, browser = false) {
   return { ws, messages, opened: new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); }) };
 }
 async function connectExtension(f: Awaited<ReturnType<typeof setup>>, owner = 0) {
-  const code = (await (await f.api('pair', owner, {})).json()).code;
+  const { code, sessionId } = await (await f.api('pair', owner, {})).json();
   const peer = socket(f.config.origin, '/extensions'); await peer.opened;
-  const sessionId = crypto.randomUUID();
-  peer.ws.send(JSON.stringify({ type: 'PAIR', protocol: 1, transport: 'cloud', accessPolicy: 1, sessionId, extensionId: extension, code }));
+  peer.ws.send(JSON.stringify({ type: 'PAIR', protocol: 1, transport: 'cloud', accessPolicy: 1, sessionId: crypto.randomUUID(), extensionId: extension, code }));
   await expect.poll(() => peer.messages.find(m => m.type === 'PAIRED')).toBeTruthy();
   const paired = peer.messages.find(m => m.type === 'PAIRED');
+  expect(paired.sessionId).toBe(sessionId);
   // Real protocol acknowledgement through WSS endpoint (local ws in fixture).
   peer.ws.on('message', raw => {
     const command = JSON.parse(raw.toString());

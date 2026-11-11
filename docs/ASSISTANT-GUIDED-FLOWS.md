@@ -1,6 +1,6 @@
 # Danh mục luồng Trợ lý HANU hướng dẫn trực tiếp
 
-Danh mục gồm 68 luồng theo giao diện HANU hiện có. Đã triển khai **Vào Quản trị**, **Kiểm tra quyền sử dụng và quyền Live** cho tài khoản hoạt động, và **Chuyển sang ứng dụng khác**. Các dòng còn lại là phạm vi đề xuất để triển khai tiếp. Các nhánh như mất kết nối, thiếu quyền hoặc không có dữ liệu đi cùng luồng tương ứng.
+Danh mục gồm 68 luồng theo giao diện HANU hiện có. Các dòng có ghi **Đã triển khai** đã có hướng dẫn trực tiếp. Các nhánh như mất kết nối, thiếu quyền hoặc không có dữ liệu đi cùng luồng tương ứng.
 
 ## Cách hướng dẫn dùng chung
 
@@ -29,9 +29,9 @@ Danh mục gồm 68 luồng theo giao diện HANU hiện có. Đã triển khai 
 | Mã | Người dùng muốn | Trợ lý dẫn đến |
 | --- | --- | --- |
 | GF-01 | Cài extension lần đầu | Hướng dẫn cài extension → tải và giải nén → mở trang Tiện ích Chrome → tải thư mục trong đúng Chrome profile → mở HSK Autofill. |
-| GF-02 | Liên kết thêm Chrome profile | Thêm profile → tạo mã → dán vào extension của profile đã chọn → chờ website hiển thị kết nối. Mã hết hạn thì tạo mã mới. |
+| GF-02 | Liên kết thêm Chrome profile | **Đã triển khai.** Thêm profile → tạo mã → dán vào extension của profile đã chọn → chờ HANU xác nhận đúng mã. Khi mã hết hạn, làm nổi nút tạo mã mới. |
 | GF-03 | Kết nối lại profile cũ | Chi tiết → Kiểm tra kết nối hoặc Mở profile. Xác định đúng Chrome profile và tài khoản HANU. Chỉ dẫn Liên kết lại khi tình trạng profile yêu cầu. |
-| GF-04 | Chuẩn bị hồ sơ và ảnh | Chi tiết → Hồ sơ và ảnh → đặt tên, gán email Google, nhập dữ liệu và ảnh → Lưu và đồng bộ. Dừng tại chỗ dữ liệu thiếu hoặc sai. |
+| GF-04 | Chuẩn bị hồ sơ và ảnh | **Đã triển khai.** Chọn đúng profile → kiểm tra tên và email Google → dữ liệu thí sinh → ảnh và tệp → Lưu và đồng bộ. Báo thiếu email, mất kết nối, xung đột hoặc lỗi lưu tại bước liên quan. Chỉ hoàn tất khi extension xác nhận đồng bộ. |
 | GF-05 | Sửa xung đột đồng bộ | Chi tiết → đọc bản từ extension và bản app đã lưu → người dùng chọn đúng bản → kiểm tra lại trạng thái đồng bộ. |
 | GF-06 | Chuyển hồ sơ từ bản local lên web | Bản local → Xuất dữ liệu → trên web mở Tài khoản và công cụ → Nhập từ bản local → chọn JSON → kiểm tra hồ sơ, ảnh, khóa gửi và liên kết lại profile. |
 | GF-07 | Chọn profile và cấp HSK | Quản lý các phiên → lọc/tìm profile → đặt HSK từng dòng → chọn profile → Đăng ký theo cấp độ HSK. Báo profile chưa chuẩn bị được và lý do. |

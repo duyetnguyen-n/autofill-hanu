@@ -61,6 +61,9 @@
 .guide-card-copy { display: grid; gap: 3px; }
 .guide-card-copy span { font-size: 10px; color: var(--colorNeutralForeground3); }
 .guide-card-copy strong { font-size: 13px; }
+.guide-card-workflow { grid-template-columns: 32px minmax(0, 1fr) 28px; align-items: start; }
+.guide-card-workflow .guide-card-icon { width: 32px; height: 32px; }
+.guide-card-copy p { margin: 0; font-size: 11px; line-height: 1.5; color: var(--colorNeutralForeground2); }
 .guide-dismiss, .guide-action {
   border: 0;
   background: transparent;
@@ -94,35 +97,61 @@
 .ai-panel[data-has-step=true] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
 /* Fluent UI copies the workspace class to its portal. Only the menu itself
    should receive pointer events while the chat stays usable. */
-[data-portal-node]:has(.workspace-tools-guided) {
+[data-portal-node]:has(.workspace-tools-guided, .pair-dialog-guided) {
   z-index: 80;
   min-height: 0;
   background: transparent;
   pointer-events: none;
 }
-.workspace-tools-dialog.workspace-tools-guided {
+.workspace-tools-dialog.workspace-tools-guided, .pair-dialog.pair-dialog-guided {
   pointer-events: auto;
   overflow: auto;
   overscroll-behavior: contain;
   inset: min(15dvh, 120px) auto auto clamp(12px, 6vw, 90px);
   margin: 0;
-  width: min(480px, calc(100vw - 465px));
+  width: min(480px, calc(100vw - 460px - clamp(12px, 6vw, 90px)));
   max-height: calc(85dvh - 16px);
 }
-.workspace-tools-guided .fui-DialogBody { max-height: none; }
-.workspace-tools-guided .fui-DialogContent { overflow: visible; }
+.workspace-tools-guided .fui-DialogBody, .pair-dialog-guided .fui-DialogBody { max-height: none; }
+.workspace-tools-guided .fui-DialogContent, .pair-dialog-guided .fui-DialogContent { overflow: visible; }
+.drawer-overlay[data-guided=true] { pointer-events: none; }
+.drawer-overlay[data-guided=true] .drawer {
+  pointer-events: auto;
+  inset: 16px auto 16px clamp(12px, 6vw, 90px);
+  width: min(570px, calc(100vw - 460px - clamp(12px, 6vw, 90px)));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.drawer-overlay[data-guided=true] .drawer-content { min-height: 0; overscroll-behavior: contain; }
+body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bottom: min(750px, 100dvh); }
 @keyframes guide-pulse {
   0% { opacity: .8; transform: scale(1); }
   70%, 100% { opacity: 0; transform: scale(1.09, 1.28); }
 }
 @media (max-width: 820px) {
-  .workspace-tools-dialog.workspace-tools-guided {
+  .workspace-tools-dialog.workspace-tools-guided, .pair-dialog.pair-dialog-guided {
     inset: max(10px, env(safe-area-inset-top)) 12px auto;
     width: auto;
     max-width: none;
     max-height: calc(54dvh - 22px);
     padding: 15px;
   }
+  .drawer-overlay[data-guided=true] .drawer {
+    inset: max(10px, env(safe-area-inset-top)) 12px auto;
+    width: auto;
+    height: calc(54dvh - 22px);
+  }
+  .drawer-overlay[data-guided=true] .drawer-header,
+  .drawer-overlay[data-guided=true] .drawer-content,
+  .drawer-overlay[data-guided=true] .drawer-footer { padding: 9px 14px; }
+  .drawer-overlay[data-guided=true] .drawer-header h2 { margin-top: 4px; font-size: 17px; }
+  .drawer-overlay[data-guided=true] .connection-meta { display: none; }
+  .drawer-overlay[data-guided=true] .drawer-tools { padding: 6px 14px; }
+  .drawer-overlay[data-guided=true] .detail-tabs { padding-inline: 14px; }
+  .drawer-overlay[data-guided=true] .detail-tabs button { padding-block: 8px; }
+  .ai-panel[data-forms-guide=true] .guide-card { padding: 7px 10px; gap: 4px 8px; }
+  body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bottom: calc(43dvh + 24px); }
   .ai-panel[data-guiding=true] {
     bottom: max(10px, env(safe-area-inset-bottom));
     right: 12px;

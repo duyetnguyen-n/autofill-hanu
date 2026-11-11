@@ -6,7 +6,7 @@ import {ChineseTestRelay} from '../../integrations/chinesetest/cloud/relay';
 import {createReadStream} from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import {isIP} from 'node:net';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,6 +70,10 @@ export async function serveCloud(options: {
   port?: number; host?: string; assistantFetch?: typeof fetch;
 }) {
   const { config, repository } = options;
+  // Both transports derive the same opaque ID without storing the pairing code
+  // or mistaking a different tab's connection for this code.
+  const pairingSessionId = (code: string) => createHmac('sha256', config.secretKey)
+    .update('hanu/forms/pair/v1:').update(code).digest('hex').slice(0, 32);
   const auth = options.auth ?? supabaseAuth(config);
   const accounts = new Accounts(repository.pool, config.bootstrapAdminEmail);
   const assistantOptions = { ...config.hcmueAssistant, send: options.assistantFetch };
@@ -406,7 +410,8 @@ export async function serveCloud(options: {
           rate.check(`pair:${user.id}`, 20, 60000);
           const value = await body(req);
           if (value.replaceSessionId !== undefined && typeof value.replaceSessionId !== 'string') throw new CloudError('Profile liên kết lại không hợp lệ.');
-          return json(res, { code: await repository.pairCode(user.id, value.replaceSessionId), expiresIn: 300 });
+          const code = await repository.pairCode(user.id, value.replaceSessionId);
+          return json(res, { code, expiresIn: 300, sessionId: value.replaceSessionId ?? pairingSessionId(code) });
         }
         if (path === '/api/start' && req.method === 'POST') { const value = await body(req); return json(res, await coordinator.start(value.ids, value.url, value.mode, value.finalQuestion, value.requestId,undefined,undefined,value.engine)); }
         if(path==='/api/hsk-levels'&&req.method==='POST'){const b=await body(req,16384);return json(res,await coordinator.assignHsk(b.ids,b.level));}
@@ -543,7 +548,8 @@ export async function serveCloud(options: {
             if (m.accessPolicy !== 1) throw new CloudError('Cập nhật và Reload extension bản mới để sử dụng cơ chế cấp quyền tài khoản.', 403);
             if (m.protocol !== PROTOCOL_VERSION || m.transport !== 'cloud' || !/^[a-zA-Z0-9-]{20,80}$/.test(m.sessionId) || !/^[a-p]{32}$/.test(m.extensionId) || req.headers.origin && req.headers.origin !== `chrome-extension://${m.extensionId}`) throw new CloudError('Extension hoặc giao thức không hợp lệ.', 401);
             if (m.type === 'PAIR') {
-              const paired = await repository.pair(m.sessionId, m.extensionId, String(m.code ?? ''));
+              const code = String(m.code ?? '');
+              const paired = await repository.pair(pairingSessionId(code), m.extensionId, code);
               owner = paired.owner; id = paired.sessionId; current = runtime(owner);
               await current.coordinator.connect(id, ws);
               if (ws.readyState !== WebSocket.OPEN) { await current.coordinator.disconnect(id, ws); return; }
