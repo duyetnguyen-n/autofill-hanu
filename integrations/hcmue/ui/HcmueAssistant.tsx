@@ -1,5 +1,6 @@
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner, Textarea } from "@fluentui/react-components";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner } from "@fluentui/react-components";
+import { ChatsCircle, PaperPlaneTilt, X } from "@phosphor-icons/react";
 import { type AssistantContext, type AssistantProposal, type AssistantReply, runObservation, runResultText } from "../assistant";
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
 import { type AccountPlan, planForSchedule } from "./planning";
@@ -39,6 +40,9 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
   const [draft, setDraft] = useState<Draft>();
   const requestRef = useRef<AbortController | undefined>(undefined);
   const logRef = useRef<HTMLDivElement>(null);
+  const revealDraft = useCallback((panel: HTMLDivElement | null) => {
+    panel?.scrollIntoView({ block: "nearest" });
+  }, []);
   useEffect(() => () => {
     const request = requestRef.current;
     requestRef.current = undefined;
@@ -119,9 +123,12 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
 
   return <Dialog open onOpenChange={(_, data) => { if (!data.open) onClose(); }}>
     <DialogSurface className="hc-assistant">
-      <DialogBody>
-        <DialogTitle>Trợ lý HCMUE</DialogTitle>
-        <DialogContent className="hc-assistant-content">
+      <DialogBody className="hc-assistant-body">
+        <header className="hc-assistant-header">
+          <DialogTitle><ChatsCircle size={23} weight="duotone" aria-hidden="true" /> Trợ lý HCMUE</DialogTitle>
+          <button type="button" aria-label="Đóng trợ lý" onClick={onClose}><X size={20} aria-hidden="true" /></button>
+        </header>
+        <div className="hc-assistant-scope">
           {schedules.length > 0 && <Field label="Lịch cần xem">
             <Select value={scheduleId} disabled={pending} onChange={(_, data) => {
               setScheduleId(data.value); setDraft(undefined); setTurns([]);
@@ -132,18 +139,25 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
               </option>)}
             </Select>
           </Field>}
-          <div ref={logRef} className="hc-assistant-turns" role="log" aria-label="Cuộc trò chuyện">
-            {!turns.length && <div className="hc-assistant-prompts">
-              {scope.noticeCode && <Button size="small" onClick={() => void send("Thông báo này có nghĩa gì và tôi cần làm gì?")}>Giải thích thông báo</Button>}
-              {schedule && <Button size="small" onClick={() => void send("Lần chạy này đã đăng ký được chưa?")}>Giải thích lần chạy</Button>}
-              {scope.accountId && !schedule && <Button size="small" onClick={() => void send("Giải thích báo cáo kiểm tra hồ sơ/API.")}>Giải thích báo cáo</Button>}
-              <Button size="small" onClick={() => void send("Hướng dẫn tạo lịch HCMUE")}>Cách tạo lịch</Button>
-            </div>}
+        </div>
+        <DialogContent className="hc-assistant-content" ref={logRef} tabIndex={0}>
+          <div className="hc-assistant-turns" role="log" aria-label="Cuộc trò chuyện">
+            {!turns.length && <>
+              <article className="hc-assistant-turn hc-assistant-assistant"><p>Chào bạn! Mình có thể hướng dẫn dùng HCMUE, giải thích lỗi và kiểm tra trạng thái lịch.</p></article>
+              <div className="hc-assistant-prompts">
+                {scope.noticeCode && <Button size="small" onClick={() => void send("Thông báo này có nghĩa gì và tôi cần làm gì?")}>Giải thích thông báo</Button>}
+                {schedule && <Button size="small" onClick={() => void send("Lần chạy này đã đăng ký được chưa?")}>Giải thích lần chạy</Button>}
+                {scope.accountId && !schedule && <Button size="small" onClick={() => void send("Giải thích báo cáo kiểm tra hồ sơ/API.")}>Giải thích báo cáo</Button>}
+                <Button size="small" onClick={() => void send("Hướng dẫn tạo lịch HCMUE")}>Cách tạo lịch</Button>
+              </div>
+            </>}
             {turns.map((turn, index) => <article className={`hc-assistant-turn hc-assistant-${turn.role}`} key={index}>
-              <strong>{turn.role === "user" ? "Bạn" : turn.reply?.source === "guide" ? "Hướng dẫn HCMUE" : "Trợ lý HCMUE"}</strong>
+              {turn.role === "assistant" && <strong>{turn.reply?.source === "guide" ? "Hướng dẫn HCMUE" : "Trợ lý HCMUE"}</strong>}
               {turn.result && <p className="hc-assistant-result">{turn.result}</p>}
               <p>{turn.text}</p>
-              {!!turn.reply?.references.length && <small><a href="/hcmue-downloads/index.html" target="_blank" rel="noreferrer">Hướng dẫn HCMUE</a> · {turn.reply.references.map(ref => ref.title).join(" · ")}</small>}
+              {!!turn.reply?.references.length && <ul className="hc-assistant-sources" aria-label="Nguồn tham khảo">
+                {turn.reply.references.map(ref => <li key={ref.id}><a href={`/hcmue-downloads/knowledge.html#${ref.id}`} target="_blank" rel="noreferrer">{ref.title}</a></li>)}
+              </ul>}
             </article>)}
             {pending && <Spinner size="tiny" label="Đang tìm hướng dẫn…" />}
           </div>
@@ -160,7 +174,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
               {(!schedule || !ready || busy) && <small>{!schedule ? "Chọn lịch rồi gửi lại yêu cầu." : !ready ? "Kết nối và đối chiếu Runner để thao tác." : "Chờ thao tác hiện tại hoàn tất."}</small>}
             </>}
           </div>}
-          {draft && <div className="hc-assistant-proposal">
+          {draft && <div className="hc-assistant-proposal" ref={revealDraft}>
             <strong>{proposal?.action === "edit" ? "Xem lại thay đổi lịch nháp" : "Xem trước lịch nháp"}</strong>
             <Field label="Tài khoản HCMUE">
               <Select value={draft.accountId} disabled={proposal?.action === "edit"} onChange={(_, data) => setDraft({ ...draft, accountId: data.value })}>
@@ -187,15 +201,20 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
             {draftProblem && <small>{draftProblem}</small>}
             <Button appearance="primary" disabled={!!draftProblem} onClick={() => onPrepare(draft, preparedDraft?.id ?? null)}>Xác nhận chuẩn bị nháp</Button>
           </div>}
-          <form className="hc-assistant-form" onSubmit={event => { event.preventDefault(); void send(message); }}>
-            <Field label="Câu hỏi của bạn">
-              <Textarea value={message} maxLength={1200} resize="vertical" onChange={(_, data) => setMessage(data.value)} />
-            </Field>
-            <small>Nhập câu hỏi và thông tin cần thiết cho thao tác. Giữ mật khẩu và mã xác thực trong hộp đăng nhập HCMUE.</small>
-            <Button type="submit" appearance="primary" disabled={pending || !message.trim()}>Gửi câu hỏi</Button>
-          </form>
         </DialogContent>
-        <DialogActions><Button onClick={onClose}>Đóng trợ lý</Button></DialogActions>
+        <form className="hc-assistant-form" onSubmit={event => { event.preventDefault(); void send(message); }}>
+          <textarea aria-label="Câu hỏi của bạn" placeholder="Nhập câu hỏi…" value={message} maxLength={1200} rows={1}
+            onChange={event => setMessage(event.currentTarget.value)}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                if (!pending) void send(message);
+              }
+            }} />
+          <button type="submit" aria-label="Gửi câu hỏi" title="Gửi câu hỏi" disabled={pending || !message.trim()}>
+            <PaperPlaneTilt size={21} weight="bold" aria-hidden="true" />
+          </button>
+        </form>
       </DialogBody>
       {noticeHost}
     </DialogSurface>

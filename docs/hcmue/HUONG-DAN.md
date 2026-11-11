@@ -8,6 +8,8 @@ Bạn có thể yêu cầu tạo hoặc sửa lịch nháp, mở bước xác nh
 
 Người vận hành cấu hình `OPENROUTER_API_KEY` trong môi trường backend. `HANU_HCMUE_ASSISTANT_MODEL` chọn model và mặc định là `deepseek/deepseek-v3.2`. Khi thiếu key hoặc dịch vụ model gặp lỗi, khung chat trả hướng dẫn từ kho HCMUE. Chat và các thao tác Runner có giới hạn yêu cầu riêng.
 
+Kho tri thức nằm tại `integrations/hcmue/knowledge/guides.json`. Mỗi bài có mã ổn định, mã lỗi nếu có, cụm từ người dùng hay hỏi, các bước xử lý và tài liệu đã đối chiếu. Khi thêm hoặc sửa bài, cập nhật bộ câu hỏi trong `tests/hcmue/knowledge.test.ts` và chạy `npm run test:hcmue-rag`. Bản build web tạo trang nguồn từ cùng kho này để người dùng mở đúng bài được trích dẫn. Dữ liệu hồ sơ, lịch và nhật ký của từng người được đọc riêng theo câu hỏi, bên ngoài kho tri thức.
+
 HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng luồng hiện tại.
 
 ## Mở runner từ website và dùng nhiều máy

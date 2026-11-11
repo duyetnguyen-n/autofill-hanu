@@ -95,9 +95,15 @@ try {
   const assistant = page.getByRole("dialog", { name: "Trợ lý HCMUE" });
   await assistant.getByRole("button", { name: "Giải thích thông báo" }).click();
   await expect(assistant.getByRole("log")).toContainText("Khi HCMUE phản hồi chậm hoặc lỗi");
+  const sourceLink = assistant.getByRole("link", { name: "Khi HCMUE phản hồi chậm hoặc lỗi" });
+  await expect(sourceLink).toHaveAttribute("href", "/hcmue-downloads/knowledge.html#network");
+  const sourcePage = await context.request.get(app.config.origin + "/hcmue-downloads/knowledge.html");
+  expect(sourcePage.ok()).toBe(true);
+  expect(await sourcePage.text()).toContain('id="network"');
   const assistantBox = (await assistant.boundingBox())!;
   expect(assistantBox.x + assistantBox.width).toBeGreaterThan(1400);
   expect(assistantBox.y + assistantBox.height).toBeCloseTo(launcherBox.y + launcherBox.height);
+  await page.screenshot({ path: "test-results/hcmue/corner-chat.png", animations: "disabled" });
   await assistant.getByRole("button", { name: "Đóng trợ lý" }).click();
   await page.getByRole("button", { name: "Tải kỳ thi", exact: true }).click();
   await expect(errorNotice).toBeVisible();
@@ -166,6 +172,34 @@ try {
     timeout: 25000,
   });
   expect(runner.client.submits).toHaveLength(0);
+
+  await launcher.click();
+  const composer = assistant.getByRole("textbox", { name: "Câu hỏi của bạn" });
+  const chatHeader = assistant.getByRole("heading", { name: "Trợ lý HCMUE" });
+  await assistant.evaluate(panel => Promise.allSettled(panel.getAnimations().map(animation => animation.finished)));
+  expect((await assistant.boundingBox())!.x).toBeGreaterThanOrEqual(10);
+  const headerTop = (await chatHeader.boundingBox())!.y;
+  const composerTop = (await composer.boundingBox())!.y;
+  const longQuestion = "Hướng dẫn tạo lịch HCMUE " + "HCMUE".repeat(165);
+  await composer.fill(longQuestion);
+  await composer.press("Enter");
+  await expect(assistant.getByRole("link", { name: "Tạo hoặc sửa lịch nháp" })).toBeVisible();
+  const scrolling = await assistant.evaluate(panel => {
+    const messages = panel.querySelector(".hc-assistant-content")!;
+    panel.scrollTop = 30;
+    return {
+      horizontalPanel: panel.scrollWidth - panel.clientWidth,
+      horizontalMessages: messages.scrollWidth - messages.clientWidth,
+      verticalPanel: panel.scrollTop,
+      verticalMessages: messages.scrollHeight - messages.clientHeight,
+    };
+  });
+  expect(scrolling).toMatchObject({ horizontalPanel: 0, horizontalMessages: 0, verticalPanel: 0 });
+  expect(scrolling.verticalMessages).toBeGreaterThan(0);
+  expect((await chatHeader.boundingBox())!.y).toBeCloseTo(headerTop);
+  expect((await composer.boundingBox())!.y).toBeCloseTo(composerTop);
+  await page.screenshot({ path: "test-results/hcmue/corner-chat-mobile.png" });
+  await assistant.getByRole("button", { name: "Đóng trợ lý" }).click();
 
   await page.setViewportSize({ width: 1440, height: 1100 });
   const ask = async (question: string) => {

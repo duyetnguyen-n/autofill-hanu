@@ -3,18 +3,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answerAssistant, DEFAULT_ASSISTANT_MODEL } from "../../integrations/hcmue/cloud/assistant";
-import { retrieveGuides } from "../../integrations/hcmue/cloud/assistant-knowledge";
 import { runResultText, summarizeRun } from "../../integrations/hcmue/assistant";
 import { scheduleEvents } from "../../integrations/hcmue/runner/diagnostics";
 import type { Schedule } from "../../integrations/hcmue/protocol";
 
 describe("HCMUE assistant", () => {
-  it("prioritizes the notice and finds Vietnamese queries without accents", () => {
-    expect(retrieveGuides("Sao chưa thấy mã đơn?", "HC-PHIEN")[0].id).toBe("login");
-    expect(retrieveGuides("em dang ki duoc chua")[0].id).toBe("result");
-    expect(retrieveGuides("giúp tôi")[0]).toBeUndefined();
-  });
-
   it("offers local guidance and a typed action when the model is unavailable", async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 429 }));
     const reply = await answerAssistant({ message: "Tạo lịch HSK 5 diễn tập" }, { apiKey: "fixture-key", send });
@@ -24,7 +17,7 @@ describe("HCMUE assistant", () => {
 
   it("sends only selected diagnostic fields and discards unknown model actions", async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
-      choices: [{ message: { content: JSON.stringify({ answer: "Xem báo cáo.", proposal: { action: "execute_sql" } }) } }],
+      choices: [{ message: { content: JSON.stringify({ answer: "Xem báo cáo.", referenceIds: ["result", "runner", "../other", "result"], proposal: { action: "execute_sql" } }) } }],
     }));
     const reply = await answerAssistant({
       message: "Giải thích. Email an@example.test và mật khẩu: secret-password",
@@ -41,7 +34,10 @@ describe("HCMUE assistant", () => {
     const sent = request.messages[1].content as string;
     expect(sent).not.toMatch(/an@example.test|secret-password|fixture-identity|fixture-token|fixture-raw/);
     expect(JSON.parse(sent).context.run).toMatchObject({ outcome: "not_sent", events: [{ kind: "opening_error", httpStatus: 503 }] });
+    expect(JSON.parse(sent).guides[0]).toMatchObject({ id: "result", steps: expect.any(Array) });
+    expect(JSON.parse(sent).guides[0]).not.toHaveProperty("source");
     expect(reply).toMatchObject({ source: "model", answer: "Xem báo cáo." });
+    expect(reply.references.map(ref => ref.id)).toEqual(["result"]);
     expect(reply.proposal).toBeUndefined();
   });
 

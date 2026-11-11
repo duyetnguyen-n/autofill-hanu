@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "guides": [
+    {
+      "id": "runner",
+      "title": "Kết nối và đối chiếu Runner",
+      "codes": [
+        "HC-RUNNER-OFFLINE",
+        "HC-DOI-CHIEU-MAY",
+        "HC-DOC-TRANG-THAI",
+        "HC-CHUA-LIEN-KET",
+        "HC-MA-LIEN-KET",
+        "HC-BAN-CU",
+        "HC-LIEN-KET",
+        "HC-GIOI-HAN"
+      ],
+      "aliases": [
+        "runner mất kết nối",
+        "mất mạng",
+        "liên kết máy",
+        "đọc trạng thái",
+        "dấu vân tay",
+        "mở runner"
+      ],
+      "steps": [
+        "Mở Runner HCMUE và kiểm tra máy còn mạng.",
+        "Nếu chưa liên kết, nhập mã từ Runner rồi đối chiếu dấu vân tay.",
+        "Bấm Đọc lại trạng thái để xem dữ liệu trên máy."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "login",
+      "title": "Đăng nhập và khôi phục phiên",
+      "codes": [
+        "HC-PHIEN",
+        "HC-THONG-TIN-DANG-NHAP",
+        "HC-THIEU-DANG-NHAP",
+        "HC-CHUA-TK"
+      ],
+      "aliases": [
+        "bị đăng xuất",
+        "hết phiên",
+        "đăng nhập lại",
+        "sai mật khẩu",
+        "không đăng nhập được",
+        "cccd"
+      ],
+      "steps": [
+        "Mở Thêm tài khoản và đăng nhập lại trên Runner.",
+        "Nếu HCMUE đang mất kết nối, chờ dịch vụ phản hồi rồi thử lại.",
+        "Bấm Kiểm tra hồ sơ/API trước khi chuẩn bị lịch."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "network",
+      "title": "Khi HCMUE phản hồi chậm hoặc lỗi",
+      "codes": [
+        "HC-KET-NOI"
+      ],
+      "aliases": [
+        "timeout",
+        "web sập",
+        "http 500",
+        "không có phản hồi",
+        "hcmue không trả dữ liệu",
+        "lỗi mạng",
+        "lỗi máy chủ"
+      ],
+      "steps": [
+        "Xem báo cáo để xác định bước gặp lỗi và mã HTTP nếu có.",
+        "Nếu Runner đã thử gửi, dùng Kiểm tra kết quả trước khi gửi lại.",
+        "Khi HCMUE phản hồi, chạy lại bước kiểm tra bị lỗi."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "result",
+      "title": "Đối chiếu kết quả đăng ký",
+      "codes": [
+        "HC-DOI-CHIEU"
+      ],
+      "aliases": [
+        "đăng ký được chưa",
+        "sao chưa thấy",
+        "chưa có kết quả",
+        "bấm rồi",
+        "đã gửi",
+        "mã đơn",
+        "thanh toán",
+        "lịch 15h",
+        "đăng kí thành công"
+      ],
+      "steps": [
+        "Mở Lịch gửi và kết quả, chọn đúng lịch rồi bấm Kiểm tra kết quả nếu cần.",
+        "HCMUE xác nhận đăng ký khi đối chiếu được mã đơn. Xem mã và hạn thanh toán trên cổng trường.",
+        "Nếu lần gửi chưa rõ kết quả, kiểm tra lịch sử HCMUE trước khi gửi lại."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "profile",
+      "title": "Kiểm tra hồ sơ HCMUE",
+      "codes": [
+        "HC-HO-SO"
+      ],
+      "aliases": [
+        "hồ sơ",
+        "ảnh thẻ",
+        "xác thực email",
+        "kiểm tra api"
+      ],
+      "steps": [
+        "Hoàn thiện ảnh thẻ và xác thực email trên cổng HCMUE.",
+        "Quay lại chọn tài khoản và kỳ thi rồi bấm Kiểm tra hồ sơ/API."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "catalog",
+      "title": "Chọn kỳ thi còn chỗ",
+      "codes": [
+        "HC-HET-CHO",
+        "HC-TRUNG-LICH",
+        "HC-TAI-KY-THI",
+        "HC-CHON-MAU"
+      ],
+      "aliases": [
+        "hết chỗ",
+        "trùng lịch thi",
+        "còn chỗ",
+        "tải kỳ thi",
+        "đợt thi",
+        "chưa mở"
+      ],
+      "steps": [
+        "Bấm Tải kỳ thi để đọc lại danh sách từ HCMUE.",
+        "Nếu trường báo trùng lịch, kiểm tra lịch sử và chọn một đợt phù hợp.",
+        "Chọn đúng đợt và giờ gửi trong khung đăng ký."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "prepare",
+      "title": "Tạo hoặc sửa lịch nháp",
+      "codes": [
+        "HC-CHON-TK",
+        "HC-GIO-GUI",
+        "HC-LICH-DA-DOI",
+        "HC-CHUA-CHUAN-BI"
+      ],
+      "aliases": [
+        "tạo lịch",
+        "đặt lịch",
+        "đổi giờ",
+        "sửa lịch",
+        "lịch nháp",
+        "chuẩn bị lịch",
+        "câu hỏi bổ sung"
+      ],
+      "steps": [
+        "Chọn một tài khoản, kỳ thi, giờ Việt Nam và chế độ chạy.",
+        "Bấm Chuẩn bị và trả lời câu hỏi bổ sung nếu HCMUE yêu cầu.",
+        "Nếu sửa giờ hoặc kỳ thi, chuẩn bị lại để lưu lịch mới."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "arm",
+      "title": "Bật lịch và kiểm tra quyền đăng ký thật",
+      "codes": [
+        "HC-QUYEN-LIVE",
+        "HC-LICH-CHUA-HOP-LE",
+        "HC-XAC-NHAN-LICH",
+        "HC-LICH-DANG-CHAY",
+        "HC-DANG-CHAY",
+        "HC-KHONG-CO-LICH-CHAY"
+      ],
+      "aliases": [
+        "bật lịch",
+        "diễn tập",
+        "quyền live",
+        "đăng ký thật",
+        "dừng lịch",
+        "không bật được"
+      ],
+      "steps": [
+        "Chuẩn bị lịch rồi kiểm tra ngày giờ, kỳ thi và chế độ trước khi xác nhận bật.",
+        "Đăng ký thật cần quyền Live. Diễn tập không gửi đơn đến trường.",
+        "Giữ Runner mở, máy có mạng và tránh để máy ngủ trong thời gian chạy."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "recovery",
+      "title": "Kiểm tra lịch sau khi khởi động lại Runner",
+      "codes": [],
+      "aliases": [
+        "khởi động lại",
+        "mở lại runner",
+        "tắt rồi mở máy",
+        "restart runner"
+      ],
+      "steps": [
+        "Đọc lại trạng thái để xem những lịch đã lưu trên máy.",
+        "Sau khi khởi động lại, Runner dừng lịch chưa gửi. Chuẩn bị và bật lại nếu đợt thi vẫn còn thời gian.",
+        "Nếu lịch có khả năng đã gửi, dùng Kiểm tra kết quả trước khi tạo lần gửi mới."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    },
+    {
+      "id": "payment",
+      "title": "Xem mã đơn và thanh toán trên HCMUE",
+      "codes": [],
+      "aliases": [
+        "thanh toán ở đâu",
+        "hạn thanh toán",
+        "đóng lệ phí",
+        "nộp tiền thi"
+      ],
+      "steps": [
+        "Khi lịch hiện Chờ thanh toán, dùng mã đơn để kiểm tra đăng ký trong lịch sử trên cổng HCMUE.",
+        "Thanh toán trên cổng HCMUE theo hạn trường hiển thị."
+      ],
+      "source": "docs/hcmue/HUONG-DAN.md"
+    }
+  ]
+}
