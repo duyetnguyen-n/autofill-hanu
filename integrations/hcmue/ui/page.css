@@ -23,6 +23,13 @@
   --hc-accent: #83ccb0;
   --hc-error: #ffada6;
 }
+/* Fluent UI copies the provider class to portal mounts. Keep only its theme
+   variables there; a duplicate workspace background hides the real page. */
+.hc-app[data-portal-node] {
+  min-height: 0;
+  background: transparent;
+  display: block;
+}
 .hc-app * {
   box-sizing: border-box;
 }
@@ -117,7 +124,14 @@
 @media (prefers-reduced-motion: reduce) {
   .hc-alert-timer { animation-timing-function: steps(1, end); }
 }
-.fui-DialogSurface.hc-assistant {
+.hc-assistant {
+  position: fixed;
+  z-index: 40;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 16px;
+  background: var(--colorNeutralBackground1);
+  color: var(--colorNeutralForeground1);
+  box-shadow: 0 16px 70px rgb(10 35 29 / 19%);
   inset: auto var(--hc-float-right) var(--hc-float-bottom) auto;
   margin: 0;
   width: 420px;
@@ -145,7 +159,7 @@
   background: #216951;
   color: #fff;
 }
-.hc-assistant-header h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.hc-assistant-header h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; margin: 0; }
 .hc-assistant-header button, .hc-assistant-form button {
   display: grid;
   place-items: center;

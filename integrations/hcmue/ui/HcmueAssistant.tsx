@@ -1,5 +1,6 @@
-import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Spinner } from "@fluentui/react-components";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode, type ComponentProps } from "react";
+import { Button, Field, Input, Select, Spinner } from "@fluentui/react-components";
+import { AssistantBoundary } from "../../../manager/ui/assistant/AssistantBoundary";
 import { ChatsCircle, PaperPlaneTilt, X } from "@phosphor-icons/react";
 import { type AssistantContext, type AssistantProposal, type AssistantReply, runObservation, runResultText } from "../assistant";
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
@@ -17,7 +18,7 @@ const localTime = (value: string) => new Date(value).toLocaleString("vi-VN", { t
 const emptyPlan: AccountPlan = { examKey: "", target: "", test: true };
 const actionLabel = { prepare: "Xem trước lịch nháp", edit: "Xem trước thay đổi", arm: "Mở xác nhận bật lịch", reconcile: "Kiểm tra kết quả" };
 
-export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled, ready, canPrepare, busy, getContext, onClose, onPrepare, onScheduleAction, noticeHost }: {
+function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, ready, canPrepare, busy, getContext, onClose, onPrepare, onScheduleAction, noticeHost }: {
   scope: AssistantScope;
   schedules: Schedule[];
   exams: Exam[];
@@ -40,6 +41,13 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
   const [draft, setDraft] = useState<Draft>();
   const requestRef = useRef<AbortController | undefined>(undefined);
   const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [onClose]);
   const revealDraft = useCallback((panel: HTMLDivElement | null) => {
     panel?.scrollIntoView({ block: "nearest" });
   }, []);
@@ -86,6 +94,8 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
       });
       const reply = await response.json() as AssistantReply & { error?: string };
       if (!response.ok) throw new Error(reply.error || "Chưa nhận được câu trả lời.");
+      if (typeof reply.answer !== "string") throw new Error("Trợ lý trả dữ liệu chưa hợp lệ. Gửi lại câu hỏi để thử lại.");
+      reply.references = Array.isArray(reply.references) ? reply.references.filter(ref => ref && typeof ref.id === "string" && typeof ref.title === "string") : [];
       const run = context.run && (context.runnerConnected ? "" : "Theo trạng thái đã đọc gần nhất. ") + runResultText(context.run);
       const inspection = context.inspection;
       const report = inspection && `Báo cáo lúc ${localTime(inspection.checkedAt)}. Đọc được ${inspection.passed}/${inspection.total} mục kiểm tra.`;
@@ -121,11 +131,10 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
     } });
   }
 
-  return <Dialog open onOpenChange={(_, data) => { if (!data.open) onClose(); }}>
-    <DialogSurface className="hc-assistant">
-      <DialogBody className="hc-assistant-body">
+  return <aside className="hc-assistant" role="dialog" aria-modal="false" aria-labelledby="hc-assistant-title">
+      <div className="hc-assistant-body">
         <header className="hc-assistant-header">
-          <DialogTitle><ChatsCircle size={23} weight="duotone" aria-hidden="true" /> Trợ lý HCMUE</DialogTitle>
+          <h2 id="hc-assistant-title"><ChatsCircle size={23} weight="duotone" aria-hidden="true" /> Trợ lý HCMUE</h2>
           <button type="button" aria-label="Đóng trợ lý" onClick={onClose}><X size={20} aria-hidden="true" /></button>
         </header>
         <div className="hc-assistant-scope">
@@ -140,7 +149,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
             </Select>
           </Field>}
         </div>
-        <DialogContent className="hc-assistant-content" ref={logRef} tabIndex={0}>
+        <div className="hc-assistant-content" ref={logRef} tabIndex={0}>
           <div className="hc-assistant-turns" role="log" aria-label="Cuộc trò chuyện">
             {!turns.length && <>
               <article className="hc-assistant-turn hc-assistant-assistant"><p>Chào bạn! Mình có thể hướng dẫn dùng HCMUE, giải thích lỗi và kiểm tra trạng thái lịch.</p></article>
@@ -155,7 +164,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
               {turn.role === "assistant" && <strong>{turn.reply?.source === "guide" ? "Hướng dẫn HCMUE" : "Trợ lý HCMUE"}</strong>}
               {turn.result && <p className="hc-assistant-result">{turn.result}</p>}
               <p>{turn.text}</p>
-              {!!turn.reply?.references.length && <ul className="hc-assistant-sources" aria-label="Nguồn tham khảo">
+              {!!turn.reply?.references?.length && <ul className="hc-assistant-sources" aria-label="Nguồn tham khảo">
                 {turn.reply.references.map(ref => <li key={ref.id}><a href={ref.href ?? `/hcmue-downloads/knowledge.html#${ref.id}`} target="_blank" rel="noreferrer">{ref.title}</a></li>)}
               </ul>}
             </article>)}
@@ -201,9 +210,9 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
             {draftProblem && <small>{draftProblem}</small>}
             <Button appearance="primary" disabled={!!draftProblem} onClick={() => onPrepare(draft, preparedDraft?.id ?? null)}>Xác nhận chuẩn bị nháp</Button>
           </div>}
-        </DialogContent>
+        </div>
         <form className="hc-assistant-form" onSubmit={event => { event.preventDefault(); void send(message); }}>
-          <textarea aria-label="Câu hỏi của bạn" placeholder="Nhập câu hỏi…" value={message} maxLength={1200} rows={1}
+          <textarea ref={inputRef} aria-label="Câu hỏi của bạn" placeholder="Nhập câu hỏi…" value={message} maxLength={1200} rows={1}
             onChange={event => setMessage(event.currentTarget.value)}
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -215,8 +224,11 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
             <PaperPlaneTilt size={21} weight="bold" aria-hidden="true" />
           </button>
         </form>
-      </DialogBody>
+      </div>
       {noticeHost}
-    </DialogSurface>
-  </Dialog>;
+    </aside>;
+}
+
+export function HcmueAssistant(props: ComponentProps<typeof HcmueAssistantPanel>) {
+  return <AssistantBoundary onClose={props.onClose}><HcmueAssistantPanel {...props}/></AssistantBoundary>;
 }

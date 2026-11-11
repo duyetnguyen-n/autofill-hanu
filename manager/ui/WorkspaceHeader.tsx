@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, Dialog, DialogTrigger, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions } from '@fluentui/react-components';
-import { BookOpen, Moon, Sun, UserCircle, Clock, ArrowUpRight, ShieldCheck } from '@phosphor-icons/react';
+import { BookOpen, Moon, Sun, UserCircle, Clock, ArrowUpRight, ShieldCheck, Graph } from '@phosphor-icons/react';
 import type { Account } from '../../src/account';
 import './workspace-header.css';
 
@@ -15,6 +15,7 @@ export function WorkspaceHeader({ title, icon, context='Không gian làm việc'
     <div className="wh-location"><span className="wh-product-icon">{icon}</span><div><span className="wh-context">{context}</span><strong>{title}</strong></div></div>
     <div className="wh-actions">
       <span className="wh-timezone"><Clock size={14}/>Giờ Việt Nam · UTC+7</span>
+      {account&&!['/knowledge','/hcmue/knowledge'].includes(location.pathname)&&<Button as="a" href="/knowledge" className="wh-knowledge" appearance="subtle" icon={<Graph size={18}/>} aria-label="Kho tri thức & vector">Kho tri thức</Button>}
       {guideHref&&<Button as="a" href={guideHref} className="wh-guide" appearance="subtle" icon={<BookOpen size={18}/>} aria-label={guideLabel}><span>Hướng dẫn</span></Button>}
       <Button className="wh-icon-button" appearance="subtle" icon={dark?<Sun size={18}/>:<Moon size={18}/>} aria-label={themeLabel} onClick={toggleTheme}/>
       {(tools||account)&&<Dialog surfaceMotion={null} inertTrapFocus><DialogTrigger disableButtonEnhancement><Button className="wh-icon-button wh-account-button" appearance="subtle" icon={<UserCircle size={20}/>} aria-label="Tài khoản và công cụ"><span className="wh-account-email">{account?.email??'Công cụ'}</span></Button></DialogTrigger><DialogSurface className="workspace-tools-dialog"><DialogBody><DialogTitle>Tài khoản và công cụ</DialogTitle><DialogContent>

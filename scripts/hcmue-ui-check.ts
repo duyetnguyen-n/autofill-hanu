@@ -94,6 +94,10 @@ try {
   await page.screenshot({ path: "test-results/hcmue/corner-notice.png" });
   await errorNotice.getByRole("button", { name: "Hỏi AI", exact: true }).click();
   const assistant = page.getByRole("dialog", { name: "Trợ lý HCMUE" });
+  await expect(assistant).toHaveAttribute("aria-modal", "false");
+  await expect(page.locator(".hc-app")).toHaveCount(1);
+  await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden", "true");
+  await expect(page.getByRole("heading", { name: "Sẵn sàng trước giờ mở." })).toBeVisible();
   await assistant.getByRole("button", { name: "Giải thích thông báo" }).click();
   await expect(assistant.getByRole("log")).toContainText("Khi HCMUE phản hồi chậm hoặc lỗi");
   const sourceLink = assistant.getByRole("link", { name: "Khi HCMUE phản hồi chậm hoặc lỗi" });
@@ -257,21 +261,25 @@ try {
   ).toBeVisible();
   await app.pool.query("UPDATE hanu.accounts SET role='admin' WHERE user_id=$1", [users[0]]);
   await page.goto(app.config.origin + "/hcmue");
-  await page.getByRole("link", { name: "Kho tri thức", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Kho tri thức HCMUE", exact: true })).toBeVisible();
+  await page.getByRole("banner").getByRole("link", { name: "Kho tri thức & vector", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Không gian tri thức.", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Thêm tài liệu", exact: true }).click();
   await page.getByLabel("Tải tệp .md hoặc .txt").setInputFiles({
     name: "Quy cách ảnh.md", mimeType: "text/markdown",
     buffer: Buffer.from("# Nền ảnh\nDùng nền trắng.\n# Định dạng\nLưu ảnh JPEG."),
   });
+  await page.getByLabel("Ứng dụng", { exact: true }).selectOption("hcmue");
   await page.getByText("Xem trước 2 đoạn", { exact: true }).click();
   await expect(page.getByText("Dùng nền trắng.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Xuất bản", exact: true }).click();
   await expect(page.getByText("Tài liệu đã được xuất bản.", { exact: true })).toBeVisible();
   await app.pool.query(`UPDATE hcmue.knowledge_chunks SET embedding=(CASE ordinal WHEN 0 THEN '[1,0,0]' ELSE '[0,1,0]' END)::extensions.vector,
     embedding_model=$1 WHERE document_id IN (SELECT id FROM hcmue.knowledge_documents WHERE title='Quy cách ảnh')`, [DEFAULT_EMBEDDING_MODEL]);
-  await page.getByRole("button", { name: "Xem bản đồ", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "2D", exact: true }).click();
   await page.getByRole("group", { name: "Bản đồ vector tài liệu" }).getByRole("button", { name: "Quy cách ảnh · Định dạng" }).click();
   await expect(page.getByLabel("Đoạn đang xem")).toHaveValue(/-1$/);
+  await page.getByRole("button", { name: "Thử truy xuất", exact: true }).click();
   await page.getByLabel("Câu hỏi thử").fill("Ảnh JPEG");
   await page.getByRole("button", { name: "So sánh kết quả" }).click();
   await expect(page.getByText(/Thời gian truy xuất:/)).toBeVisible();
@@ -280,7 +288,7 @@ try {
   await expect(page.getByRole("heading", { name: "Định dạng", exact: true })).toBeVisible();
   await page.goBack();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("heading", { name: "Kho tri thức HCMUE", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Không gian tri thức.", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: "test-results/hcmue/knowledge-mobile.png", fullPage: true });
   expect(errors).toEqual([]);

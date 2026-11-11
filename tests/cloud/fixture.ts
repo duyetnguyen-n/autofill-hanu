@@ -68,10 +68,10 @@ export async function databaseFixture(vectorEnabled = false) {
   return { db, pool, objects, blobs, repository, pair, async close() { await db.close(); } };
 }
 
-export async function httpFixture(uiDir?: string, hcmueEnabled = false, chinesetestEnabled = false, knowledgeEnabled = false) {
+export async function httpFixture(uiDir?: string, hcmueEnabled = false, chinesetestEnabled = false, knowledgeEnabled = false, assistantFetch?: typeof fetch) {
   const fixture = await databaseFixture(knowledgeEnabled);
   if (hcmueEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610210001_hcmue_runners.sql','utf8'));
-  if (knowledgeEnabled) await fixture.db.exec(await readFile('supabase/migrations/202611110001_hcmue_knowledge.sql','utf8'));
+  if (knowledgeEnabled) await fixture.db.exec(await readFile('supabase/migrations/202611110002_system_knowledge.sql','utf8'));
   if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610220001_chinesetest_runners.sql','utf8'));
   if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610240001_chinesetest_profiles.sql','utf8'));
   const authorized = new Set(['account-a', 'account-b']);
@@ -94,8 +94,9 @@ export async function httpFixture(uiDir?: string, hcmueEnabled = false, chineset
     };
   } };
   const config = { origin: 'http://127.0.0.1:0', host: '127.0.0.1', port: 0, development: true,
-    supabaseUrl: 'http://127.0.0.1:54321', publishableKey: 'fixture-only', secretKey: 'fixture-only', databaseUrl: 'fixture-only', hcmueEnabled, chinesetestEnabled };
-  const app = await serveCloud({ config, repository: fixture.repository, auth, port: 0, uiDir });
+    supabaseUrl: 'http://127.0.0.1:54321', publishableKey: 'fixture-only', secretKey: 'fixture-only', databaseUrl: 'fixture-only', hcmueEnabled, chinesetestEnabled,
+    hcmueAssistant: assistantFetch ? { apiKey: 'fixture-only' } : undefined };
+  const app = await serveCloud({ config, repository: fixture.repository, auth, port: 0, uiDir, assistantFetch });
   config.origin = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
   const api = async (path: string, owner = 0, data?: unknown, method = data === undefined ? 'GET' : 'POST') => fetch(`${config.origin}/api/${path}`, {
     method, headers: { Cookie: `test-account=account-${owner ? 'b' : 'a'}`, Origin: config.origin, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data)

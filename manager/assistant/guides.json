@@ -1,0 +1,40 @@
+{
+  "guides": [
+    {
+      "id": "system-knowledge", "scope": "system", "title": "Kho tri thức và bản đồ vector", "codes": [],
+      "aliases": ["xem vector", "bản đồ vector", "kho tri thức", "thêm tài liệu", "rag", "tự học"],
+      "steps": ["Mở Kho tri thức từ thanh điều hướng hoặc truy cập /knowledge. Chọn Bản đồ vector để khám phá các đoạn đã lập chỉ mục.", "Quản trị viên có thể thêm tệp Markdown hoặc TXT, xem trước và xuất bản. Chọn Tạo vector nếu tài liệu chưa có embedding.", "RAG tra cứu các tài liệu đã xuất bản, không tự huấn luyện model từ cuộc trò chuyện. Các điểm 2D/3D là phép chiếu vector, không phải toàn bộ không gian ngữ nghĩa."],
+      "source": "docs/hcmue/HUONG-DAN.md", "href": "/knowledge"
+    },
+    {
+      "id": "system-access", "scope": "system", "title": "Tài khoản, quyền truy cập và quyền Live", "codes": [],
+      "aliases": ["quyền live", "chờ duyệt", "đăng nhập google", "quản trị viên", "quyền sử dụng", "tài khoản bị khóa"],
+      "steps": ["Mở Tài khoản để xem trạng thái quyền sử dụng. Tài khoản cần xác minh email và được quản trị viên duyệt.", "Quyền Live cho phép đăng ký thật. Diễn tập chỉ kiểm tra luồng, không chứng minh đã gửi đăng ký.", "Nếu gặp lỗi kết nối, chờ trang kiểm tra lại phiên. Chỉ đăng nhập lại khi website xác nhận phiên đã hết hạn."],
+      "source": "docs/CLOUD.md", "href": "/account"
+    },
+    {
+      "id": "forms-prepare", "scope": "forms", "title": "Chuẩn bị profile Google Forms", "codes": [],
+      "aliases": ["google forms", "chuẩn bị profile", "đồng bộ hồ sơ", "liên kết extension", "form tự điền", "profile chưa sẵn sàng"],
+      "steps": ["Mở Google Forms, tải extension và cài trong từng Chrome profile cần sử dụng.", "Liên kết đúng profile với website. Mở Chi tiết để gán email, nhập hồ sơ và ảnh, rồi lưu và đồng bộ.", "Chạy Test trước. Đọc các mục cần xử lý và kiểm tra đúng tài khoản, đúng form trước khi chạy Live."],
+      "source": "docs/forms/index.html", "href": "/extension-downloads/index.html"
+    },
+    {
+      "id": "forms-direct", "scope": "forms", "title": "Google Forms Direct", "codes": [],
+      "aliases": ["google forms direct", "chế độ direct", "điền trực tiếp", "tiếp quản thủ công", "form chưa gửi"],
+      "steps": ["Mở Google Forms Direct trong điều hướng ứng dụng. Chuẩn bị đúng profile và chọn chế độ Test hoặc Live.", "Khi tiếp quản thủ công, tool giữ lượt để bạn thao tác trên form. Kiểm tra form và trạng thái trước khi tiếp tục.", "Chưa rõ kết quả gửi không có nghĩa là chưa gửi. Đối chiếu trạng thái và lịch sử trước khi chạy lại."],
+      "source": "docs/forms/index.html", "href": "/google-direct"
+    },
+    {
+      "id": "forms-schedule", "scope": "forms", "title": "Lịch săn link và giờ chạy Google Forms", "codes": [],
+      "aliases": ["săn link", "lịch google forms", "đặt lịch forms", "theo dõi facebook", "link đúng ngày"],
+      "steps": ["Mở phần lịch trên Google Forms, chọn đúng cấp HSK, ngày và Chrome profile đọc nguồn.", "Nếu nguồn là Facebook, cần cấp quyền Facebook cho extension trong profile theo dõi.", "Kiểm tra lại điều kiện ngày và giờ. Chọn chạy khi có link hoặc chờ giờ đã đặt, rồi xem trạng thái lịch trên trang."],
+      "source": "docs/SCHEDULED-HSK.md", "href": "/"
+    },
+    {
+      "id": "chinesetest-runner", "scope": "chinesetest", "title": "Kết nối và chuẩn bị ChineseTest", "codes": [],
+      "aliases": ["chinesetest", "chinese test", "runner chinesetest", "thi đông á", "điểm thi chinesetest", "lịch chinesetest"],
+      "steps": ["Mở ChineseTest và kết nối đúng ChineseTest Runner. Runner ChineseTest và HCMUE có kho đăng nhập riêng.", "Đăng nhập tài khoản thi, kiểm tra hồ sơ, ảnh và phiên đăng nhập trước khi tạo lịch.", "Chọn loại thi, cấp thi, ngày, hình thức và điểm thi. Tải danh mục rồi kiểm tra môn đi kèm, lệ phí và lịch trước khi bật."],
+      "source": "docs/chinesetest/index.html", "href": "/chinesetest-downloads/index.html"
+    }
+  ]
+}

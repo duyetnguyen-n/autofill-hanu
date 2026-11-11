@@ -451,7 +451,7 @@ export function HcmuePage({
         {label:'Máy thực thi',href:'#hc-device',icon:<Desktop size={19}/>},
       ]}/>
       <div className="hc-main">
-        <WorkspaceHeader title="HSK HCMUE" icon={<Desktop size={20}/>} dark={dark} toggleTheme={toggleTheme} themeLabel="Đổi giao diện" guideHref="/hcmue-downloads/index.html" guideLabel="Hướng dẫn kết nối" account={account} logout={logout} products={[{label:'Google Forms',href:'/'},...(chinesetestEnabled?[{label:'ChineseTest',href:'/chinesetest'}]:[])]} primaryAction={<>{account.role === "admin" && <Button as="a" href="/hcmue/knowledge">Kho tri thức</Button>}<Button appearance="primary" icon={<LinkRegular/>} disabled={busy} onClick={()=>setPairOpen(true)}>Liên kết máy</Button></>}/>
+        <WorkspaceHeader title="HSK HCMUE" icon={<Desktop size={20}/>} dark={dark} toggleTheme={toggleTheme} themeLabel="Đổi giao diện" guideHref="/hcmue-downloads/index.html" guideLabel="Hướng dẫn kết nối" account={account} logout={logout} products={[{label:'Google Forms',href:'/'},...(chinesetestEnabled?[{label:'ChineseTest',href:'/chinesetest'}]:[])]} primaryAction={<Button appearance="primary" icon={<LinkRegular/>} disabled={busy} onClick={()=>setPairOpen(true)}>Liên kết máy</Button>}/>
         <main className="hc-workspace">
           <div className="hc-heading">
             <div>

@@ -1,6 +1,7 @@
 import {HcmueRelay} from '../../integrations/hcmue/cloud/relay';
 import {answerAssistant, redactAssistantText} from '../../integrations/hcmue/cloud/assistant';
 import {HcmueKnowledge} from '../../integrations/hcmue/cloud/knowledge';
+import {answerSystemAssistant, requestedWorkspace} from '../assistant/answer';
 import {ChineseTestRelay} from '../../integrations/chinesetest/cloud/relay';
 import {createReadStream} from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -66,12 +67,13 @@ async function body(req: IncomingMessage,limit=Math.ceil(MAX_ATTACHMENT_BYTES * 
 
 export async function serveCloud(options: {
   config: CloudConfig; repository: CloudRepository; auth?: WebAuth; uiDir?: string;
-  port?: number; host?: string;
+  port?: number; host?: string; assistantFetch?: typeof fetch;
 }) {
   const { config, repository } = options;
   const auth = options.auth ?? supabaseAuth(config);
   const accounts = new Accounts(repository.pool, config.bootstrapAdminEmail);
-  const knowledge = new HcmueKnowledge(repository.pool, config.hcmueAssistant);
+  const assistantOptions = { ...config.hcmueAssistant, send: options.assistantFetch };
+  const knowledge = new HcmueKnowledge(repository.pool, assistantOptions);
   const accessChecks = new AccessChecks(owner=>accounts.get(owner));
   const changingAccess = new Set<string>();
   async function allowed(owner: string, fresh = false) {
@@ -265,17 +267,34 @@ export async function serveCloud(options: {
         }
         if (emergencyError) throw new CloudError(emergencyError, 503);
         if (!ready || closing) { res.setHeader('Retry-After', '2'); throw new CloudError(updating, 503); }
+        if (path === '/api/assistant/chat') {
+          assertAccess(account);
+          if (req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý.', 404);
+          assistantRate.check(user.id, 12, 60000);
+          return json(res, await answerSystemAssistant(await body(req, 24 * 1024), { ...assistantOptions, knowledge }));
+        }
         if (path === '/api/hcmue/assistant/chat') {
           assertAccess(account);
           if (!hcmue || req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý HCMUE.', 404);
           assistantRate.check(user.id, 12, 60000);
-          return json(res, await answerAssistant(await body(req, 24 * 1024), { ...config.hcmueAssistant, knowledge }));
+          const input = await body(req, 24 * 1024);
+          const workspace = requestedWorkspace(input.message);
+          return json(res, workspace && workspace !== 'hcmue'
+            ? await answerSystemAssistant({ ...input, workspace }, { ...assistantOptions, knowledge })
+            : await answerAssistant(input, { ...assistantOptions, knowledge }));
         }
         rate.check(`api:${user.id}`, 300, 60000);
-        const knowledgeDocument = /^\/api\/hcmue\/knowledge\/(doc-[a-f0-9]{32})$/.exec(path);
-        if (hcmue && knowledgeDocument && req.method === 'GET') {
+        const knowledgeDocument = /^\/api\/(?:hcmue\/)?knowledge\/(doc-[a-f0-9]{32})$/.exec(path);
+        if (knowledgeDocument && req.method === 'GET') {
           assertAccess(account);
           return json(res, await knowledge.document(knowledgeDocument[1]));
+        }
+        if ((path === '/api/knowledge' || path === '/api/knowledge/map') && req.method === 'GET') {
+          assertAccess(account);
+          if (path.endsWith('/map')) return json(res, await knowledge.map());
+          const documents = await knowledge.list();
+          return json(res, { documents: account.role === 'admin' ? documents : documents.filter(doc => doc.published),
+            model: knowledge.model, embeddingEnabled: knowledge.embeddingEnabled });
         }
         if (path === '/api/account' && req.method === 'PATCH') {
           rate.check(`account:${user.id}`, 10, 60000);
@@ -286,8 +305,8 @@ export async function serveCloud(options: {
         if (path.startsWith('/api/admin/')) {
           await accounts.requireAdmin(user.id);
           rate.check(`admin:${user.id}`, 120, 60000);
-          const knowledgePath = '/api/admin/hcmue/knowledge';
-          if (hcmue && path.startsWith(knowledgePath)) {
+          const knowledgePath = path.startsWith('/api/admin/hcmue/knowledge') ? '/api/admin/hcmue/knowledge' : '/api/admin/knowledge';
+          if (path === knowledgePath || path.startsWith(knowledgePath + '/')) {
             const action = path.slice(knowledgePath.length);
             if (!action && req.method === 'GET') return json(res, {
               documents: await knowledge.list(), model: knowledge.model, embeddingEnabled: knowledge.embeddingEnabled,
@@ -468,16 +487,16 @@ export async function serveCloud(options: {
         res.setHeader('Content-Length',archive.length);
         return res.end(archive);
       }
-      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', '/google-direct', ...(hcmue?['/hcmue','/hcmue/knowledge']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
+      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', '/google-direct', '/knowledge', '/hcmue/knowledge', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');
       if((path.startsWith('/hcmue-downloads/')||path.startsWith('/chinesetest-downloads/'))&&extname(file)==='.zip'){res.setHeader('Content-Length',statSync(file).size);createReadStream(file).on('error',()=>res.destroy()).pipe(res);return;}
       res.end(readFileSync(file));
     } catch (error) {
-      if (/^\/api\/(?:admin\/)?hcmue\/knowledge(?:\/|\?|$)/.test(req.url ?? '') &&
-          /^(42P01|3F000|42883)$/.test(String((error as { code?: string }).code ?? ''))) {
-        return json(res, { error: 'Kho tri thức chưa được cài trên Supabase. Áp dụng migration 202611110001_hcmue_knowledge.sql rồi tải lại.' }, 503);
+      if (/^\/api\/(?:admin\/)?(?:hcmue\/)?knowledge(?:\/|\?|$)/.test(req.url ?? '') &&
+          /^(42P01|42703|3F000|42883)$/.test(String((error as { code?: string }).code ?? ''))) {
+        return json(res, { error: 'Kho tri thức cần cập nhật Supabase. Chạy migration 202611110002_system_knowledge.sql (thay thế bước cài 202611110001_hcmue_knowledge.sql) rồi tải lại.' }, 503);
       }
       if (!(error instanceof CloudError) && /^(08|53|57|58)/.test(String((error as { code?: string }).code ?? ''))) failClosed(error);
       // Database messages may include private values. Do not expose them.

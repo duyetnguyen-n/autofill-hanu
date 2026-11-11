@@ -10,6 +10,7 @@ await viteBuild({configFile:'manager/vite.config.ts'});
 
 // Documentation only; runner archives are produced by package:hcmue after this build.
 const {cp,writeFile}=await import('node:fs/promises');
+await cp('supabase/migrations/202611110002_system_knowledge.sql','build/cloud-ui/knowledge-setup.sql');
 await cp('docs/hcmue','build/cloud-ui/hcmue-downloads',{recursive:true});
 const escapeHtml = value => value.replace(/[&<>"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
 const guides = hcmueKnowledge.guides.map(guide => `

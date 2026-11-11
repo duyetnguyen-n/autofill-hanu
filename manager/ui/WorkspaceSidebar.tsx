@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpRight, Browsers, Exam, ShieldCheck, SignOut } from '@phosphor-icons/react';
+import { ArrowUpRight, Browsers, Exam, ShieldCheck, SignOut, Graph } from '@phosphor-icons/react';
 
 export type WorkspaceNavItem = {
   label: string;
@@ -40,7 +40,9 @@ export function WorkspaceSidebar({page, chinesetestEnabled=false, hcmueEnabled=f
       </a>
     )}</nav>
     <div className="ws-nav-label ws-manage-label">QUẢN LÝ</div>
-    <nav className="ws-secondary" aria-label="Điều hướng">{items.map(item => {
+    <nav className="ws-secondary" aria-label="Điều hướng">
+    {!local&&<a className="ws-nav-item" href="/knowledge"><Graph size={20}/><span>Kho tri thức & vector</span></a>}
+    {items.map(item => {
       const content=<>{item.icon}<span>{item.label}</span>{item.count!==undefined&&<span className="ws-count">{item.count}</span>}</>;
       return item.href ? <a key={item.label} href={item.href} className={`ws-nav-item ${item.active?'is-selected':''}`}>{content}</a> :
         <button key={item.label} type="button" onClick={item.onClick} className={`ws-nav-item ${item.active?'is-selected':''}`} aria-pressed={item.active}>{content}</button>;

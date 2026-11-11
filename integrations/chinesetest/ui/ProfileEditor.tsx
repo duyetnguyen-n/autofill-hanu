@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
 import { personalFrom, type Personal, type Command, type Row, type CloudPhoto, type Portrait } from "../protocol";
 import { profileFromWebsite } from "./planning";
@@ -13,9 +13,13 @@ export function ProfileEditor({ accountId, deviceId, name, request, close }: { a
   const [catalogLoading,setCatalogLoading]=useState<Record<string,boolean>>({countries:true,languages:true,config:true,professions:true}),[catalogErrors,setCatalogErrors]=useState<Record<string,string>>({}),[imageError,setImageError]=useState(false);
   const surface=useRef<HTMLDivElement>(null);
   const activateModal=useActivateModal();
-  // The form initially disables every control while loading. Explicitly
-  // activate after Tabster has observed the new surface, including on reopen.
-  useEffect(()=>{activateModal(surface.current || undefined);},[activateModal]);
+  // During loading there may be no focusable form fields. Focus the surface
+  // itself so Tab starts inside the modal, including after a reopen.
+  useLayoutEffect(()=>{
+    const element=surface.current;
+    if(element&&!element.contains(document.activeElement))element.focus({preventScroll:true});
+    activateModal(element ?? undefined);
+  },[activateModal,busy]);
   const mounted = useRef(true), revision = useRef(0), acting=useRef(false), photoVersion=useRef<string|null>(null);
   const confirmation=useRef<{id:string;resolve():void;reject(e:Error):void;timer:ReturnType<typeof setTimeout>}|null>(null);
   const pendingFile=useRef<Row|null>(null),[canRetryUpload,setCanRetryUpload]=useState(false),[imageVerified,setImageVerified]=useState(false);

@@ -1,5 +1,10 @@
 import corpus from "../knowledge/guides.json";
-export const builtInGuides = corpus.guides;
+import sharedCorpus from "../../../manager/assistant/guides.json";
+import type { KnowledgeScope } from "../knowledge/documents";
+export const builtInGuides = [
+  ...corpus.guides.map(guide => ({ ...guide, scope: "hcmue" as KnowledgeScope, href: `/hcmue-downloads/knowledge.html#${guide.id}` })),
+  ...sharedCorpus.guides.map(guide => ({ ...guide, scope: guide.scope as KnowledgeScope })),
+];
 
 export const normalize = (value: string) => value.toLowerCase().normalize("NFD")
   .replace(/\p{M}/gu, "").replace(/đ/g, "d").replace(/\b(?:dki|dk|dang ki)\b/g, "dang ky")
@@ -16,10 +21,11 @@ const indexedGuides = builtInGuides.map(guide => {
   };
 });
 
-export function rankGuides(question: string, noticeCode?: string) {
+export function rankGuides(question: string, noticeCode?: string, scope: KnowledgeScope | "all" = "hcmue") {
   const normalized = ` ${normalize(question)} `;
   const words = new Set(normalized.trim().split(" "));
   return indexedGuides.map(({ guide, phrases, codes, tokens }) => {
+    if (scope !== "all" && guide.scope !== scope && guide.scope !== "system") return { guide, score: 0 };
     if (noticeCode && guide.codes.includes(noticeCode)) return { guide, score: 200 };
     if (codes.some(code => normalized.includes(` ${code} `))) return { guide, score: 100 };
     const overlap = [...tokens].filter(word => words.has(word)).length;

@@ -1,6 +1,9 @@
 export const MAX_DOCUMENT_LENGTH = 12_000;
 export const MAX_CHUNK_LENGTH = 700;
 export const MAX_DOCUMENT_CHUNKS = 40;
+export const knowledgeScopes = ["system", "forms", "hcmue", "chinesetest"] as const;
+export type KnowledgeScope = typeof knowledgeScopes[number];
+export const scopeLabels: Record<KnowledgeScope, string> = { system: "Toàn hệ thống", forms: "Google Forms", hcmue: "HSK HCMUE", chinesetest: "ChineseTest" };
 export interface DocumentChunk { heading: string; content: string }
 
 export function splitDocument(body: string): DocumentChunk[] {
@@ -60,9 +63,12 @@ export interface KnowledgeDocument {
   published: boolean;
   chunks: number;
   indexed: number;
+  scope?: KnowledgeScope;
+  href?: string;
 }
 export interface KnowledgeMapPoint extends DocumentChunk {
   id: string;
   title: string;
   embedding: number[];
+  scope?: KnowledgeScope;
 }

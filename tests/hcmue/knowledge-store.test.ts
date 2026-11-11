@@ -43,7 +43,7 @@ it("retrieves with real pgvector, skips paid calls for notice codes, and isolate
   expect((await store.search("Chân dung hậu cảnh sáng")).hybrid[0].id).toBe(`${id}-0`);
   expect(send).toHaveBeenCalledTimes(2);
   const result = await store.compare("Ảnh JPEG", true);
-  expect(result.vector[0]).toMatchObject({ id: `${id}-0`, score: 1, href: `/hcmue/knowledge?document=${id}#${id}-0` });
+  expect(result.vector[0]).toMatchObject({ id: `${id}-0`, score: 1, href: `/knowledge?document=${id}#${id}-0` });
   expect(result.keyword[0].id).toBe(`${id}-1`);
   expect(result.reranked).toMatchObject([{ score: 0.98 }]);
   expect(result.elapsedMs).toBeGreaterThanOrEqual(0);

@@ -50,6 +50,7 @@
     "test:hcmue": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue",
     "test:hcmue-rag": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue/knowledge.test.ts tests/hcmue/knowledge-store.test.ts tests/hcmue/assistant.test.ts",
     "test:hcmue-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-ui-check.ts",
+    "test:assistant-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/system-assistant-ui-check.ts",
     "bench:hcmue": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-benchmark.ts",
     "test:runner-launch-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-launch-ui-check.ts",
     "test:runner-setup-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-setup-ui-check.ts",
@@ -75,6 +76,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.187.0",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "jsdom": "^26.1.0",
@@ -98,6 +100,7 @@
     "playwright-core": "1.64.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "three": "^0.187.0",
     "tough-cookie": "^6.0.2",
     "ws": "^8.22.0"
   }

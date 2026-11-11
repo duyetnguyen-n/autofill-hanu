@@ -1,5 +1,12 @@
 # Cập nhật website HANU sau này
 
+**Trợ lý toàn hệ thống và kho vector:** chạy
+`supabase/migrations/202611110002_system_knowledge.sql` một lần trong Supabase
+SQL Editor, rồi deploy web. File này giữ tài liệu và vector đã có từ bản HCMUE;
+nếu chưa cài kho trước đó, chỉ cần chạy file mới. Giữ `OPENROUTER_API_KEY` đang
+dùng. Mở **Kho tri thức & vector** → **Lập chỉ mục bài có sẵn** để có dữ liệu
+trên bản đồ. Không cần thay Runner hoặc extension.
+
 **v1.9.2 — giao diện liên kết và quyền Facebook (25/10/2026):** gói extension
 hiển thị rõ trạng thái kết nối/cấp quyền, thu gọn phần đổi/ngắt liên kết khi đã
 liên kết và dùng giao diện đồng bộ với website. Giữ đầy đủ bản sửa đọc Facebook

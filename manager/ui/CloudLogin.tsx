@@ -3,6 +3,7 @@ import React,{useCallback,useEffect,useRef,useState} from 'react';
 import {Button} from '@fluentui/react-components';
 import type {Account} from '../../src/account';
 import {AccountPage} from './AccountPage';
+import {SystemAssistant} from './assistant/SystemAssistant';
 export type {Account} from '../../src/account';
 
 export function CloudLogin({error,onLogin,pending}:{error:string;onLogin:()=>void;pending:boolean}){
@@ -80,8 +81,8 @@ export function CloudGate({children}:{children:(account:Account,logout:()=>Promi
   if(checking)return <div className="login-loading" role="status"><div className="login-skeleton"/><span>Đang mở không gian của bạn…</span></div>;
   if(account){
     const allowed=account.emailVerified&&account.status==='active';
-    if(!allowed||location.pathname==='/account')return <AccountPage key={account.id} account={account} logout={logout} refresh={refresh}/>;
-    return <React.Fragment key={account.id}>{children(account,logout)}</React.Fragment>;
+    if(!allowed||location.pathname==='/account')return <><AccountPage key={account.id} account={account} logout={logout} refresh={refresh}/>{allowed&&<SystemAssistant/>}</>;
+    return <React.Fragment key={account.id}>{children(account,logout)}<SystemAssistant/></React.Fragment>;
   }
   if(unavailable)return <div className="login-loading" role="status"><span>{error}</span><Button onClick={()=>setAttempt(v=>v+1)}>Thử kết nối lại</Button></div>;
   return <CloudLogin error={error} pending={pending} onLogin={()=>void login()}/>;
