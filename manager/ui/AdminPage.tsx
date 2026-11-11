@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Avatar, Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Select, Textarea } from '@fluentui/react-components';
+import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "./assistant/GuidedDialog";
+import { Avatar, Button, Checkbox, DialogActions, DialogBody, DialogContent, DialogTitle, Field, Input, Select, Textarea } from '@fluentui/react-components';
 import { AddRegular, ArrowLeftRegular, ArrowRightRegular, ArrowSyncRegular, ChevronRightRegular, DismissRegular, HistoryRegular, MailAddRegular, PeopleRegular, SearchRegular, ShieldCheckmarkRegular } from '@fluentui/react-icons';
 import type { Account, AccessGrant, AdminEvent, ManagedAccount } from '../../src/account';
 import { AccessBadge, accessLabels } from './AccountPage';
@@ -75,7 +76,7 @@ function UserDrawer({ id, close, changed }: { id: string | undefined; close: () 
       {!detail || !draft ? <div className="access-skeleton-block" role="status" aria-label="Đang tải tài khoản"/> : <>
         <div className="admin-detail-identity"><Avatar name={draft.name} size={56}/><div><h2>{draft.name}</h2><span>{draft.email}</span><AccessBadge status={detail.account.status}/></div></div>
         {notice && <p className="access-notice" role="status">{notice}</p>}
-        <div className="admin-detail-tabs" role="tablist" aria-label="Chi tiết người dùng">{[['access', 'Quyền sử dụng'], ['profiles', `Profile (${detail.sessions.length})`], ['history', 'Nhật ký']].map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+        <div className="admin-detail-tabs" role="tablist" aria-label="Chi tiết người dùng">{[['access', 'Quyền sử dụng'], ['profiles', `Profile (${detail.sessions.length})`], ['history', 'Nhật ký']].map(([key, label]) => <button key={key} role="tab" data-walk-tab={key} aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <section role="tabpanel" className="admin-detail-body">
           {tab === 'access' && <>
             <section className="admin-role-section" aria-label="Vai trò tài khoản">
@@ -141,6 +142,6 @@ export function AdminPage({ account, logout, dark, toggleTheme }: { account: Acc
     </div>
     <UserDrawer id={selected} close={() => setSelected(undefined)} changed={reload}/>
     <GrantDialog open={grantOpen} close={() => setGrantOpen(false)} changed={() => { setSection('grants'); reload(); }}/>
-    <Dialog surfaceMotion={null} inertTrapFocus open={!!confirmDelete} onOpenChange={(_, d) => { if (!d.open && !deleting) setConfirmDelete(undefined); }}><DialogSurface><DialogBody><DialogTitle>Thu hồi quyền cấp trước?</DialogTitle><DialogContent><p>{confirmDelete} sẽ cần được xét duyệt sau khi đăng nhập.</p></DialogContent><DialogActions><Button disabled={!!deleting} onClick={() => setConfirmDelete(undefined)}>Hủy</Button><Button disabled={!!deleting} appearance="primary" onClick={() => void removeGrant(confirmDelete!)}>Thu hồi</Button></DialogActions></DialogBody></DialogSurface></Dialog>
+    <Dialog surfaceMotion={null} inertTrapFocus open={!!confirmDelete} onOpenChange={(_, d) => { if (!d.open && !deleting) setConfirmDelete(undefined); }}><DialogSurface data-walk="admin-revoke-grant"><DialogBody><DialogTitle>Thu hồi quyền cấp trước?</DialogTitle><DialogContent><p>{confirmDelete} sẽ cần được xét duyệt sau khi đăng nhập.</p></DialogContent><DialogActions><Button disabled={!!deleting} onClick={() => setConfirmDelete(undefined)}>Hủy</Button><Button disabled={!!deleting} appearance="primary" onClick={() => void removeGrant(confirmDelete!)}>Thu hồi</Button></DialogActions></DialogBody></DialogSurface></Dialog>
   </div>;
 }

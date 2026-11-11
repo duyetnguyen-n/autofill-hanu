@@ -1,4 +1,6 @@
 import { createContext, useContext } from "react";
+import { legacyWalkthroughs, matchWalkthrough, normalizeWalkText, onWalkPage, walkPath, walkthroughFor } from "./walkthroughs";
+import type { WalkId } from "./walkthrough-types";
 
 export const guideTargets = {
   menu: "account-menu", admin: "open-admin", account: "open-account", access: "access-facts", live: "live-status",
@@ -15,7 +17,7 @@ export const products = [
 ] as const;
 export type Product = typeof products[number];
 export type FormsGuide = "pair-profile" | "prepare-profile";
-export type Guide = "admin" | "access" | "live" | Product["id"] | FormsGuide;
+export type Guide = "admin" | "access" | "live" | Product["id"] | FormsGuide | WalkId;
 export type GuideTarget = keyof typeof guideTargets | Product["id"];
 export type GuideIntent = { guide: Guide; open: boolean } | "continue";
 export type FormsGuideStep = {
@@ -27,12 +29,16 @@ export const isFormsGuide = (guide?: Guide): guide is FormsGuide => guide === "p
 export function productAtPath(path: string) { return products.find(product => product.href === path); }
 export function productForGuide(guide: Guide) { return products.find(product => product.id === guide); }
 export function pathForGuide(guide: Guide) {
+  const walk = walkthroughFor(guide);
+  if (walk) return walkPath[walk.area] ?? location.pathname;
   if (isFormsGuide(guide)) return "/";
   if (guide === "admin") return adminPath;
   if (guide === "access" || guide === "live") return "/account";
   return productForGuide(guide)!.href;
 }
 export function onGuidePage(guide: Guide) {
+  const walk = walkthroughFor(guide);
+  if (walk) return onWalkPage(walk.area, location.pathname);
   return isFormsGuide(guide) ? ["/", "/google-direct"].includes(location.pathname) : location.pathname === pathForGuide(guide);
 }
 export function targetMarker(target: GuideTarget) {
@@ -40,10 +46,13 @@ export function targetMarker(target: GuideTarget) {
 }
 
 export function guideIntent(question: string, guiding = false): GuideIntent | undefined {
-  const text = question.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d")
-    .replace(/[^a-z0-9]+/g, " ").trim();
+  const text = normalizeWalkText(question);
   if (/\b(khong|dung|chua) (can |muon )?(mo|vao|bam|an)\b/.test(text)) return;
   if (guiding && /^(mo|bam|an|vao)( menu)? (giup|minh|ho|cho)( toi| minh| em| t| minh voi| toi voi)?$/.test(text)) return "continue";
+  const legacy = legacyWalkthroughs.find(flow => normalizeWalkText(flow.id) === text);
+  if (legacy) return guideIntent(legacy.question, guiding);
+  const walk = matchWalkthrough(question, location.pathname);
+  if (walk) return { guide: walk.id, open: false };
   const how = /\b(lam sao|the nao|o dau|cach|huong dan|chi (toi|minh|em)|how|where)\b/.test(text);
   const open = !how && /^(hay |ban |vui long |toi muon |minh muon |cho toi )?(mo|vao|den|chuyen den|chuyen sang|open|go to)\b/.test(text);
   const navigation = /\b(vao|truy cap|mo|chuyen (sang|den)|doi sang|tim|open|go to)\b/.test(text);
@@ -64,7 +73,8 @@ export function guideIntent(question: string, guiding = false): GuideIntent | un
 
 export const GuideContext = createContext<{
   active: boolean; switching: boolean; availableProducts: readonly Product[]; formsGuide?: FormsGuide;
-  reportFormsStep(step?: FormsGuideStep): void; startFormsGuide(guide: FormsGuide): void; handoff(question: string): boolean;
+  walkthrough?: WalkId;
+  reportFormsStep(step?: FormsGuideStep): void; startFormsGuide(guide: FormsGuide): void; handoff(question: string): boolean; openCatalog(): boolean;
 }>({
   active: false,
   switching: false,
@@ -72,5 +82,6 @@ export const GuideContext = createContext<{
   reportFormsStep: () => {},
   startFormsGuide: () => {},
   handoff: (_question: string) => false,
+  openCatalog: () => false,
 });
 export const useGuide = () => useContext(GuideContext);

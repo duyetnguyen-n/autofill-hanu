@@ -1,6 +1,6 @@
 # Danh mục luồng Trợ lý HANU hướng dẫn trực tiếp
 
-Danh mục gồm 68 luồng theo giao diện HANU hiện có. Các dòng có ghi **Đã triển khai** đã có hướng dẫn trực tiếp. Các nhánh như mất kết nối, thiếu quyền hoặc không có dữ liệu đi cùng luồng tương ứng.
+Danh mục gồm 68 luồng theo giao diện HANU hiện có. Mở **Danh mục hướng dẫn** trong chat để tìm theo tên hoặc lọc theo ứng dụng. Có thể nhập mã luồng, chẳng hạn `HC-06`, trực tiếp trong chat. Những mục quản trị và ứng dụng chưa được bật tuân theo quyền của tài khoản. Luồng đăng nhập bắt đầu ở nút **Hướng dẫn đăng nhập** và tiếp tục trên trang Tài khoản khi quay lại từ Google.
 
 ## Cách hướng dẫn dùng chung
 
@@ -120,7 +120,7 @@ Danh mục gồm 68 luồng theo giao diện HANU hiện có. Các dòng có ghi
 
 Đối chiếu với [Kho tri thức](../integrations/hcmue/ui/KnowledgePage.tsx) và [Bản đồ vector](../integrations/hcmue/ui/KnowledgeMap.tsx).
 
-## Thứ tự đề xuất để triển khai
+## Nhóm cần đối chiếu khi thay đổi giao diện
 
 | Đợt | Luồng | Kết quả cần kiểm tra |
 | --- | --- | --- |
@@ -129,4 +129,4 @@ Danh mục gồm 68 luồng theo giao diện HANU hiện có. Các dòng có ghi
 | 3 · Live, kết quả và quản trị | GF-11, GF-13 đến GF-18, HC-10 đến HC-14, CT-11 đến CT-14, QT-03 đến QT-08, KT-06 và KT-07 | Xác định đúng đối tượng và phạm vi, dừng ở thao tác có tác động và đọc phản hồi thật. |
 | Bổ sung theo từng đợt | Các luồng dùng chung, cài đặt và khôi phục còn lại | Hiện điểm bàn giao rõ ràng khi sang extension, Runner hoặc website ngoài. |
 
-Khi triển khai mỗi luồng, ghi lại câu hỏi thường gặp, màn bắt đầu, dấu hiệu giao diện cho từng bước và trạng thái kết thúc. Kiểm tra thêm nhánh thiếu quyền, thiếu dữ liệu, nút bị khóa, thiết bị offline và thao tác qua chat trong khi hộp thoại mở. Có thể dùng các bước bị kẹt làm nguồn đề xuất cập nhật Kho tri thức sau khi có quy trình duyệt kiến thức.
+Khi sửa giao diện, đối chiếu các điểm được đánh dấu và điều kiện chuyển bước trong `manager/ui/assistant/walkthrough-*.ts`. Hướng dẫn có thể chờ điều khiển hoặc kết quả xuất hiện, hoặc yêu cầu người dùng bấm **Tiếp theo** khi cần tự đối chiếu. Các bước ngoài HANU cần kiểm tra trên đúng Chrome profile, Runner hoặc trang trường. Bài kiểm tra giao diện đối chiếu đủ mã luồng trong danh mục và chạy các nhánh tiêu biểu bằng dữ liệu thử.

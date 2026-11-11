@@ -1,5 +1,5 @@
 import { chromium, expect, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { PerspectiveCamera, Vector3 } from "three";
 import { WebSocket } from "ws";
@@ -7,6 +7,14 @@ import { emptyProfile } from "../src/rules";
 import { httpFixture, users, extension } from "../tests/cloud/fixture";
 import { projectVectors } from "../integrations/hcmue/ui/vector-layout";
 import type { KnowledgeMapPoint } from "../integrations/hcmue/knowledge/documents";
+import { legacyWalkthroughs, matchWalkthrough, walkPath, walkthroughs } from "../manager/ui/assistant/walkthroughs";
+
+const listed = [...(await readFile("docs/ASSISTANT-GUIDED-FLOWS.md", "utf8")).matchAll(/^\| ([A-Z]{2}-\d{2}) \|/gm)].map(match => match[1]);
+expect([...walkthroughs, ...legacyWalkthroughs].map(flow => flow.id).sort()).toEqual(listed.sort());
+for (const flow of walkthroughs) {
+  expect(matchWalkthrough(flow.id, "/")?.id).toBe(flow.id);
+  for (const alias of flow.aliases) expect(matchWalkthrough(alias, walkPath[flow.area] ?? "/")?.id, alias).toBe(flow.id);
+}
 
 const app = await httpFixture(resolve("build/cloud-ui"), true, true, true, async (url, init) => {
   if (!String(url).endsWith("/embeddings")) return new Response(null, { status: 429 });
@@ -44,7 +52,20 @@ try {
   const page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(app.config.origin);
+  const anchors = walkthroughs.flatMap(flow => [
+    ...flow.steps.flatMap(step => [step.anchor, step.action]),
+    flow.fallback?.anchor,
+  ]).filter(anchor => anchor !== undefined);
+  await page.evaluate(anchors => {
+    for (const { selector, group, within } of anchors)
+      for (const value of [selector, group, within]) if (value) document.querySelector(value);
+  }, anchors.map(({ selector, group, within }) => ({ selector, group, within })));
+  await page.getByRole("button", { name: "Hướng dẫn đăng nhập" }).click();
+  await expect(page.locator(".guide-halo[data-step=walkthrough]")).toBeVisible();
   await page.getByRole("button", { name: "Tiếp tục với Google", exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByRole("status")).toContainText("Email đã xác minh");
+  await page.getByRole("link", { name: "Vào quản lý profile" }).click();
   await expect(page.getByRole("heading", { name: "Quản lý các phiên", exact: true })).toBeVisible();
   async function openChat(p: Page, path: string, heading: string, question: string, answer: string) {
     await p.goto(app.config.origin + path);
@@ -88,6 +109,31 @@ try {
   await expect(page).toHaveURL(/\/admin$/);
   await expect(panel.getByRole("log")).toContainText("Làm sao vào trang Quản trị?");
   await expect(panel.getByRole("status")).toContainText("Đã vào trang Quản trị");
+  await panel.getByRole("button", { name: "Kết thúc hướng dẫn" }).click();
+  await panel.getByText("Danh mục hướng dẫn", { exact: true }).click();
+  await expect(panel.locator(".walk-catalog li")).toHaveCount(68);
+  await panel.getByRole("searchbox", { name: "Tìm hướng dẫn" }).fill("tìm người dùng");
+  await panel.getByRole("button", { name: /Tìm người dùng và xem chi tiết/ }).click();
+  const adminFlow = panel.locator('[data-walkthrough-id="QT-02"]');
+  await expect(adminFlow).toContainText("Tìm theo tên hoặc email");
+  await adminFlow.getByRole("button", { name: "Tiếp theo" }).click();
+  await page.getByRole("button", { name: /Chi tiết/ }).first().click();
+  const adminDrawer = page.getByRole("dialog", { name: "Chi tiết tài khoản" });
+  await expect(adminDrawer).toHaveAttribute("aria-modal", "false");
+  await expect(adminFlow).toContainText("Chọn thông tin cần xem");
+  await panel.getByRole("textbox", { name: "Câu hỏi của bạn" }).fill("Xem bản đồ vector ở đâu?");
+  await panel.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  await expect(panel.getByRole("log")).toContainText("Kho tri thức và bản đồ vector");
+  const [adminBox, adminChat] = await Promise.all([adminDrawer.boundingBox(), panel.boundingBox()]);
+  expect(adminBox!.x + adminBox!.width).toBeLessThan(adminChat!.x);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [mobileAdminBox, mobileAdminChat] = await Promise.all([adminDrawer.boundingBox(), panel.boundingBox()]);
+  expect(mobileAdminBox!.y + mobileAdminBox!.height).toBeLessThan(mobileAdminChat!.y);
+  await expect(page.locator(".guide-halo[data-step=walkthrough]")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Trợ lý HANU" })).toBeVisible();
+  await expect(page.locator("[data-portal-node]:has(.walk-dialog)")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.screenshot({ path: "test-results/assistant/walk-admin-mobile.png", animations: "disabled" });
+  await page.setViewportSize({ width: 1440, height: 1050 });
   await page.goto(app.config.origin);
   await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
   await panel.getByRole("textbox").fill("Cách chuyển sang Google Forms Direct?");
@@ -98,6 +144,14 @@ try {
   await expect(page).toHaveURL(/\/google-direct$/);
   await expect(panel.getByRole("log")).toContainText("Cách chuyển sang Google Forms Direct?");
   await expect(panel.getByRole("status")).toContainText("Đã vào Google Forms Direct");
+  await page.goto(app.config.origin + "/account");
+  await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
+  await panel.getByRole("textbox").fill("CH-03");
+  await panel.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  await expect(panel.locator('[data-walkthrough-id="CH-03"]')).toContainText("Chọn ứng dụng muốn mở");
+  await page.getByRole("navigation", { name: "Ứng dụng", exact: true }).getByRole("link", { name: "ChineseTest", exact: true }).click();
+  await expect(page).toHaveURL(/\/chinesetest$/);
+  await expect(panel.getByRole("status")).toContainText("Đã vào ChineseTest");
   await openChat(page, "/google-direct", "Quản lý các phiên", "Google Forms Direct dùng thế nào?", "Google Forms Direct");
   await openChat(page, "/chinesetest", "Chuẩn bị trước giờ mở.", "Kết nối ChineseTest", "Kết nối và chuẩn bị ChineseTest");
   await openChat(page, "/admin", "Người dùng", "Xem bản đồ vector ở đâu?", "Kho tri thức và bản đồ vector");
@@ -121,6 +175,14 @@ try {
   await expect(page).toHaveURL(/\/knowledge$/);
   await expect(page.getByRole("heading", { name: "Không gian tri thức.", exact: true })).toBeVisible();
   await expect(page.getByText("Chờ những điểm tri thức đầu tiên")).toBeVisible();
+  await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
+  await panel.getByRole("textbox", { name: "Câu hỏi của bạn" }).fill("Khám phá bản đồ vector");
+  await panel.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  const vectorFlow = panel.locator('[data-walkthrough-id="KT-02"]');
+  await expect(vectorFlow).toContainText("Chọn 3D hoặc 2D");
+  await vectorFlow.getByRole("button", { name: "Tiếp theo" }).click();
+  await expect(vectorFlow).toContainText("Nếu bản đồ trống");
+  await panel.getByRole("button", { name: "Đóng trợ lý" }).click();
   await page.getByRole("button", { name: "Lập chỉ mục bài có sẵn", exact: true }).click();
   await expect(page.getByText(/Đã lập chỉ mục các bài/)).toBeVisible();
   const canvas = page.locator("canvas[aria-label='Bản đồ vector 3D']");
@@ -307,6 +369,10 @@ try {
   await expect(member.locator(".guide-halo")).toHaveCount(0);
   await expect(member).toHaveURL(app.config.origin + "/");
   const memberPanel = member.getByRole("dialog", { name: "Trợ lý HANU" });
+  await memberPanel.getByRole("textbox").fill("Cấp quyền quản trị");
+  await memberPanel.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  await expect(memberPanel.getByRole("log")).toContainText("Cấp quyền quản trị");
+  await expect(memberPanel.locator('[data-walkthrough-id="QT-05"]')).toHaveCount(0);
   await memberPanel.getByRole("textbox").fill("Mở ChineseTest giúp tôi");
   await memberPanel.getByRole("button", { name: "Gửi câu hỏi" }).click();
   await expect(memberPanel.getByRole("log")).toContainText("ChineseTest hiện chưa được bật");

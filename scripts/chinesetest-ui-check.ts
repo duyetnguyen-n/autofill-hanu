@@ -21,6 +21,19 @@ try{
  await page.getByRole("button",{name:"Liên kết máy",exact:true}).click();await page.getByLabel("Mã liên kết",{exact:true}).fill(runner.code);await page.getByRole("dialog").getByRole("button",{name:"Liên kết",exact:true}).click();
  await expect(page.locator(".ct-fingerprint")).toHaveText(runner.identity.fingerprint);await page.getByRole("button",{name:"Đã đối chiếu, đúng máy",exact:true}).click();
  await expect(page.locator(".ct-account")).toHaveCount(3);
+ await page.getByRole("button",{name:"Trợ lý AI",exact:true}).click();
+ const chat=page.getByRole("dialog",{name:"Trợ lý HANU"});
+ await chat.getByRole("textbox").fill("Tải ảnh ChineseTest");
+ await chat.getByRole("button",{name:"Gửi câu hỏi"}).click();
+ const photoGuide=chat.locator('[data-walkthrough-id="CT-06"]');
+ await expect(photoGuide).toContainText("Mở hồ sơ đúng tài khoản");
+ await page.locator(".ct-account").nth(1).getByRole("button",{name:"Hồ sơ / ảnh",exact:true}).click();
+ const guidedProfile=page.getByRole("dialog",{name:/Hồ sơ ChineseTest/});
+ await expect(guidedProfile).toHaveAttribute("aria-modal","false");
+ await expect(photoGuide).toContainText("Chọn ảnh chân dung");
+ await expect(guidedProfile.getByLabel("Họ tên trên giấy tờ",{exact:true})).toHaveValue("Lê Minh Khuê");
+ await guidedProfile.getByRole("button",{name:"Đóng",exact:true}).click();
+ await chat.getByRole("button",{name:"Đóng trợ lý"}).click();
  const first=page.locator(".ct-account").first();await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
  await expect(first).toContainText("10 điểm trong danh mục theo hình thức");
  const centerSelect=first.getByRole("combobox",{name:/^Điểm thi cho/});
@@ -77,6 +90,24 @@ try{
  const at=Date.now()+30000;await first.getByLabel("Giờ bắt đầu kiểm tra cho Lê Minh Khuê · Việt Nam",{exact:true}).fill(new Date(at+7*3600000).toISOString().slice(0,19).replace(/:00$/,""));
  await first.getByRole("button",{name:"Tải lại danh mục / điểm thi",exact:true}).click();await expect(first.getByRole("combobox",{name:"Cấp thi cho Lê Minh Khuê",exact:true})).toHaveValue("828636");
  await first.getByRole("button",{name:"Kiểm tra API",exact:true}).click();await expect(first).toContainText("Phí cuối 60 USD");
+ await page.getByRole("button",{name:"Trợ lý AI",exact:true}).click();
+ await chat.getByRole("textbox").fill("Kiểm tra API ChineseTest");
+ await chat.getByRole("button",{name:"Gửi câu hỏi"}).click();
+ const apiGuide=chat.locator('[data-walkthrough-id="CT-09"]');
+ let releaseInspection!:()=>void, inspectionStarted=false;
+ const inspectionGate=new Promise<void>(resolve=>releaseInspection=resolve);
+ const executeInspection=runner.engine.execute.bind(runner.engine);
+ runner.engine.execute=async(command,args,limits)=>{
+   if(command==="inspect"){inspectionStarted=true;await inspectionGate;}
+   return executeInspection(command,args,limits);
+ };
+ try {
+   await photoAccount.getByRole("button",{name:"Kiểm tra API",exact:true}).click();
+   await expect.poll(()=>inspectionStarted).toBe(true);
+   await expect(apiGuide).toContainText("Kiểm tra đúng tài khoản");
+ } finally { releaseInspection();runner.engine.execute=executeInspection; }
+ await expect(apiGuide).toContainText("Đọc kết quả kiểm tra");
+ await chat.getByRole("button",{name:"Đóng trợ lý"}).click();
  await first.getByRole("button",{name:"Chuẩn bị",exact:true}).click();await expect(page.locator(".ct-runs")).toContainText("Sẵn sàng");
  await first.getByRole("button",{name:"Bật lịch Test",exact:true}).click();await expect(page.locator(".ct-runs")).toContainText("Đã bật lịch");
  await first.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:"test-results/chinesetest/desktop-light.png",fullPage:true});

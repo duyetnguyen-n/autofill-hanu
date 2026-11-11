@@ -43,23 +43,37 @@ try {
     path: "test-results/hcmue/onboarding-light.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Liên kết máy", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText("Chưa nhập mã liên kết")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Chưa nhập mã liên kết" }).click();
-  const pairingNotice = page.getByRole("dialog").locator(".hc-alert-events").getByRole("status");
+  await launcher.click();
+  const initialChat = page.getByRole("dialog", { name: "Trợ lý HCMUE" });
+  await initialChat.getByRole("button", { name: "Danh mục hướng dẫn" }).click();
+  const systemChat = page.getByRole("dialog", { name: "Trợ lý HANU" });
+  await expect(systemChat.getByRole("searchbox", { name: "Tìm hướng dẫn" })).toBeVisible();
+  await systemChat.getByRole("button", { name: "Đóng trợ lý" }).click();
+  await launcher.click();
+  await initialChat.getByRole("textbox").fill("Liên kết máy HCMUE");
+  await initialChat.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  const pairFlow = page.locator('[data-walkthrough-id="HC-02"]');
+  await expect(pairFlow).toContainText("Mở liên kết máy");
+  await pairFlow.getByRole("button", { name: "Mở giúp tôi" }).click();
+  const pairDialog = page.getByRole("dialog", { name: "Liên kết máy chạy" });
+  await expect(pairDialog).toHaveAttribute("aria-modal", "false");
+  await expect(pairFlow).toContainText("Nhập mã từ HCMUE Runner");
+  await expect(pairDialog.getByText("Chưa nhập mã liên kết")).toBeVisible();
+  await pairDialog.getByRole("button", { name: "Chưa nhập mã liên kết" }).click();
+  const pairingNotice = pairDialog.locator(".hc-alert-events").getByRole("status");
   await expect(pairingNotice).toContainText("Cách xử lý");
   await pairingNotice.getByRole("button", { name: "Đóng thông báo" }).click();
   await page.getByLabel("Mã liên kết", { exact: true }).fill(runner.code);
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Liên kết", exact: true })
-    .click();
+  await pairDialog.getByRole("button", { name: "Liên kết", exact: true }).click();
   await expect(page.locator(".hc-fingerprint")).toHaveText(
     runner.identity.fingerprint,
   );
+  await expect(pairFlow).toContainText("Đối chiếu toàn bộ dấu vân tay");
   await page
     .getByRole("button", { name: "Đã đối chiếu, đúng máy", exact: true })
     .click();
+  await expect(pairFlow).toContainText("Kiểm tra máy đã xác minh");
+  await page.getByRole("dialog", { name: "Trợ lý HANU" }).getByRole("button", { name: "Đóng trợ lý" }).click();
   await expect(page.locator(".hc-table")).toContainText("Nguyễn Minh An");
   await expect(page.getByRole("button", { name: "Kiểm tra hồ sơ/API", exact: true })).toBeDisabled();
   await expect(page.locator("#hc-account-reason")).toContainText("Chưa chọn tài khoản");
@@ -214,7 +228,7 @@ try {
   await page.getByRole("button", { name: "Trợ lý HCMUE", exact: true }).click();
   await ask("Tạo lịch diễn tập");
   await assistant.getByRole("button", { name: "Xem trước lịch nháp" }).click();
-  const newTarget = (offset: number) => new Date(Date.now() + 7 * 3600000 + offset).toISOString().slice(0, 19);
+  const newTarget = (offset: number) => new Date(Date.now() + 7 * 3600000 + offset).toISOString().slice(0, 19).replace(/:00$/, "");
   await assistant.getByLabel("Đợt thi", { exact: true }).selectOption({ index: 1 });
   await assistant.getByLabel("Ngày và giờ gửi (giờ Việt Nam)").fill(newTarget(120000));
   expect(runner.data.schedules.filter(s => s.status === "prepared")).toHaveLength(0);
@@ -222,6 +236,21 @@ try {
   await expect(page.locator(".hc-runs")).toContainText("Sẵn sàng");
   const originalDraft = runner.data.schedules.find(s => s.status === "prepared")!;
   const firstRun = page.locator(".hc-runs .hc-run").first();
+  await firstRun.getByRole("button", { name: "Hỏi AI về lịch" }).click();
+  await ask("HC-10");
+  const liveGuide = systemChat.locator('[data-walkthrough-id="HC-10"]');
+  await expect(liveGuide).toContainText("Tìm lịch Đăng ký thật đã chuẩn bị");
+  await systemChat.getByRole("textbox").fill("HC-09");
+  await systemChat.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  const testGuide = systemChat.locator('[data-walkthrough-id="HC-09"]');
+  await expect(testGuide).toContainText("Mở xác nhận ở đúng lịch");
+  await firstRun.getByRole("button", { name: "Bật lịch", exact: true }).click();
+  const armDialog = page.getByRole("dialog", { name: /Bật .* lịch trên máy/ });
+  await expect(testGuide).toContainText("Xác nhận lịch trên máy");
+  await expect(armDialog).toHaveAttribute("aria-modal", "false");
+  expect(runner.data.schedules.some(s => s.status === "armed")).toBe(false);
+  await armDialog.getByRole("button", { name: "Chưa bật", exact: true }).click();
+  await systemChat.getByRole("button", { name: "Đóng trợ lý" }).click();
   await firstRun.getByRole("button", { name: "Hỏi AI về lịch" }).click();
   await ask("Đổi giờ lịch nháp");
   await assistant.getByRole("button", { name: "Xem trước thay đổi" }).click();

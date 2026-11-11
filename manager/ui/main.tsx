@@ -1,6 +1,7 @@
+import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "./assistant/GuidedDialog";
 import React,{useEffect,useLayoutEffect,useState,useRef,lazy,Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
-import {FluentProvider,Button,Input,Select,Checkbox,Field,Spinner,Dialog,DialogTrigger,DialogSurface,DialogBody,DialogTitle,DialogContent,DialogActions,Popover,PopoverTrigger,PopoverSurface} from '@fluentui/react-components';
+import {FluentProvider,Button,Input,Select,Checkbox,Field,Spinner,DialogTrigger,DialogBody,DialogTitle,DialogContent,DialogActions,Popover,PopoverTrigger,PopoverSurface} from '@fluentui/react-components';
 import { AddRegular, ArrowSyncRegular, OpenRegular, DismissRegular, PlayRegular, PauseRegular, StopRegular, CheckmarkCircleRegular, WarningRegular, PlugConnectedRegular, SearchRegular, DocumentCheckmarkRegular, ShieldCheckmarkRegular, LinkRegular, ArrowRightRegular, DocumentImageRegular, MoreHorizontalRegular } from '@fluentui/react-icons';
 import type {SessionView,GroupView} from '../../src/protocol';
 import type {Profile,RunState} from '../../src/shared';
@@ -181,9 +182,9 @@ function App({cloud=false,account,logout,hcmueEnabled=false,chinesetestEnabled=f
 function Details({session:s,close,act,busy,cloud=false,relink}:{session:SessionView;close:()=>void;cloud?:boolean;relink?:(id:string)=>void;act:(fn:()=>Promise<unknown>,message?:string)=>Promise<void>;busy:boolean}){
   const [profile,setProfile]=useState<Profile>(structuredClone(s.profile??emptyProfile())),[name,setName]=useState(s.name),[email,setEmail]=useState(s.expectedEmail),[tab,setTab]=useState<'profile'|'logs'>('profile'),[history,setHistory]=useState<RunState[]>([]),[custom,setCustom]=useState(s.profile?.customFields??[]),[feedback,setFeedback]=useState(''),[detailError,setDetailError]=useState('');
   const [verified,setVerified]=useState(false),[confirmUnlink,setConfirmUnlink]=useState(false),[actionsOpen,setActionsOpen]=useState(false);
-  const { formsGuide, reportFormsStep }=useGuide();
+  const { formsGuide, reportFormsStep, walkthrough }=useGuide();
   const guided=formsGuide==='prepare-profile';
-  const shareWithChat=Boolean(formsGuide);
+  const shareWithChat=Boolean(formsGuide||walkthrough);
   const [phase,setPhase]=useState<2|3|4|5>(2);
   const [saved,setSaved]=useState<{name:string;email:string;profile:Profile;custom:typeof custom}>();
   const savedCurrent=saved?.name===name&&saved.email===email&&saved.profile===profile&&saved.custom===custom;

@@ -5,6 +5,9 @@ import { AssistantBoundary } from "./AssistantBoundary";
 import { GuideSpotlight, visibleGuideTarget } from "./GuideSpotlight";
 import { guideIntent, GuideContext, isFormsGuide, onGuidePage, pathForGuide, productForGuide, targetMarker, type FormsGuideStep, type Guide, type GuideTarget, type Product } from "./guide";
 import { readReply, type SystemReply } from "./reply";
+import { WalkthroughPanel } from "./WalkthroughPanel";
+import { WalkthroughCatalog } from "./WalkthroughCatalog";
+import { walkAreaLabels, walkthroughFor } from "./walkthroughs";
 import "./assistant.css";
 
 type Turn = { role: "user" | "assistant"; text: string; reply?: SystemReply };
@@ -12,6 +15,12 @@ type Handoff = { guide: Guide; turns: Turn[] };
 const handoffKey = "hanu-guide";
 
 function canOpenGuide(guide: Guide, account: Account, availableProducts: readonly Product[]) {
+  const walk = walkthroughFor(guide);
+  if (walk) {
+    if (walk.admin && account.role !== "admin") return false;
+    const product = availableProducts.find(item => item.id === walk.area);
+    return !["forms", "direct", "hcmue", "chinesetest"].includes(walk.area) || Boolean(product);
+  }
   if (guide === "admin") return account.role === "admin";
   if (isFormsGuide(guide)) return availableProducts.some(product => product.id === "forms");
   const product = productForGuide(guide);
@@ -45,6 +54,8 @@ const workspace = () => location.pathname.startsWith("/chinesetest") ? "chineset
 const workspaceName = () => ({ chinesetest: "ChineseTest", hcmue: "HCMUE", forms: "Google Forms", system: "Toàn hệ thống" })[workspace()];
 
 function guideName(guide: Guide) {
+  const walk = walkthroughFor(guide);
+  if (walk) return walk.title;
   if (guide === "pair-profile") return "Liên kết Chrome profile";
   if (guide === "prepare-profile") return "Chuẩn bị hồ sơ";
   if (guide === "admin") return "Quản trị";
@@ -54,6 +65,8 @@ function guideName(guide: Guide) {
 }
 
 function arrivalMessage(guide: Guide, account: Account) {
+  const walk = walkthroughFor(guide);
+  if (walk) return `Mình sẽ chỉ từng bước cho “${walk.title}”. Bạn có thể hỏi tiếp trong lúc thao tác.`;
   if (isFormsGuide(guide)) return `Mình sẽ hướng dẫn bạn ${guideName(guide).toLowerCase()} ngay trên Google Forms. Bạn có thể hỏi tiếp trong lúc thao tác.`;
   if (guide === "live") return account.liveEnabled
     ? "Tài khoản của bạn đã được cấp quyền Live. Bạn có thể kiểm tra ở dòng Chế độ Live."
@@ -74,9 +87,11 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
   ] : []);
   const [step, setStep] = useState<GuideTarget>();
   const arrived = Boolean(guide && onGuidePage(guide));
+  const walk = walkthroughFor(guide);
   const formsWorkflow = isFormsGuide(guide) && arrived;
   const inspectingAccess = arrived && (guide === "live" || guide === "access");
-  const destination = isFormsGuide(guide) ? arrived ? formsStep?.target : "forms" : guide === "live" || guide === "access" ? arrived ? guide : "account" : guide;
+  const destination: GuideTarget | undefined = walk ? undefined : isFormsGuide(guide) ? arrived ? formsStep?.target : "forms"
+    : guide === "live" || guide === "access" ? arrived ? guide : "account" : guide as GuideTarget | undefined;
   const destinationName = guide ? guideName(guide) : "";
   const navigationName = destination === "account" ? "Tài khoản" : isFormsGuide(guide) ? "Google Forms" : destinationName;
   const [text, setText] = useState("");
@@ -99,16 +114,22 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
   }, [onClose]);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns, pending, error]);
   useEffect(() => {
-    if (!guide || arrived || !destination) return;
+    if (guide !== "CH-03" && (!guide || arrived || !destination)) return;
     const remember = (event: MouseEvent) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      const link = event.target instanceof Element
-        ? event.target.closest<HTMLAnchorElement>(`a[data-guide-target="${targetMarker(destination)}"]`) : null;
-      if (link?.getAttribute("href") === pathForGuide(guide)) saveHandoff(account.id, guide, turns);
+      if (!(event.target instanceof Element)) return;
+      if (guide === "CH-03") {
+        const link = event.target.closest<HTMLAnchorElement>("a[data-guide-target]");
+        const product = availableProducts.find(item => item.href === link?.getAttribute("href"));
+        if (product) saveHandoff(account.id, product.id, turns);
+      } else if (guide && destination) {
+        const link = event.target.closest<HTMLAnchorElement>(`a[data-guide-target="${targetMarker(destination)}"]`);
+        if (link?.getAttribute("href") === pathForGuide(guide)) saveHandoff(account.id, guide, turns);
+      }
     };
     document.addEventListener("click", remember, true);
     return () => document.removeEventListener("click", remember, true);
-  }, [account.id, guide, destination, arrived, turns]);
+  }, [account.id, availableProducts, guide, destination, arrived, turns]);
 
   function openDestination(next: Guide, history: Turn[]) {
     if (!canOpenGuide(next, account, availableProducts)) return;
@@ -119,6 +140,10 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
   }
 
   function guideAction(history = turns) {
+    if (walk && arrived) {
+      document.querySelector<HTMLButtonElement>(".ai-panel [data-walk-open]")?.click();
+      return;
+    }
     if (formsWorkflow && formsStep?.action) { formsStep.action.run(); return; }
     if (!guide || arrived) return;
     if (step === "menu" && visibleGuideTarget("menu")) visibleGuideTarget("menu")?.click();
@@ -127,7 +152,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
 
   async function send(question: string) {
     if (!question.trim() || request.current) return;
-    const intent = guideIntent(question, active && (!arrived || Boolean(formsStep?.action)));
+    const intent = guideIntent(question, active && (!arrived || Boolean(formsStep?.action) ||
+      Boolean(walk && document.querySelector(".ai-panel [data-walk-open]"))));
     if (intent) {
       setError("");
       setText("");
@@ -140,7 +166,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       const next = intent.guide;
       if (!canOpenGuide(next, account, availableProducts)) {
         setGuide(undefined);
-        setTurns([...history, { role: "assistant", text: next === "admin"
+        setTurns([...history, { role: "assistant", text: next === "admin" || walkthroughFor(next)?.admin
           ? "Tài khoản của bạn chưa có quyền Quản trị. Liên hệ quản trị viên để được cấp quyền phù hợp."
           : `${guideName(next)} hiện chưa được bật trên website này.` }]);
       } else if (onGuidePage(next)) {
@@ -153,7 +179,10 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         setExpanded(false);
         setStep(undefined);
         setGuide(next);
-        setTurns([...history, { role: "assistant", text: `Mình sẽ đánh dấu từng nút để bạn mở ${guideName(next)}. Bạn có thể bấm theo hoặc nhờ mình mở giúp.` }]);
+        const nextWalk = walkthroughFor(next);
+        setTurns([...history, { role: "assistant", text: nextWalk
+          ? `Mở ${walkAreaLabels[nextWalk.area]} để mình chỉ từng bước cho “${nextWalk.title}”.`
+          : `Mình sẽ đánh dấu từng nút để bạn mở ${guideName(next)}. Bạn có thể bấm theo hoặc nhờ mình mở giúp.` }]);
       }
       return;
     }
@@ -182,16 +211,16 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       if (request.current === controller) { request.current = undefined; setPending(false); input.current?.focus(); }
     }
   }
-  const initial = useRef(initialQuestion);
+  const handledHandoff = useRef<string>(undefined);
   useEffect(() => {
-    if (!initial.current) return;
-    const question = initial.current;
-    initial.current = undefined;
-    void send(question);
-  }, []);
+    if (!initialQuestion) { handledHandoff.current = undefined; return; }
+    if (initialQuestion === handledHandoff.current) return;
+    handledHandoff.current = initialQuestion;
+    void send(initialQuestion);
+  }, [initialQuestion]);
   const oneStep = location.pathname === "/account" || Boolean(visibleGuideTarget(destination ?? "menu")?.closest(".ws-products"));
   const targetLabel = formsWorkflow ? formsStep?.title ?? "" : inspectingAccess ? destinationName : `Bấm để mở ${navigationName}`;
-  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(guide)} data-forms-guide={formsWorkflow}
+  return <aside className="ai-panel" data-expanded={expanded} data-guiding={active} data-has-step={Boolean(guide)} data-forms-guide={formsWorkflow} data-walk-active={Boolean(walk && arrived)}
     role="dialog" aria-modal="false" aria-labelledby="system-ai-title">
     {active && destination && <GuideSpotlight destination={destination} fallback={!arrived} label={targetLabel} onStep={setStep}/>}
     <header className="ai-header">
@@ -201,7 +230,14 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         {expanded ? <ArrowsInSimple size={18} /> : <ArrowsOutSimple size={18} />}</button>
       <button aria-label="Đóng trợ lý" onClick={onClose}><X size={19} /></button>
     </header>
-    {formsWorkflow ? <section className="guide-card guide-card-workflow" aria-label={`Hướng dẫn ${destinationName}`}>
+    {walk ? arrived ? <WalkthroughPanel key={walk.id} flow={walk} onClose={() => setGuide(undefined)}/>
+      : <section className="guide-card" aria-label={`Hướng dẫn ${walk.title}`}>
+        <span className="guide-card-icon"><Compass size={20} weight="duotone"/></span>
+        <div className="guide-card-copy" role="status"><strong>{walk.title}</strong></div>
+        <button className="guide-dismiss" type="button" aria-label="Kết thúc hướng dẫn" onClick={() => setGuide(undefined)}><X size={15}/></button>
+        <button className="guide-action" type="button" onClick={() => openDestination(walk.id, turns)}>Mở {walkAreaLabels[walk.area]} <ArrowUpRight size={14}/></button>
+      </section>
+    : formsWorkflow ? <section className="guide-card guide-card-workflow" aria-label={`Hướng dẫn ${destinationName}`}>
       <span className="guide-card-icon">{formsStep?.done ? <CheckCircle size={20} weight="fill"/> : <Compass size={21} weight="duotone"/>}</span>
       <div className="guide-card-copy" role="status">
         <span>{formsStep?.done ? "Hoàn tất" : formsStep ? `Bước ${formsStep.stage} / ${formsStep.total}` : "Google Forms"}</span>
@@ -231,6 +267,11 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       </>}
     </section>}
     <div className="ai-log" ref={log} role="log" aria-label="Cuộc trò chuyện">
+      {!guide && <WalkthroughCatalog initiallyOpen={initialQuestion === ""} onStart={id => void send(id)} allowed={(area, id) => {
+        if (area === "admin" && account.role !== "admin") return false;
+        const item = walkthroughFor(id);
+        return item ? canOpenGuide(item.id, account, availableProducts) : true;
+      }}/>}
       {!turns.length && <div className="ai-welcome">
         <span className="ai-welcome-mark"><ChatTeardropText size={32} weight="duotone" /></span>
         <h3>Mình có thể giúp gì?</h3><p>Hỏi cách dùng, giải thích lỗi hoặc tìm hướng dẫn cho từng ứng dụng.</p>
@@ -277,16 +318,21 @@ export function SystemAssistant({ account, availableProducts, children }: {
     try { sessionStorage.removeItem(handoffKey); } catch { /* Tab storage is optional. */ }
   }, []);
   const allowedGuide = guide && canOpenGuide(guide, account, availableProducts) ? guide : undefined;
+  const walk = walkthroughFor(allowedGuide);
   const formsGuide = isFormsGuide(allowedGuide) && onGuidePage(allowedGuide) ? allowedGuide : undefined;
-  const active = Boolean(allowedGuide && (isFormsGuide(allowedGuide) || allowedGuide === "live" || allowedGuide === "access" || !onGuidePage(allowedGuide)));
+  const active = Boolean(allowedGuide && (walk || isFormsGuide(allowedGuide) || allowedGuide === "live" || allowedGuide === "access" || !onGuidePage(allowedGuide)));
   const handoff = (question: string) => {
     setInitialQuestion(question);
     setOpen(true);
     return true;
   };
+  const openCatalog = () => {
+    setGuide(undefined);
+    return handoff("");
+  };
   const dedicatedHcmue = location.pathname === "/hcmue";
-  return <GuideContext.Provider value={{ active, handoff, formsGuide, reportFormsStep: setFormsStep, startFormsGuide: setGuide,
-    switching: active && Boolean(allowedGuide && (productForGuide(allowedGuide) || isFormsGuide(allowedGuide) && !formsGuide)), availableProducts }}>
+  return <GuideContext.Provider value={{ active, handoff, openCatalog, formsGuide, walkthrough: walk && onGuidePage(walk.id) ? walk.id : undefined, reportFormsStep: setFormsStep, startFormsGuide: setGuide,
+    switching: active && Boolean(allowedGuide && (allowedGuide === "CH-03" || productForGuide(allowedGuide) || isFormsGuide(allowedGuide) && !formsGuide)), availableProducts }}>
     {children}
     {(!dedicatedHcmue || open) && <button ref={trigger} type="button" className="ai-launcher" aria-label="Trợ lý AI" title="Hỏi trợ lý HANU"
       aria-expanded={open} aria-haspopup="dialog" onClick={() => open ? close() : setOpen(true)}>

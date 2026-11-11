@@ -13,7 +13,8 @@ export function WorkspaceHeader({ title, icon, context='Không gian làm việc'
 }) {
   const [error,setError]=useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
-  const { active: guiding, switching, availableProducts } = useGuide();
+  const { active: guiding, switching, availableProducts, walkthrough } = useGuide();
+  const guidedDownload = walkthrough && ["CH-04", "GF-01", "HC-01", "CT-01"].includes(walkthrough);
   const productLinks = switching ? availableProducts.filter(product => product.href !== location.pathname) : products;
   useLayoutEffect(() => { if (!guiding) setToolsOpen(false); }, [guiding]);
   return <header className="workspace-header">
@@ -21,7 +22,8 @@ export function WorkspaceHeader({ title, icon, context='Không gian làm việc'
     <div className="wh-actions">
       <span className="wh-timezone"><Clock size={14}/>Giờ Việt Nam · UTC+7</span>
       {account&&!['/knowledge','/hcmue/knowledge'].includes(location.pathname)&&<Button as="a" href="/knowledge" className="wh-knowledge" appearance="subtle" icon={<Graph size={18}/>} aria-label="Kho tri thức & vector">Kho tri thức</Button>}
-      {guideHref&&<Button as="a" href={guideHref} className="wh-guide" appearance="subtle" icon={<BookOpen size={18}/>} aria-label={guideLabel}><span>Hướng dẫn</span></Button>}
+      {guideHref&&<Button as="a" href={guideHref} target={guidedDownload ? "_blank" : undefined} rel={guidedDownload ? "noreferrer" : undefined}
+        className="wh-guide" appearance="subtle" icon={<BookOpen size={18}/>} aria-label={guideLabel}><span>Hướng dẫn</span></Button>}
       <Button className="wh-icon-button" appearance="subtle" icon={dark?<Sun size={18}/>:<Moon size={18}/>} aria-label={themeLabel} onClick={toggleTheme}/>
       {(tools||account)&&<Dialog surfaceMotion={null} inertTrapFocus open={toolsOpen} onOpenChange={(_, data) => setToolsOpen(data.open)} modalType={guiding ? 'non-modal' : 'modal'}><DialogTrigger disableButtonEnhancement><Button data-guide-target={guideTargets.menu} className="wh-icon-button wh-account-button" appearance="subtle" icon={<UserCircle size={20}/>} aria-label="Tài khoản và công cụ"><span className="wh-account-email">{account?.email??'Công cụ'}</span></Button></DialogTrigger><DialogSurface className={`workspace-tools-dialog${guiding ? ' workspace-tools-guided' : ''}`}><DialogBody><DialogTitle>Tài khoản và công cụ</DialogTitle><DialogContent>
         {account&&<div className="wh-account-identity"><span>{account.name}</span><strong>{account.email}</strong></div>}

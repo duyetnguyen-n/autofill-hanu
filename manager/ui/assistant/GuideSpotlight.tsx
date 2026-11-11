@@ -4,7 +4,7 @@ import { CursorClick } from "@phosphor-icons/react";
 import { targetMarker, type GuideTarget } from "./guide";
 import "./guide.css";
 
-type Target = { step: GuideTarget; x: number; y: number; width: number; height: number; below: boolean; labelX: number };
+type Target = { step: GuideTarget | "walkthrough"; x: number; y: number; width: number; height: number; below: boolean; labelX: number };
 
 export function visibleGuideTarget(step: GuideTarget) {
   return [...document.querySelectorAll<HTMLElement>(`[data-guide-target="${targetMarker(step)}"]`)]
@@ -12,11 +12,12 @@ export function visibleGuideTarget(step: GuideTarget) {
       getComputedStyle(element).visibility === "visible");
 }
 
-export function GuideSpotlight({ destination, fallback, label, onStep }: {
-  destination: GuideTarget;
-  fallback: boolean;
+export function GuideSpotlight({ destination, fallback = false, label, onStep, resolve }: {
+  destination?: GuideTarget;
+  fallback?: boolean;
   label: string;
-  onStep(step: GuideTarget): void;
+  onStep?(step: GuideTarget): void;
+  resolve?(): HTMLElement | undefined;
 }) {
   const [target, setTarget] = useState<Target>();
   useLayoutEffect(() => {
@@ -25,16 +26,17 @@ export function GuideSpotlight({ destination, fallback, label, onStep }: {
     const resize = new ResizeObserver(schedule);
     const update = () => {
       frame = 0;
-      const primary = visibleGuideTarget(destination);
-      const step = primary || !fallback ? destination : "menu";
-      onStep(step);
+      const primary = resolve ? resolve() : destination && visibleGuideTarget(destination);
+      const step = resolve ? "walkthrough" : destination && (primary || !fallback ? destination : "menu");
+      if (!step) return;
+      if (step !== "walkthrough") onStep?.(step);
       const element = primary ?? (fallback ? visibleGuideTarget("menu") : undefined);
       if (element !== previous) {
         resize.disconnect();
         if (element) {
           resize.observe(element);
           element.scrollIntoView({
-            block: element.closest(".account-page, .drawer-content") ? "center" : "nearest",
+            block: resolve || element.closest(".account-page, .drawer-content") ? "center" : "nearest",
             inline: "nearest", behavior: "instant",
           });
         }
@@ -42,7 +44,7 @@ export function GuideSpotlight({ destination, fallback, label, onStep }: {
       }
       if (!element) { setTarget(undefined); return; }
       const { left, top, width, height } = element.getBoundingClientRect();
-      const scrollArea = element.closest(".drawer-content, .pair-dialog-guided");
+      const scrollArea = element.closest(".drawer-content, .pair-dialog-guided, .walk-dialog");
       const bounds = scrollArea?.getBoundingClientRect();
       if (bounds && (top + height <= bounds.top || top >= bounds.bottom)) { setTarget(undefined); return; }
       const below = top < 92 || Boolean(bounds && top - bounds.top < 46 && top + height + 72 < bounds.bottom);
@@ -67,7 +69,7 @@ export function GuideSpotlight({ destination, fallback, label, onStep }: {
       window.removeEventListener("scroll", schedule, true);
       window.visualViewport?.removeEventListener("resize", schedule);
     };
-  }, [destination, fallback, onStep]);
+  }, [destination, fallback, onStep, resolve]);
   if (!target) return null;
   return createPortal(<div className="guide-spotlight" aria-hidden="true">
     <div className="guide-halo" data-step={target.step} style={{ left: target.x, top: target.y, width: target.width, height: target.height }} />

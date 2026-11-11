@@ -11,7 +11,7 @@ export function AccessBadge({ status }: { status: AccountStatus }) {
 export function Brand() {
   return <a className="brand" href="/" aria-label="HANU"><span className="brand-mark">H</span><span>HANU<span className="brand-sub">Điều phối đăng ký</span></span></a>;
 }
-export function AccountPage({ account, logout, refresh }: { account: Account; logout: () => Promise<void>; refresh: () => Promise<void> }) {
+export function AccountPage({ account, logout, refresh, loginGuide = false }: { account: Account; logout: () => Promise<void>; refresh: () => Promise<void>; loginGuide?: boolean }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const usable = account.status === 'active' && account.emailVerified;
   const { switching, availableProducts } = useGuide();
@@ -39,6 +39,7 @@ export function AccountPage({ account, logout, refresh }: { account: Account; lo
         <div className="account-identity"><Avatar name={account.name} size={48}/><div><strong>{account.name}</strong><span>{account.email}</span></div></div>
         <div className="account-status-content">
           <AccessBadge status={account.status}/><h2>{usable ? 'Quyền sử dụng của bạn' : 'Tài khoản của bạn'}</h2>
+          {loginGuide && <p role="status">{!account.emailVerified ? 'Kiểm tra xác minh email để tiếp tục.' : usable ? 'Email đã xác minh. Bạn có thể vào quản lý profile.' : account.status === 'pending' ? 'Email đã xác minh. Bấm Kiểm tra trạng thái sau khi quản trị viên duyệt.' : 'Email đã xác minh. Xem trạng thái quyền sử dụng ở trên và liên hệ quản trị viên để xử lý.'}</p>}
           {!account.emailVerified && <p className="access-error" role="alert">Email Google chưa được xác minh. Liên hệ quản trị viên để kiểm tra.</p>}
           <dl className="account-facts" data-guide-target={guideTargets.access}><div><dt>Tên Google</dt><dd>{account.name || 'Chưa có tên'}</dd></div><div><dt>Ngày đăng ký</dt><dd>{new Date(account.createdAt).toLocaleDateString('vi-VN')}</dd></div>{usable && <><div><dt>Profile tối đa</dt><dd>{account.maxProfiles}</dd></div><div><dt>Chạy đồng thời</dt><dd>{account.maxConcurrent} profile</dd></div><div data-guide-target={guideTargets.live}><dt>Chế độ Live</dt><dd>{account.liveEnabled ? 'Được phép' : 'Chưa cấp quyền'}</dd></div><div><dt>Hạn sử dụng</dt><dd>{account.expiresAt ? new Date(account.expiresAt).toLocaleString('vi-VN') : 'Không giới hạn'}</dd></div></>}</dl>
           {error && <p className="access-error" role="alert">{error}</p>}

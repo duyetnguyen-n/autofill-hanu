@@ -87,6 +87,76 @@
 }
 .guide-action:hover { text-decoration: underline; }
 .guide-action:disabled { opacity: .55; cursor: default; text-decoration: none; }
+.walk-actions { grid-column: 2 / -1; display: flex; gap: 16px; flex-wrap: wrap; }
+.guide-card-copy .walk-blocked { color: var(--colorNeutralForeground3); }
+.walk-catalog {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 10px;
+  background: var(--colorNeutralBackground1);
+}
+.walk-catalog summary { cursor: pointer; font-weight: 600; }
+.walk-catalog-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); gap: 6px; margin-block: 8px; }
+.walk-catalog-controls :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  color: inherit;
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 6px;
+}
+.walk-catalog ul { list-style: none; padding: 0; margin: 0; }
+.walk-catalog li + li { border-top: 1px solid var(--colorNeutralStroke2); }
+.walk-catalog li button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 7px 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.walk-catalog li button:hover { color: var(--colorBrandForegroundLink); }
+.walk-catalog small { color: var(--colorNeutralForeground3); text-align: right; }
+[data-portal-node]:has(.walk-dialog) {
+  z-index: 80;
+  min-height: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.fui-DialogSurface.walk-dialog[role=dialog] {
+  pointer-events: auto;
+  position: fixed;
+  inset: 14px auto auto clamp(12px, 5vw, 70px);
+  margin: 0;
+  width: min(680px, calc(100vw - 460px - clamp(12px, 5vw, 70px)));
+  max-width: none;
+  max-height: calc(100dvh - 28px);
+  height: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.walk-dialog .fui-DialogBody { max-height: none; }
+.walk-dialog .fui-DialogContent { overflow: visible; }
+.walk-dialog > .hc-alert-events {
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-height: none;
+  margin-top: 12px;
+}
+body:has(.ai-panel[data-walk-active=true]) :is(.workspace, .hc-main main, .kv-main, .account-page) { padding-bottom: min(750px, 100dvh); }
+body:has(.hc-assistant) .ai-panel[data-walk-active=true],
+body:has(.hc-assistant) .guide-spotlight:has([data-step=walkthrough]) { visibility: hidden; }
+.login-walk-help { display: grid; gap: 10px; }
+.login-walk-help .guide-card { border: 1px solid var(--colorNeutralStroke2); border-radius: 10px; }
+.login-walk-help .guide-card-copy { grid-column: 1 / -1; }
 .guide-account-apps {
   display: flex;
   flex-wrap: wrap;
@@ -151,6 +221,20 @@ body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bot
   .drawer-overlay[data-guided=true] .detail-tabs { padding-inline: 14px; }
   .drawer-overlay[data-guided=true] .detail-tabs button { padding-block: 8px; }
   .ai-panel[data-forms-guide=true] .guide-card { padding: 7px 10px; gap: 4px 8px; }
+  .ai-panel[data-walk-active=true] .guide-card {
+    padding: 6px 10px;
+    gap: 4px 7px;
+    max-height: 25dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .fui-DialogSurface.walk-dialog[role=dialog] {
+    inset: max(10px, env(safe-area-inset-top)) 12px auto;
+    width: auto;
+    max-height: calc(54dvh - 22px);
+    padding: 15px;
+  }
+  body:has(.ai-panel[data-walk-active=true]) :is(.workspace, .hc-main main, .kv-main, .account-page) { padding-bottom: calc(43dvh + 24px); }
   body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bottom: calc(43dvh + 24px); }
   .ai-panel[data-guiding=true] {
     bottom: max(10px, env(safe-area-inset-bottom));

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Button, Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
+import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
+import { Button, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
 import type { Command, Row, RunnerState } from "../protocol";
 import { useActivateModal } from "@fluentui/react-tabster";
 

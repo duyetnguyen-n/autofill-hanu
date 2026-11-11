@@ -72,10 +72,10 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
     : proposal?.action === "edit" && preparedDraft?.id !== schedule?.id ? "Chọn lịch nháp cần sửa ở đầu khung chat."
     : undefined);
 
-  async function send(question: string) {
+  async function send(question: string, keepContext = false) {
     const text = question.trim();
     if (!text || requestRef.current) return;
-    if (guideIntent(text) && guide.handoff(text)) {
+    if (!keepContext && guideIntent(text) && guide.handoff(text)) {
       onClose();
       return;
     }
@@ -162,8 +162,9 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
               <div className="hc-assistant-prompts">
                 {scope.noticeCode && <Button size="small" onClick={() => void send("Thông báo này có nghĩa gì và tôi cần làm gì?")}>Giải thích thông báo</Button>}
                 {schedule && <Button size="small" onClick={() => void send("Lần chạy này đã đăng ký được chưa?")}>Giải thích lần chạy</Button>}
-                {scope.accountId && !schedule && <Button size="small" onClick={() => void send("Giải thích báo cáo kiểm tra hồ sơ/API.")}>Giải thích báo cáo</Button>}
+                {scope.accountId && !schedule && <Button size="small" onClick={() => void send("Giải thích báo cáo kiểm tra hồ sơ/API.", true)}>Giải thích báo cáo</Button>}
                 <Button size="small" onClick={() => void send("Hướng dẫn tạo lịch HCMUE")}>Cách tạo lịch</Button>
+                <Button size="small" onClick={() => { if (guide.openCatalog()) onClose(); }}>Danh mục hướng dẫn</Button>
               </div>
             </>}
             {turns.map((turn, index) => <article className={`hc-assistant-turn hc-assistant-${turn.role}`} key={index}>

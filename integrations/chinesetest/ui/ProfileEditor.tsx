@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Button, Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
+import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
+import { Button, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
 import { personalFrom, type Personal, type Command, type Row, type CloudPhoto, type Portrait } from "../protocol";
 import { profileFromWebsite } from "./planning";
 import type { SessionView } from "../../../src/protocol";

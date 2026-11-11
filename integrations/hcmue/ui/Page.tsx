@@ -1,3 +1,4 @@
+import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   FluentProvider,
@@ -7,8 +8,6 @@ import {
   Checkbox,
   Field,
   Spinner,
-  Dialog,
-  DialogSurface,
   DialogBody,
   DialogTitle,
   DialogContent,
@@ -502,7 +501,7 @@ export function HcmuePage({
               </div>
             </div>
           </section>
-          <section id="hc-device" className="hc-device">
+          <section id="hc-device" className="hc-device" data-walk-trusted={Boolean(trusted)}>
             <div
               className={`hc-device-symbol ${device?.connected ? "hc-online" : ""}`}
             >
@@ -854,7 +853,7 @@ export function HcmuePage({
                 ) : (
                   <div className="hc-runs">
                     {[...schedules].reverse().map((s) => (
-                      <article className="hc-run" key={s.id}>
+                      <article className="hc-run" key={s.id} data-walk-mode={s.test?'test':'live'} data-walk-status={s.status}>
                         <div className="hc-run-time">
                           <strong>{shortTime(s.targetAt)}</strong>
                           <small>
@@ -1201,7 +1200,7 @@ export function HcmuePage({
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Câu hỏi bổ sung của kỳ thi</DialogTitle>
+            <DialogTitle data-walk="hcmue-exam-questions">Câu hỏi bổ sung của kỳ thi</DialogTitle>
             <DialogContent>
               {questionDraft?.map((d, index) => (
                 <section key={d.accountId}>
