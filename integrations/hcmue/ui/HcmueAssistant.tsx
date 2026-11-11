@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useRef, useState, type ReactNode, type ComponentProps } from "react";
 import { Button, Field, Input, Select, Spinner } from "@fluentui/react-components";
 import { AssistantBoundary } from "../../../manager/ui/assistant/AssistantBoundary";
+import { adminGuideIntent, useGuide } from "../../../manager/ui/assistant/guide";
 import { ChatsCircle, PaperPlaneTilt, X } from "@phosphor-icons/react";
 import { type AssistantContext, type AssistantProposal, type AssistantReply, runObservation, runResultText } from "../assistant";
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
@@ -38,6 +39,7 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
   const [turns, setTurns] = useState<Turn[]>([]);
   const [pending, setPending] = useState(false);
   const showNotice = useContext(NoticeCenter);
+  const guide = useGuide();
   const [draft, setDraft] = useState<Draft>();
   const requestRef = useRef<AbortController | undefined>(undefined);
   const logRef = useRef<HTMLDivElement>(null);
@@ -73,6 +75,10 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
   async function send(question: string) {
     const text = question.trim();
     if (!text || requestRef.current) return;
+    if (adminGuideIntent(text) && guide.handoff(text)) {
+      onClose();
+      return;
+    }
     const controller = new AbortController();
     requestRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), 20_000);

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Avatar, Button } from '@fluentui/react-components';
 import { ArrowLeftRegular, ArrowRightRegular, CheckmarkCircleRegular, ClockRegular, LockClosedRegular, ShieldCheckmarkRegular } from '@fluentui/react-icons';
 import type { Account, AccountStatus } from '../../src/account';
+import { guideTargets } from './assistant/guide';
 
 export const accessLabels: Record<AccountStatus, string> = { pending: 'Chờ duyệt', active: 'Đang hoạt động', blocked: 'Bị khóa', rejected: 'Chưa được chấp thuận', expired: 'Hết hạn' };
 export function AccessBadge({ status }: { status: AccountStatus }) {
@@ -38,7 +39,7 @@ export function AccountPage({ account, logout, refresh }: { account: Account; lo
           <dl className="account-facts"><div><dt>Tên Google</dt><dd>{account.name || 'Chưa có tên'}</dd></div><div><dt>Ngày đăng ký</dt><dd>{new Date(account.createdAt).toLocaleDateString('vi-VN')}</dd></div>{usable && <><div><dt>Profile tối đa</dt><dd>{account.maxProfiles}</dd></div><div><dt>Chạy đồng thời</dt><dd>{account.maxConcurrent} profile</dd></div><div><dt>Chế độ Live</dt><dd>{account.liveEnabled ? 'Được phép' : 'Chưa cấp quyền'}</dd></div><div><dt>Hạn sử dụng</dt><dd>{account.expiresAt ? new Date(account.expiresAt).toLocaleString('vi-VN') : 'Không giới hạn'}</dd></div></>}</dl>
           {error && <p className="access-error" role="alert">{error}</p>}
           <div className="access-form-actions">{usable ? <Button as="a" href="/" appearance="primary" icon={<ArrowRightRegular/>}>Vào quản lý profile</Button> : <Button disabled={busy} onClick={() => void perform(refresh)}>{busy ? 'Đang kiểm tra…' : 'Kiểm tra trạng thái'}</Button>}</div>
-          {account.role === 'admin' && <a className="access-text-link" href="/admin"><ArrowLeftRegular/> Trang quản trị</a>}
+          {account.role === 'admin' && <a className="access-text-link" href="/admin" data-guide-target={guideTargets.admin}><ArrowLeftRegular/> Trang quản trị</a>}
         </div>
       </section>
     </main>

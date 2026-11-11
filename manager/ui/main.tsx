@@ -15,6 +15,7 @@ import {AdminPage} from './AdminPage';
 import {darkTheme,lightTheme,useTheme} from './theme';
 import {WorkspaceSidebar} from './WorkspaceSidebar';
 import { WorkspaceHeader } from './WorkspaceHeader';
+import { guideTargets } from './assistant/guide';
 import {SquaresFour, WarningCircle, CheckCircle, BookOpen, Browsers} from '@phosphor-icons/react';
 import {runStatusLabel,commandStatus,runElapsed,displayedRun,submissionReviewMessage} from '../../src/run-presentation';
 import {HSK_RULES,emptyProfile} from '../../src/rules';
@@ -59,7 +60,7 @@ const step=(s:SessionView)=>commandStatus(s.control,s.run)??(s.linked===false?'L
 const elapsed=runElapsed;
 function AccountTools({cloud,busy,working,act,account,onLogout,closeOnLogout=false}:{cloud:boolean;busy:boolean;working:boolean;act:(fn:()=>Promise<unknown>,message?:string)=>Promise<void>;account?:Account;onLogout:()=>void;closeOnLogout?:boolean}){
   const logoutButton=<Button appearance="subtle" disabled={working} onClick={onLogout}>Đăng xuất</Button>;
-  return <><DataTransfer cloud={cloud} busy={busy} act={act} request={api}/>{account&&<>{account.role==='admin'&&<Button as="a" href="/admin" appearance="subtle" icon={<ShieldCheckmarkRegular/>}>Quản trị</Button>}<Button as="a" href="/account" appearance="subtle">Tài khoản</Button><span className="account-email" title={account.email}>{account.email}</span>{closeOnLogout?<DialogTrigger action="close" disableButtonEnhancement>{logoutButton}</DialogTrigger>:logoutButton}</>}</>;
+  return <><DataTransfer cloud={cloud} busy={busy} act={act} request={api}/>{account&&<>{account.role==='admin'&&<Button as="a" href="/admin" data-guide-target={guideTargets.admin} appearance="subtle" icon={<ShieldCheckmarkRegular/>}>Quản trị</Button>}<Button as="a" href="/account" appearance="subtle">Tài khoản</Button><span className="account-email" title={account.email}>{account.email}</span>{closeOnLogout?<DialogTrigger action="close" disableButtonEnhancement>{logoutButton}</DialogTrigger>:logoutButton}</>}</>;
 }
 function App({cloud=false,account,logout,hcmueEnabled=false,chinesetestEnabled=false}:{cloud?:boolean;account?:Account;logout?:()=>Promise<void>;hcmueEnabled?:boolean;chinesetestEnabled?:boolean}={}){
   const [state,setState]=useState(initial),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[working,setBusy]=useState(false),[mode,setMode]=useState<'test'|'live'>('test');

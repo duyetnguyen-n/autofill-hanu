@@ -1,0 +1,135 @@
+.guide-spotlight {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  pointer-events: none;
+}
+.guide-halo {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #39ac89;
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px #39ac8933;
+  transition: left .24s ease, top .24s ease, width .24s ease, height .24s ease;
+}
+.guide-halo::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px solid #57c5a2;
+  border-radius: inherit;
+  animation: guide-pulse 1.9s ease-out infinite;
+}
+.guide-pin {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid #42695d;
+  border-radius: 9px;
+  background: #173a30;
+  color: #f2fbf7;
+  box-shadow: 0 5px 18px #112b232b;
+  font: 550 11px/1.4 "Geist Variable", sans-serif;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  transition: left .24s ease, top .24s ease;
+}
+.guide-pin[data-below=true] { transform: translateX(-50%); }
+.guide-pin svg { color: #9ee1c9; }
+.guide-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+  background: var(--colorBrandBackground2);
+  color: var(--colorNeutralForeground1);
+}
+.guide-card-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: var(--colorNeutralBackground1);
+  color: var(--colorBrandForeground1);
+}
+.guide-card-copy { display: grid; gap: 3px; }
+.guide-card-copy span { font-size: 10px; color: var(--colorNeutralForeground3); }
+.guide-card-copy strong { font-size: 13px; }
+.guide-dismiss, .guide-action {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.guide-dismiss { display: grid; place-items: center; height: 28px; border-radius: 7px; }
+.guide-dismiss:hover { background: var(--colorNeutralBackground1); }
+.guide-progress { grid-column: 1 / -1; display: flex; gap: 4px; }
+.guide-progress i { flex: 1; height: 3px; border-radius: 3px; background: #85b6a24d; }
+.guide-progress i:first-child, .guide-progress i[data-current=true] { background: var(--colorBrandForeground1); }
+.guide-action {
+  grid-column: 2 / -1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0;
+  font: 600 11px/1.4 "Geist Variable", sans-serif;
+  color: var(--colorBrandForegroundLink);
+}
+.guide-action:hover { text-decoration: underline; }
+.ai-panel[data-has-step=true] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+/* Fluent UI copies the workspace class to its portal. Only the menu itself
+   should receive pointer events while the chat stays usable. */
+[data-portal-node]:has(.workspace-tools-guided) {
+  z-index: 80;
+  min-height: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.workspace-tools-dialog.workspace-tools-guided {
+  pointer-events: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  inset: min(15dvh, 120px) auto auto clamp(12px, 6vw, 90px);
+  margin: 0;
+  width: min(480px, calc(100vw - 465px));
+  max-height: calc(85dvh - 16px);
+}
+.workspace-tools-guided .fui-DialogBody { max-height: none; }
+.workspace-tools-guided .fui-DialogContent { overflow: visible; }
+@keyframes guide-pulse {
+  0% { opacity: .8; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(1.09, 1.28); }
+}
+@media (max-width: 820px) {
+  .workspace-tools-dialog.workspace-tools-guided {
+    inset: max(10px, env(safe-area-inset-top)) 12px auto;
+    width: auto;
+    max-width: none;
+    max-height: calc(54dvh - 22px);
+    padding: 15px;
+  }
+  .ai-panel[data-guiding=true] {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    right: 12px;
+    height: 43dvh;
+    width: 420px;
+    max-width: calc(100vw - 24px);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  .ai-panel[data-guiding=true] .ai-header { padding: 7px 12px; }
+  .ai-panel[data-guiding=true] .ai-mark { width: 31px; height: 31px; }
+  .ai-panel[data-guiding=true] .ai-log { padding: 10px; gap: 6px; }
+  .ai-panel[data-guiding=true] .ai-composer { margin: 5px 10px 8px; padding: 4px; }
+  .ai-panel[data-guiding=true] .ai-footer { display: none; }
+  body:has(.ai-panel[data-guiding=true]) .account-page { padding-bottom: 43dvh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-halo, .guide-pin { transition: none; }
+  .guide-halo::after { animation: none; }
+}
