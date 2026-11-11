@@ -156,7 +156,7 @@ export function HcmueAssistant({ scope, schedules, exams, accounts, liveEnabled,
               {turn.result && <p className="hc-assistant-result">{turn.result}</p>}
               <p>{turn.text}</p>
               {!!turn.reply?.references.length && <ul className="hc-assistant-sources" aria-label="Nguồn tham khảo">
-                {turn.reply.references.map(ref => <li key={ref.id}><a href={`/hcmue-downloads/knowledge.html#${ref.id}`} target="_blank" rel="noreferrer">{ref.title}</a></li>)}
+                {turn.reply.references.map(ref => <li key={ref.id}><a href={ref.href ?? `/hcmue-downloads/knowledge.html#${ref.id}`} target="_blank" rel="noreferrer">{ref.title}</a></li>)}
               </ul>}
             </article>)}
             {pending && <Spinner size="tiny" label="Đang tìm hướng dẫn…" />}

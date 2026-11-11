@@ -1,5 +1,6 @@
 import {HcmueRelay} from '../../integrations/hcmue/cloud/relay';
-import {answerAssistant} from '../../integrations/hcmue/cloud/assistant';
+import {answerAssistant, redactAssistantText} from '../../integrations/hcmue/cloud/assistant';
+import {HcmueKnowledge} from '../../integrations/hcmue/cloud/knowledge';
 import {ChineseTestRelay} from '../../integrations/chinesetest/cloud/relay';
 import {createReadStream} from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -70,6 +71,7 @@ export async function serveCloud(options: {
   const { config, repository } = options;
   const auth = options.auth ?? supabaseAuth(config);
   const accounts = new Accounts(repository.pool, config.bootstrapAdminEmail);
+  const knowledge = new HcmueKnowledge(repository.pool, config.hcmueAssistant);
   const accessChecks = new AccessChecks(owner=>accounts.get(owner));
   const changingAccess = new Set<string>();
   async function allowed(owner: string, fresh = false) {
@@ -267,9 +269,14 @@ export async function serveCloud(options: {
           assertAccess(account);
           if (!hcmue || req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý HCMUE.', 404);
           assistantRate.check(user.id, 12, 60000);
-          return json(res, await answerAssistant(await body(req, 24 * 1024), config.hcmueAssistant ?? {}));
+          return json(res, await answerAssistant(await body(req, 24 * 1024), { ...config.hcmueAssistant, knowledge }));
         }
         rate.check(`api:${user.id}`, 300, 60000);
+        const knowledgeDocument = /^\/api\/hcmue\/knowledge\/(doc-[a-f0-9]{32})$/.exec(path);
+        if (hcmue && knowledgeDocument && req.method === 'GET') {
+          assertAccess(account);
+          return json(res, await knowledge.document(knowledgeDocument[1]));
+        }
         if (path === '/api/account' && req.method === 'PATCH') {
           rate.check(`account:${user.id}`, 10, 60000);
           const result = await accounts.profile(user.id, await body(req, 4096));
@@ -279,6 +286,30 @@ export async function serveCloud(options: {
         if (path.startsWith('/api/admin/')) {
           await accounts.requireAdmin(user.id);
           rate.check(`admin:${user.id}`, 120, 60000);
+          const knowledgePath = '/api/admin/hcmue/knowledge';
+          if (hcmue && path.startsWith(knowledgePath)) {
+            const action = path.slice(knowledgePath.length);
+            if (!action && req.method === 'GET') return json(res, {
+              documents: await knowledge.list(), model: knowledge.model, embeddingEnabled: knowledge.embeddingEnabled,
+            });
+            if (action === '/map' && req.method === 'GET') return json(res, await knowledge.map());
+            if (req.method === 'POST') {
+              rate.check(`hcmue-knowledge:${user.id}`, 15, 60000);
+              if (!action) return json(res, await knowledge.publish(await body(req, 64 * 1024)), 201);
+              if (action === '/index-guides') return json(res, await knowledge.indexBuiltins());
+              if (action === '/search') {
+                const { question, rerank } = await body(req, 4096);
+                if (typeof question !== 'string' || !question.trim() || question.length > 500)
+                  throw new CloudError('Nhập câu hỏi từ 1 đến 500 ký tự.');
+                return json(res, await knowledge.compare(redactAssistantText(question.trim()), rerank === true));
+              }
+              const index = /^\/(doc-[a-f0-9]{32})\/index$/.exec(action);
+              if (index) return json(res, await knowledge.indexDocument(index[1]));
+            }
+            const archive = /^\/(doc-[a-f0-9]{32})$/.exec(action);
+            if (archive && req.method === 'DELETE') return json(res, await knowledge.archive(archive[1]));
+            throw new CloudError('Không tìm thấy API kho tri thức.', 404);
+          }
           if (path === '/api/admin/accounts' && req.method === 'GET') return json(res, await accounts.list(url.searchParams));
           if (path === '/api/admin/events' && req.method === 'GET') return json(res, await accounts.events());
           if (path === '/api/admin/grants' && req.method === 'GET') return json(res, await accounts.grants());
@@ -437,13 +468,17 @@ export async function serveCloud(options: {
         res.setHeader('Content-Length',archive.length);
         return res.end(archive);
       }
-      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', '/google-direct', ...(hcmue?['/hcmue']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
+      const file = resolve(uiDir, '.' + decodeURIComponent(['/', '/admin', '/account', '/google-direct', ...(hcmue?['/hcmue','/hcmue/knowledge']:[]), ...(chinesetest?['/chinesetest']:[])].includes(path) ? '/index.html' : path));
       if (!file.startsWith(resolve(uiDir) + sep) || !existsSync(file) || !statSync(file).isFile()) throw new CloudError('Không tìm thấy trang.', 404);
       const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');
       if((path.startsWith('/hcmue-downloads/')||path.startsWith('/chinesetest-downloads/'))&&extname(file)==='.zip'){res.setHeader('Content-Length',statSync(file).size);createReadStream(file).on('error',()=>res.destroy()).pipe(res);return;}
       res.end(readFileSync(file));
     } catch (error) {
+      if (/^\/api\/(?:admin\/)?hcmue\/knowledge(?:\/|\?|$)/.test(req.url ?? '') &&
+          /^(42P01|3F000|42883)$/.test(String((error as { code?: string }).code ?? ''))) {
+        return json(res, { error: 'Kho tri thức chưa được cài trên Supabase. Áp dụng migration 202611110001_hcmue_knowledge.sql rồi tải lại.' }, 503);
+      }
       if (!(error instanceof CloudError) && /^(08|53|57|58)/.test(String((error as { code?: string }).code ?? ''))) failClosed(error);
       // Database messages may include private values. Do not expose them.
       const databaseError = !!(error as { code?: string }).code;

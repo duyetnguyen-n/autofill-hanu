@@ -1,9 +1,10 @@
 import { chromium, expect } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { httpFixture } from "../tests/cloud/fixture";
+import { httpFixture, users } from "../tests/cloud/fixture";
+import { DEFAULT_EMBEDDING_MODEL } from "../integrations/hcmue/cloud/knowledge";
 import { connectRunner } from "../tests/hcmue/relay-fixture";
-const app = await httpFixture(resolve("build/cloud-ui"), true),
+const app = await httpFixture(resolve("build/cloud-ui"), true, false, true),
   runner = await connectRunner(app);
 const browser = await chromium.launch({
   channel: process.platform === "win32" ? "msedge" : "chrome",
@@ -254,9 +255,37 @@ try {
   await expect(
     page.getByRole("heading", { name: "Quản lý các phiên", exact: true }),
   ).toBeVisible();
+  await app.pool.query("UPDATE hanu.accounts SET role='admin' WHERE user_id=$1", [users[0]]);
+  await page.goto(app.config.origin + "/hcmue");
+  await page.getByRole("link", { name: "Kho tri thức", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Kho tri thức HCMUE", exact: true })).toBeVisible();
+  await page.getByLabel("Tải tệp .md hoặc .txt").setInputFiles({
+    name: "Quy cách ảnh.md", mimeType: "text/markdown",
+    buffer: Buffer.from("# Nền ảnh\nDùng nền trắng.\n# Định dạng\nLưu ảnh JPEG."),
+  });
+  await page.getByText("Xem trước 2 đoạn", { exact: true }).click();
+  await expect(page.getByText("Dùng nền trắng.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Xuất bản", exact: true }).click();
+  await expect(page.getByText("Tài liệu đã được xuất bản.", { exact: true })).toBeVisible();
+  await app.pool.query(`UPDATE hcmue.knowledge_chunks SET embedding=(CASE ordinal WHEN 0 THEN '[1,0,0]' ELSE '[0,1,0]' END)::extensions.vector,
+    embedding_model=$1 WHERE document_id IN (SELECT id FROM hcmue.knowledge_documents WHERE title='Quy cách ảnh')`, [DEFAULT_EMBEDDING_MODEL]);
+  await page.getByRole("button", { name: "Xem bản đồ", exact: true }).click();
+  await page.getByRole("group", { name: "Bản đồ vector tài liệu" }).getByRole("button", { name: "Quy cách ảnh · Định dạng" }).click();
+  await expect(page.getByLabel("Đoạn đang xem")).toHaveValue(/-1$/);
+  await page.getByLabel("Câu hỏi thử").fill("Ảnh JPEG");
+  await page.getByRole("button", { name: "So sánh kết quả" }).click();
+  await expect(page.getByText(/Thời gian truy xuất:/)).toBeVisible();
+  await page.getByRole("link", { name: "Quy cách ảnh · Định dạng", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Quy cách ảnh", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Định dạng", exact: true })).toBeVisible();
+  await page.goBack();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("heading", { name: "Kho tri thức HCMUE", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/hcmue/knowledge-mobile.png", fullPage: true });
   expect(errors).toEqual([]);
   console.log(
-    "PASS HCMUE: floating assistant and timed notices, encrypted relay, scheduled dry-run, assistant draft create/edit/arm confirmation (0 school POSTs), mobile, return to Google Forms.",
+    "PASS HCMUE: assistant, timed notices, encrypted relay, scheduled dry-run (0 school POSTs), return to Google Forms, knowledge upload, vector map, retrieval and citation, mobile.",
   );
 } finally {
   await browser.close();

@@ -65,7 +65,8 @@ export function CloudGate({children}:{children:(account:Account,logout:()=>Promi
     monitor.current={check,signedOut:()=>{generation++;controller?.abort();clearTimeout(timer);currentAccount=undefined;failures=0;}};
     window.addEventListener('hanu-auth-expired',expired);window.addEventListener('hanu-account-updated',updated);document.addEventListener('visibilitychange',visible);
     window.addEventListener('storage',storage);void check();
-    if(location.search)history.replaceState(null,'',location.pathname);
+    const pageUrl=new URL(location.href);
+    if(pageUrl.searchParams.has('auth_error')){pageUrl.searchParams.delete('auth_error');history.replaceState(null,'',pageUrl);}
     return()=>{stopped=true;controller?.abort();clearTimeout(timer);window.removeEventListener('hanu-auth-expired',expired);window.removeEventListener('hanu-account-updated',updated);window.removeEventListener('storage',storage);document.removeEventListener('visibilitychange',visible);};
   },[attempt]);
   async function login(){setPending(true);setError('');try{

@@ -8,7 +8,11 @@ Bạn có thể yêu cầu tạo hoặc sửa lịch nháp, mở bước xác nh
 
 Người vận hành cấu hình `OPENROUTER_API_KEY` trong môi trường backend. `HANU_HCMUE_ASSISTANT_MODEL` chọn model và mặc định là `deepseek/deepseek-v3.2`. Khi thiếu key hoặc dịch vụ model gặp lỗi, khung chat trả hướng dẫn từ kho HCMUE. Chat và các thao tác Runner có giới hạn yêu cầu riêng.
 
-Kho tri thức nằm tại `integrations/hcmue/knowledge/guides.json`. Mỗi bài có mã ổn định, mã lỗi nếu có, cụm từ người dùng hay hỏi, các bước xử lý và tài liệu đã đối chiếu. Khi thêm hoặc sửa bài, cập nhật bộ câu hỏi trong `tests/hcmue/knowledge.test.ts` và chạy `npm run test:hcmue-rag`. Bản build web tạo trang nguồn từ cùng kho này để người dùng mở đúng bài được trích dẫn. Dữ liệu hồ sơ, lịch và nhật ký của từng người được đọc riêng theo câu hỏi, bên ngoài kho tri thức.
+Để bật **Kho tri thức**, chạy migration `supabase/migrations/202611110001_hcmue_knowledge.sql` trong Supabase SQL Editor (sau migration Runner HCMUE) và deploy web. Migration dùng pgvector trong schema `extensions`. Dùng chung `OPENROUTER_API_KEY`; `HANU_HCMUE_EMBEDDING_MODEL` mặc định là `qwen/qwen3-embedding-4b`. Khi đổi model, lập chỉ mục lại các bài có sẵn và dùng **Tạo vector** ở từng tài liệu. Khi chưa có key, tài liệu xuất bản vẫn tìm được bằng từ khóa.
+
+Tài khoản quản trị mở **HCMUE → Kho tri thức**. Bấm **Lập chỉ mục bài có sẵn** để đưa hướng dẫn tích hợp lên bản đồ. Dán nội dung hoặc tải tệp `.md`/`.txt`, xem trước đoạn, rồi xuất bản. Bản đồ 2D chiếu vector bằng PCA; bấm một điểm để đọc đoạn gốc. Trong **Thử truy xuất**, cùng một câu hỏi cho ba danh sách: từ khóa, vector và kết hợp. Tùy chọn xếp hạng lại chỉ gọi OpenRouter khi quản trị viên chọn, với tối đa sáu đoạn ứng viên. Tài liệu đã xuất bản là hướng dẫn dùng chung; không đưa hồ sơ, tài khoản hoặc nhật ký cá nhân vào kho.
+
+Trợ lý ưu tiên mã lỗi và từ khóa rõ ràng, dùng vector khi cần và đưa tối đa ba đoạn vào câu hỏi gửi tới model. Model không tự học từ chat; xuất bản tài liệu chỉ cập nhật nguồn tra cứu. Chat vẫn dùng hướng dẫn tích hợp từ `integrations/hcmue/knowledge/guides.json` khi kho hoặc dịch vụ model không khả dụng. Chạy `npm run test:hcmue-rag` để kiểm tra; bộ câu hỏi và mã nguồn kỳ vọng nằm trong `tests/hcmue/knowledge.test.ts`, có thể dùng lại khi so sánh với RAGFlow.
 
 HCMUE là chức năng riêng của website. Google Forms tiếp tục dùng luồng hiện tại.
 

@@ -2,6 +2,8 @@ import { CloudError } from "../../../manager/cloud/postgres-store";
 import { assistantActions, type AssistantContext, type AssistantProposal, type AssistantReply, type RunSummary } from "../assistant";
 import { statusLabel } from "../protocol";
 import { normalize, retrieveGuides } from "./assistant-knowledge";
+import type { HcmueKnowledge } from "./knowledge";
+import type { KnowledgeMatch } from "../knowledge/documents";
 
 export const DEFAULT_ASSISTANT_MODEL = "deepseek/deepseek-v3.2";
 let requestsInFlight = 0;
@@ -9,7 +11,7 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const date = (value: unknown) => typeof value === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value) && Number.isFinite(Date.parse(value)) ? value : undefined;
 const code = (value: unknown) => typeof value === "string" && /^[a-zA-Z][a-zA-Z_-]{0,39}$/.test(value) ? value : undefined;
 const http = (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined;
-const redact = (value: string) => value
+export const redactAssistantText = (value: string) => value
   .replace(/(?:sk-[\w-]{12,}|eyJ[\w-]+\.[\w-]+\.[\w-]+|\bBearer\s+[\w.-]+)/gi, "[đã ẩn]")
   .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[email đã ẩn]")
   .replace(/(?<!\d)(?:\d[ .-]?){9,}(?!\d)/g, "[số đã ẩn]")
@@ -71,24 +73,38 @@ function localProposal(question: string): AssistantProposal | undefined {
   return { action, exam, test: /\bdien tap\b/.test(text) ? true : /\bdang ky that\b/.test(text) ? false : undefined };
 }
 
-export async function answerAssistant(input: unknown, options: { apiKey?: string; model?: string; send?: typeof fetch }): Promise<AssistantReply> {
+export async function answerAssistant(input: unknown, options: { apiKey?: string; model?: string; send?: typeof fetch; knowledge?: HcmueKnowledge }): Promise<AssistantReply> {
   const body = record(input);
   if (typeof body.message !== "string" || !body.message.trim() || body.message.length > 1200)
     throw new CloudError("Nhập câu hỏi từ 1 đến 1.200 ký tự.");
-  const message = redact(body.message.trim()), context = contextForModel(body.context);
-  const guides = retrieveGuides(message, context.noticeCode ?? context.inspection?.issues?.[0]?.code);
+  const message = redactAssistantText(body.message.trim()), context = contextForModel(body.context);
+  const noticeCode = context.noticeCode ?? context.inspection?.issues?.[0]?.code;
+  let guides: Omit<KnowledgeMatch, "score">[] = retrieveGuides(message, noticeCode);
+  if (options.knowledge) {
+    try { guides = (await options.knowledge.search(message, noticeCode)).hybrid; }
+    catch { /* Older deployments can continue serving the bundled guides. */ }
+  }
+  guides = guides.slice(0, 3).map(({ id, title, steps, href }) => {
+    let remaining = 700;
+    return { id, title, href, steps: steps.flatMap(step => {
+      if (remaining <= 0) return [];
+      const bounded = step.slice(0, remaining);
+      remaining -= bounded.length + 1;
+      return [bounded];
+    }) };
+  });
   const fallbackGuides = guides.slice(0, 2);
   const fallback: AssistantReply = {
-    source: "guide", references: fallbackGuides.map(({ id, title }) => ({ id, title })), proposal: localProposal(message),
+    source: "guide", references: fallbackGuides.map(({ id, title, href }) => ({ id, title, href })), proposal: localProposal(message),
     answer: fallbackGuides.length
-      ? fallbackGuides.map(guide => [guide.title, ...guide.steps.map((step, i) => `${i + 1}. ${step}`)].join("\n")).join("\n\n")
+      ? fallbackGuides.map(guide => [guide.title, ...guide.steps.map((step, i) => guide.steps.length > 1 ? `${i + 1}. ${step}` : step)].join("\n")).join("\n\n")
       : "Bạn có thể hỏi về kết nối Runner, hồ sơ, tạo lịch, bật lịch hoặc kết quả đăng ký. Với một lần chạy cụ thể, chọn lịch cần xem ở đầu khung chat.",
   };
   if (!options.apiKey || requestsInFlight >= 8) return fallback;
-  const history = Array.isArray(body.history) ? body.history.slice(-6).flatMap(value => {
+  const history = Array.isArray(body.history) ? body.history.slice(-4).flatMap(value => {
     const turn = record(value);
     return (turn.role === "user" || turn.role === "assistant") && typeof turn.text === "string"
-      ? [{ role: turn.role, text: redact(turn.text.slice(0, 1200)) }] : [];
+      ? [{ role: turn.role, text: redactAssistantText(turn.text.slice(0, 350)) }] : [];
   }) : [];
   requestsInFlight++;
   try {
@@ -115,7 +131,7 @@ export async function answerAssistant(input: unknown, options: { apiKey?: string
     const value = record(JSON.parse(content));
     if (typeof value.answer !== "string" || !value.answer.trim() || value.answer.length > 3200) return fallback;
     const referenceIds: unknown[] = Array.isArray(value.referenceIds) ? value.referenceIds : [];
-    const references = guides.filter(guide => referenceIds.includes(guide.id)).map(({ id, title }) => ({ id, title }));
+    const references = guides.filter(guide => referenceIds.includes(guide.id)).map(({ id, title, href }) => ({ id, title, href }));
     return { answer: value.answer.trim(), source: "model", references, proposal: proposalFrom(value.proposal) };
   } catch {
     return fallback;

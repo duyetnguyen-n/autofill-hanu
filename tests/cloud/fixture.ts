@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite-pgvector';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { SqlPool, SqlConnection, PrivateObjects } from '../../manager/cloud/postgres-store';
@@ -12,8 +13,8 @@ export const extension = 'a'.repeat(32);
 
 // PGlite runs PostgreSQL itself in WASM. Its one connection is serialized here;
 // tests exercise the real migration, RLS, SQL transactions and row predicates.
-export async function databaseFixture() {
-  const db = new PGlite();
+export async function databaseFixture(vectorEnabled = false) {
+  const db = new PGlite(vectorEnabled ? { extensions: { vector } } : undefined);
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
     CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_user_meta_data jsonb DEFAULT '{}',created_at timestamptz NOT NULL DEFAULT now(),last_sign_in_at timestamptz);
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
@@ -67,9 +68,10 @@ export async function databaseFixture() {
   return { db, pool, objects, blobs, repository, pair, async close() { await db.close(); } };
 }
 
-export async function httpFixture(uiDir?: string, hcmueEnabled = false, chinesetestEnabled = false) {
-  const fixture = await databaseFixture();
+export async function httpFixture(uiDir?: string, hcmueEnabled = false, chinesetestEnabled = false, knowledgeEnabled = false) {
+  const fixture = await databaseFixture(knowledgeEnabled);
   if (hcmueEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610210001_hcmue_runners.sql','utf8'));
+  if (knowledgeEnabled) await fixture.db.exec(await readFile('supabase/migrations/202611110001_hcmue_knowledge.sql','utf8'));
   if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610220001_chinesetest_runners.sql','utf8'));
   if (chinesetestEnabled) await fixture.db.exec(await readFile('supabase/migrations/202610240001_chinesetest_profiles.sql','utf8'));
   const authorized = new Set(['account-a', 'account-b']);
