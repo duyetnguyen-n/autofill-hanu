@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { feeKey, personalFrom, validatePersonal, validateTarget, type FeeQuote, type Row, type Target, type Personal } from "../protocol";
+import { feeKey, personalFrom, validatePersonal, validateTarget, type FeeQuote, type Row, type Target, type Personal, type TimingStage } from "../protocol";
 import { ApiError, type ChineseTestClient } from "./client";
 const text = (v: unknown) => String(v ?? "").trim();
 const same = (a: unknown, b: unknown) => text(a) === text(b);
@@ -46,16 +46,23 @@ export async function readFeeQuote(client: ChineseTestClient, t: Target, center:
   const value=checkFee({...t,feeQuote:undefined,maxFee:undefined},fees.data,center);
   return {key:feeKey(t),...value,linkedId:text(subject?.jlKmId),linked:subject?[text(subject.jlKmEName || subject.jlKmName || subject.jlKmId)]:[]};
 }
-export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], { checkpoint = () => {}, skipFee = false } = {}): Promise<Inspection> {
+interface InspectionOptions {
+  checkpoint?: () => void;
+  skipFee?: boolean;
+  centerFound?: () => void;
+  measure?: <T>(stage: TimingStage, work: () => Promise<T>) => Promise<T>;
+}
+export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], { checkpoint = () => {}, skipFee = false, centerFound, measure }: InspectionOptions = {}): Promise<Inspection> {
   validateTarget(t); validatePersonal(personal); checkpoint();
   const center = centerFrom(sites, t);
   if (!center) return { ready: false, reason: "Điểm thi chưa xuất hiện cho đúng ngày/cấp/hình thức." };
+  centerFound?.();
   if (!center.kdId || !center.gjId) throw new Error("Điểm thi thiếu mã/quốc gia; cấu trúc API đã đổi.");
   if (same(center.gjId, 1)) throw new Error("Điểm thi Trung Quốc đại lục cần xác minh riêng; chưa hỗ trợ bản này.");
   if (["13", "16"].includes(t.projectId) && t.ksType !== "4" && String(center.tyFlag || "").split(",").includes("mail_yes")) throw new Error("Điểm thi bắt buộc gửi kết quả qua bưu điện; chưa hỗ trợ bản này.");
   const query = { kmId: t.kmId, kdId: String(center.kdId), ksType: t.ksType };
-  const read = (path: string, args?: Row) => {
-    const request = client.call(path, args);
+  const read = (stage: TimingStage, path: string, args?: Row) => {
+    const request = measure ? measure(stage, () => client.call(path, args)) : client.call(path, args);
     if (!skipFee) return request;
     return request.catch(error => {
       if (error instanceof ApiError && error.code === 202 && /is not open for registration/i.test(error.message)) return undefined;
@@ -64,10 +71,10 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
   };
   // These are independent reads. No POST may be made by an inspection.
   const [full, europe, linked, fees] = await Promise.all([
-    read("/examinee/enroll/juadgeFullBm", { kdid: center.kdId, kmid: t.kmId, kstime: t.ksDate, kstype: t.ksType }),
-    read(`/examinee/enroll/getOzKd/${center.kdId}/${t.ksDate}/${t.kmId}`),
-    read("/examinee/enroll/getJiLianList", { ...query, ksTime: t.ksDate }),
-    skipFee ? undefined : read("/examinee/enroll/getKsFees", { ...query, ksDate: t.ksDate }),
+    read("capacity", "/examinee/enroll/juadgeFullBm", { kdid: center.kdId, kmid: t.kmId, kstime: t.ksDate, kstype: t.ksType }),
+    read("region", `/examinee/enroll/getOzKd/${center.kdId}/${t.ksDate}/${t.kmId}`),
+    read("linked", "/examinee/enroll/getJiLianList", { ...query, ksTime: t.ksDate }),
+    skipFee ? undefined : read("fee", "/examinee/enroll/getKsFees", { ...query, ksDate: t.ksDate }),
   ]);
   checkpoint();
   const notOpen = { ready: false, reason: "ChineseTest chưa mở đăng ký cho kỳ thi này.", center };
@@ -80,9 +87,9 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
   if (subject) {
     if (!t.acceptLinked) throw new Error("Kỳ thi yêu cầu môn đi kèm. Cần chấp nhận môn này trước khi bật lịch.");
     linkedId = text(subject.jlKmId);
-    if (!await read("/examinee/enroll/validJiLian", { ...query, jlKmId: linkedId, ksDate: t.ksDate })) return notOpen;
+    if (!await read("validateLinked", "/examinee/enroll/validJiLian", { ...query, jlKmId: linkedId, ksDate: t.ksDate })) return notOpen;
   } else if (["16", "24"].includes(t.projectId)) {
-    const extra = await read("/examinee/enroll/hskJiLian", { ...query, ksTime: t.ksDate });
+    const extra = await read("validateLinked", "/examinee/enroll/hskJiLian", { ...query, ksTime: t.ksDate });
     if (!extra) return notOpen;
     if (extra.data && !t.acceptLinked) throw new Error("Có môn/phí bắt buộc đi kèm; cần chấp nhận trước.");
   }

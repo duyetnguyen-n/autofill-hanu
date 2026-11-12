@@ -132,11 +132,12 @@ export const runnerWalkthroughs = [
   ], { fallback: ctOffline }),
   flow("CT-11", "chinesetest", "Chuẩn bị và bật lịch Live ChineseTest", ["bật lịch live chinesetest", "đăng ký thật chinesetest", "chuẩn bị live chinesetest"], [
     ctConfig, ctMode(true), s(c("Chuẩn bị", ctAccounts, ctRow), "Mở xác nhận chuẩn bị Live", "Đối chiếu thông tin của đúng người và mở bước xác nhận.", { advance: "visible" }),
-    s(a('[data-walk="ct-live-confirm"]'), "Đọc và xác nhận quy định", "Đọc điều lệ, quyền riêng tư và lệ phí. Chỉ tự xác nhận để chuẩn bị nếu đồng ý."),
+    s(a('[data-walk="ct-live-confirm"]'), "Xem mục còn thiếu để chuẩn bị Live", "Chọn các xác nhận nếu đồng ý. Khi thiếu báo phí và runner cũ, bấm Tải bản runner mới, mở Start ChineseTest từ gói đã giải nén rồi bấm Kiểm tra lại runner. Khi ô chấp nhận lệ phí xuất hiện, xác nhận ô này để chuẩn bị."),
     s(c("Bật lịch Live", ctAccounts, ctRow), "Kiểm tra trước khi bật Live", "Đối chiếu tài khoản và lịch đã chuẩn bị. Tự bấm khi các điều kiện đã đạt. Xem trạng thái trên Runner."),
   ], { fallback: ctOffline }),
   flow("CT-12", "chinesetest", "Theo dõi và đối chiếu kết quả ChineseTest", ["đối chiếu kết quả chinesetest", "kết quả chinesetest", "test records"], [
-    ctRun, s(c("Đối chiếu kết quả", ctRuns, ctRuns), "Đọc lại kết quả đúng lượt", "Nếu đã gửi yêu cầu, bấm Đối chiếu kết quả ở đúng lịch. Kiểm tra mã đơn, mã đăng ký và trạng thái.", { optional: true }),
+    ctRun, s(a(".ct-run-timing summary", ctRuns), "Xem chi tiết thời gian", "Mở Chi tiết thời gian trong đúng lượt để xem lúc thấy điểm thi, các bước trước khi gửi và thời gian nhận phản hồi.", { optional: true }),
+    s(c("Đối chiếu kết quả", ctRuns, ctRuns), "Đọc lại kết quả đúng lượt", "Nếu đã gửi yêu cầu, bấm Đối chiếu kết quả ở đúng lịch. Kiểm tra mã đơn, mã đăng ký và trạng thái.", { optional: true }),
     s(c(/^Mở Test Records/, ".ct-footer"), "Đối chiếu Test Records", "Mở lịch sử trên ChineseTest và kiểm tra đúng người thi, mã đơn và trạng thái.", { external: true }),
   ], { fallback: ctOffline }),
   flow("CT-13", "chinesetest", "Xác minh đã hủy hoặc chưa đăng ký ChineseTest", ["xác minh đã hủy", "xác minh chưa đăng ký", "mở khóa gửi chinesetest"], [

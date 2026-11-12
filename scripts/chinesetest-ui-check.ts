@@ -115,6 +115,11 @@ try{
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:"test-results/chinesetest/mobile-dark.png",fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.getByRole("button",{name:"Đổi giao diện",exact:true}).click();await page.screenshot({path:"test-results/chinesetest/mobile-light.png",fullPage:true});
  await expect(page.locator(".ct-runs")).toContainText("Test đạt, không gửi đơn",{timeout:45000});expect(runner.shared.submits).toHaveLength(0);
+ const timingDetails=page.locator(".ct-run-timing").first();
+ await timingDetails.getByText("Chi tiết thời gian",{exact:true}).click();
+ await expect(timingDetails).toContainText("Lần đầu thấy đúng điểm thi");
+ await expect(timingDetails).toContainText("Đối chiếu đăng ký trùng");
+ await expect(timingDetails).not.toContainText("Runner bắt đầu gửi");
  // A synthetic completed run cancelled externally; no real registration is sent.
  Object.assign(runner.data.schedules[0],{status:"confirmed",test:false,attempt:{count:1,bmid:"FIXTURE-CANCELLED"}});await runner.engine.persist();
  await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
@@ -168,12 +173,24 @@ try{
  await page.getByRole("listbox").getByRole("option",{name:/Test Center 3/}).click();
  await liveAccount.getByLabel(/^Chế độ cho/).selectOption("live");
  await expect(liveAccount.locator(".ct-fee-panel")).toContainText("is not open for registration");
+ runner.engine.snapshot=()=>({...snapshot(),liveWithoutFee:undefined});
+ await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
  await liveAccount.getByRole("button",{name:"Chuẩn bị",exact:true}).click();
  const liveDialog=page.getByRole("dialog",{name:"Chuẩn bị lượt đăng ký thật"});
- await liveDialog.getByRole("checkbox",{name:/Tôi đã đọc/}).check();
- await liveDialog.getByRole("checkbox",{name:/Tôi đồng ý gửi hồ sơ/}).check();
  const prepareLive=liveDialog.getByRole("button",{name:"Chuẩn bị các lượt đã chọn"});
  await expect(prepareLive).toBeDisabled();
+ await expect(liveDialog.getByRole("link",{name:"Tải bản runner mới"})).toHaveAttribute("href","/chinesetest-downloads/index.html#tai-runner");
+ const recheckRunner=liveDialog.getByRole("button",{name:"Kiểm tra lại runner",exact:true});
+ await recheckRunner.click();
+ await expect(liveDialog.getByRole("alert")).toContainText("Máy vẫn đang chạy bản cũ");
+ runner.engine.snapshot=snapshot;
+ await recheckRunner.click();
+ await expect(liveDialog.getByRole("link",{name:"Tải bản runner mới"})).toHaveCount(0);
+ await expect(liveDialog).toContainText("đồng ý quy định thi, đồng ý gửi hồ sơ, chấp nhận lệ phí khi chưa có báo phí");
+ await liveDialog.getByRole("checkbox",{name:/Tôi đã đọc/}).check();
+ await liveDialog.getByRole("checkbox",{name:/Tôi đồng ý gửi hồ sơ/}).check();
+ await expect(prepareLive).toBeDisabled();
+ await expect(liveDialog).toContainText("các mục còn thiếu (chấp nhận lệ phí khi chưa có báo phí)");
  await liveDialog.getByRole("checkbox",{name:/chấp nhận lệ phí ChineseTest/}).check();
  await prepareLive.click();
  await expect(liveAccount.getByRole("button",{name:"Bật lịch Live",exact:true})).toBeEnabled();

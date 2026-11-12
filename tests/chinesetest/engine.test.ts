@@ -21,8 +21,9 @@ it("waits for the selected center and sends once when it opens without calling t
  const closed = new ApiError("ChineseTest: [HSK Level 5] is not open for registration for the test (202).", 202);
  const call = FakeClient.prototype.call;
  let open = false;
- vi.spyOn(FakeClient.prototype, "call").mockImplementation(function (this: FakeClient, path) {
-   if (path.endsWith("/getKsFees") || (!open && path.endsWith("/juadgeFullBm"))) return Promise.reject(closed);
+ vi.spyOn(FakeClient.prototype, "call").mockImplementation(async function (this: FakeClient, path) {
+   if (path.endsWith("/getKsFees") || (!open && path.endsWith("/juadgeFullBm"))) throw closed;
+   if (path.endsWith("/juadgeFullBm")) await new Promise(resolve => setTimeout(resolve, 450));
    return call.call(this, path);
  });
  await expect(f.engine.execute("quote-fee", args, limits)).rejects.toThrow("is not open");
@@ -32,6 +33,16 @@ it("waits for the selected center and sends once when it opens without calling t
  const prepared = await f.engine.execute("prepare", { ...args, agreeFeeAtOpening: true }, limits);
  expect(prepared.schedule).toMatchObject({ agreedFeeAtOpening: true, message: expect.stringContaining("chưa xuất hiện") });
  await f.arm(prepared);
+ const records = FakeClient.prototype.records;
+ vi.spyOn(FakeClient.prototype, "records").mockImplementation(async function (this: FakeClient) {
+   await new Promise(resolve => setTimeout(resolve, 200));
+   return records.call(this);
+ });
+ const submit = FakeClient.prototype.submit;
+ vi.spyOn(FakeClient.prototype, "submit").mockImplementation(async function (this: FakeClient, payload) {
+   await new Promise(resolve => setTimeout(resolve, 300));
+   return submit.call(this, payload);
+ });
  await vi.advanceTimersByTimeAsync(7100);
  expect(f.engine.snapshot().schedules[0].status).toBe("waiting_center");
  expect(f.shared.submits).toHaveLength(0);
@@ -40,11 +51,29 @@ it("waits for the selected center and sends once when it opens without calling t
  expect(f.engine.snapshot().schedules[0].message).toContain("chưa mở đăng ký");
  expect(f.shared.submits).toHaveLength(0);
  open = true;
- await vi.advanceTimersByTimeAsync(3000);
+ await vi.advanceTimersByTimeAsync(5000);
  expect(reads.mock.calls.some(([path]) => path.endsWith("/getKsFees"))).toBe(false);
  expect(f.shared.submits).toHaveLength(1);
  expect(f.shared.submits[0].payload).toMatchObject({ kdId: ulis.kdId, kmId: target.kmId, ksDate: target.ksDate, ksType: target.ksType });
- expect(f.engine.snapshot().schedules[0]).toMatchObject({ status: "confirmed", attempt: { count: 1 } });
+ const run = f.engine.snapshot().schedules[0];
+ expect(run).toMatchObject({
+   status: "confirmed",
+   timing: {
+     startedAt: target.targetAt, centerSeenAt: target.targetAt + 1000, eligibleAt: target.targetAt + 2450,
+     missingCenter: 1, notReady: 1,
+     stages: {
+       sites: { count: 3, errors: 0 },
+       pollWait: { count: 2, totalMs: 2000 },
+       capacity: { count: 2, errors: 1, maxMs: 450, lastErrorCode: 202 },
+       identity: { count: 1 },
+       records: { count: 1, totalMs: 200 },
+       reserve: { count: 1 },
+       submit: { count: 1, totalMs: 300 },
+     },
+   },
+   attempt: { count: 1, sentAt: target.targetAt + 2650, receivedAt: target.targetAt + 2950 },
+ });
+ expect(run.timing?.stages.fee).toBeUndefined();
 });
 it("keeps the existing fee requirement for Test even if Live fee consent is supplied", async () => {
  const f = await setup();

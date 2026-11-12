@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { identityKeys, fingerprint } from "../../hcmue/crypto";
 import { atDeadline } from "../../hcmue/runner/deadline";
-import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type ProfileSyncStatus, type Row, type Personal, type Target, type AccountView, type Run, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
+import { activeStatus, personalFrom, validatePersonal, validateTarget, MAX_ACCOUNTS, type ProfileSyncStatus, type Row, type Personal, type Target, type AccountView, type Run, type RunTiming, type TimingStage, type RunnerState, type Command, type Limits, type Plan } from "../protocol";
 import { ChineseTestClient, ApiError, invalidSession, transientFailure, type Session } from "./client";
 import { LoginWindow } from "./login";
 import { candidateKey, inspectTarget, existingRegistration, centerFrom, readFeeQuote } from "./checks";
@@ -365,6 +365,24 @@ export class Engine {
   private async runLoop(s: Run) {
     const version = s.version, deadline = s.target.targetAt + s.target.waitMs;
     const check = () => this.checkpoint(s, version);
+    const timing: RunTiming = { startedAt: Date.now(), missingCenter: 0, notReady: 0, stages: {} };
+    const centerFound = () => { timing.centerSeenAt ??= Date.now(); };
+    async function measure<T>(stage: TimingStage, work: () => Promise<T>): Promise<T> {
+      const start = performance.now();
+      const stats = timing.stages[stage] ??= { count: 0, errors: 0, totalMs: 0, maxMs: 0 };
+      try {
+        return await work();
+      } catch (e) {
+        stats.errors++;
+        if (e instanceof ApiError && typeof e.code === "number") stats.lastErrorCode = e.code;
+        throw e;
+      } finally {
+        const elapsed = Math.round(performance.now() - start);
+        stats.count++;
+        stats.totalMs += elapsed;
+        stats.maxMs = Math.max(stats.maxMs, elapsed);
+      }
+    }
     const wait = async (ms: number) => {
       // Yield even with zero delay so stop/IO can run; never overlap discovery calls.
       if (ms === 0) { await new Promise<void>(resolve => setImmediate(resolve)); check(); return; }
@@ -382,6 +400,7 @@ export class Engine {
     };
     try {
       check();
+      s.timing = timing;
       if (Date.now() - s.target.targetAt > 2000) throw new Error("Runner thức dậy quá trễ. Không tự gửi lượt này.");
       const a = this.account(s.accountId), client = this.client(a);
       const skipFee = !s.test && s.agreedFeeAtOpening === true && !s.target.feeQuote && s.target.maxFee === undefined;
@@ -389,34 +408,44 @@ export class Engine {
       while (Date.now() < deadline) {
         check(); s.status = "waiting_center"; s.message = "Đang chờ đúng điểm thi xuất hiện."; this.changed();
         let sites: Row[];
-        try { sites = await this.sites(s.target); failures = 0; }
-        catch (e) { if (e instanceof ApiError && (e.code === 429 || e.code === 503) && ++failures <= 3) { await wait(Math.max(s.target.intervalMs, Math.min(e.retryAfterMs || 2000, 60000))); continue; } throw e; }
+        try { sites = await measure("sites", () => this.sites(s.target)); failures = 0; }
+        catch (e) {
+          if (!(e instanceof ApiError) || (e.code !== 429 && e.code !== 503) || ++failures > 3) throw e;
+          await measure("retryWait", () => wait(Math.max(s.target.intervalMs, Math.min(e.retryAfterMs || 2000, 60000))));
+          continue;
+        }
         check();
-        const result = await inspectTarget(client, s.target, s.personal, sites, { checkpoint: check, skipFee }); check();
-        if (!result.ready) { s.message = result.reason; this.changed(); await wait(s.target.intervalMs); continue; }
+        const result = await measure("inspect", () => inspectTarget(client, s.target, s.personal, sites, { checkpoint: check, skipFee, centerFound, measure })); check();
+        if (!result.ready) {
+          if (result.center) timing.notReady++;
+          else timing.missingCenter++;
+          s.message = result.reason; this.changed();
+          await measure("pollWait", () => wait(s.target.intervalMs)); continue;
+        }
+        timing.eligibleAt = Date.now();
         s.status = "checking";
         for (let attempt = 0; ; attempt++) {
-          try { await this.checkIdentity(a); check(); break; }
+          try { await measure("identity", () => this.checkIdentity(a)); check(); break; }
           catch (e) {
             check();
             const backoff = Math.max(1000, Math.min(e instanceof ApiError ? e.retryAfterMs || 1000 : 1000, 60000));
             if (attempt > 0 || !transientFailure(e) || Date.now() + backoff >= deadline) throw new Error(`Không xác minh được phiên trước khi gửi: ${(e as Error).message} Chưa gửi đăng ký.`);
-            s.message = `Kiểm tra phiên gặp lỗi tạm thời: ${(e as Error).message} Đang kiểm tra lại, chưa gửi đăng ký.`; this.changed(); await wait(backoff);
+            s.message = `Kiểm tra phiên gặp lỗi tạm thời: ${(e as Error).message} Đang kiểm tra lại, chưa gửi đăng ký.`; this.changed(); await measure("retryWait", () => wait(backoff));
           }
         }
-        if (await existingRegistration(client, s.target)) throw new Error("Đã có đăng ký trên Test Records; không gửi trùng.");
+        if (await measure("records", () => existingRegistration(client, s.target))) throw new Error("Đã có đăng ký trên Test Records; không gửi trùng.");
         check();
         if (Date.now() >= deadline) throw new Error("Đã hết thời gian chờ trước khi gửi.");
         s.attempt.fee = result.fee; s.attempt.currency = result.currency;
         if (s.test) { s.status = "test_passed"; s.message = `Kiểm tra đạt: ${result.fee} ${result.currency}. Không gọi POST đăng ký.`; await this.persist(); return; }
         if (this.data.schedules.some(x => x !== s && x.identityHash === s.identityHash && (x.attempt.count > 0 || x.status === "reserved") && !x.verifiedAbsent)) throw new Error("Đã có lượt khác giữ khóa gửi.");
         s.status = "reserved"; s.message = "Đã khóa gửi một lần.";
-        await this.persist(); check(); // A storage failure MUST prevent the POST.
+        await measure("reserve", () => this.persist()); check(); // A storage failure MUST prevent the POST.
         if (Date.now() >= deadline) throw new Error("Hết thời gian chờ trước khi gửi.");
         s.status = "sending"; s.attempt.count = 1; s.attempt.sentAt = Date.now(); s.attempt.lateMs = s.attempt.sentAt - s.target.targetAt;
         // 'reserved' is already durable. Any crash from here needs reconciliation.
         let response: Row;
-        try { response = await client.submit(result.payload!); }
+        try { response = await measure("submit", () => client.submit(result.payload!)); }
         catch { s.status = "uncertain"; s.message = "Chưa xác định đã tạo đơn hay chưa. Không gửi lại; đối chiếu Test Records."; await this.persist(); return; }
         s.attempt.receivedAt = Date.now();
         if (!response.orderNo) { s.status = "uncertain"; s.message = "API chưa trả mã đơn. Cần đối chiếu Test Records."; await this.persist(); return; }

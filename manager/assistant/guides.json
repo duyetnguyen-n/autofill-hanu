@@ -33,8 +33,20 @@
     {
       "id": "chinesetest-runner", "scope": "chinesetest", "title": "Kết nối và chuẩn bị ChineseTest", "codes": [],
       "aliases": ["chinesetest", "chinese test", "runner chinesetest", "thi đông á", "điểm thi chinesetest", "lịch chinesetest"],
-      "steps": ["Mở ChineseTest và kết nối đúng ChineseTest Runner. Runner ChineseTest và HCMUE có kho đăng nhập riêng.", "Đăng nhập tài khoản thi, kiểm tra hồ sơ, ảnh và phiên đăng nhập trước khi tạo lịch.", "Chọn loại thi, cấp thi, ngày, hình thức và điểm thi. Tải danh mục rồi kiểm tra môn đi kèm, lệ phí và lịch trước khi bật."],
+      "steps": ["Mở ChineseTest và kết nối đúng ChineseTest Runner. Runner ChineseTest và HCMUE có kho đăng nhập riêng.", "Đăng nhập tài khoản thi, kiểm tra hồ sơ, ảnh và phiên đăng nhập trước khi tạo lịch.", "Chọn loại thi, cấp thi, ngày, hình thức và điểm thi. Kiểm tra lệ phí và môn đi kèm. Nếu chưa có báo phí, lịch Live cần runner hỗ trợ và xác nhận chấp nhận lệ phí ChineseTest áp dụng."],
       "source": "docs/chinesetest/index.html", "href": "/chinesetest-downloads/index.html"
+    },
+    {
+      "id": "chinesetest-live-fee", "scope": "chinesetest", "title": "Nút Chuẩn bị Live bị khóa khi ChineseTest chưa báo phí", "codes": [],
+      "aliases": ["chưa lấy được lệ phí", "chưa có báo phí", "chưa báo phí", "chuẩn bị live bị khóa", "nút chuẩn bị bị mờ", "cập nhật chinesetest runner", "is not open for registration"],
+      "steps": ["Nếu hộp Chuẩn bị yêu cầu cập nhật, bấm Tải bản runner mới. Trên máy được nêu trong hộp, dừng lịch đang chạy, tắt runner cũ và mở Start ChineseTest từ thư mục mới đã giải nén. Giữ nguyên kho dữ liệu để giữ liên kết.", "Quay lại hộp thoại, bấm Kiểm tra lại runner. Nếu vẫn báo bản cũ, kiểm tra đúng máy và đúng thư mục đang mở. Deploy website không tự cập nhật runner.", "Khi ô chấp nhận lệ phí xuất hiện, xác nhận quy định, quyền riêng tư và lệ phí nếu đồng ý. Bấm Chuẩn bị rồi Bật lịch Live. Runner đợi đúng điểm thi mở và có thể đăng ký rồi gửi đơn."],
+      "source": "docs/chinesetest/index.html", "href": "/chinesetest-downloads/index.html#tai-runner"
+    },
+    {
+      "id": "chinesetest-run-timing", "scope": "chinesetest", "title": "Xem chi tiết thời gian và lý do chậm của lượt ChineseTest", "codes": [],
+      "aliases": ["chi tiết thời gian", "chinesetest chậm", "gửi đơn chậm", "tạo đơn lâu", "trễ giờ mở", "thời gian dò điểm thi"],
+      "steps": ["Mở Lịch và kết quả, tìm đúng tài khoản và lượt rồi mở Chi tiết thời gian. So sánh giờ đặt, lúc runner bắt đầu dò, lần đầu thấy điểm thi và lúc kiểm tra điều kiện tại điểm thi đạt.", "Xem số lượt chưa thấy điểm thi hoặc chưa đủ điều kiện, thời lượng API và mã lỗi. Thời gian API gọi song song có thể chồng nhau. So sánh mốc gửi và nhận phản hồi để biết phần thời gian nằm trước hay sau khi gửi.", "Cần cập nhật website và runner để ghi chi tiết cho lượt mới. Lượt cũ chỉ hiển thị mốc gửi và nhận nếu đã được lưu."],
+      "source": "docs/chinesetest/index.html", "href": "/chinesetest#runs"
     }
   ]
 }

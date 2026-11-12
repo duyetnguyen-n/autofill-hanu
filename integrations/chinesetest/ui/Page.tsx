@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import { FluentProvider, Button, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
 import { Plus, ArrowsClockwise, Clock, Link, Stop, Users, CalendarBlank, CalendarCheck, Desktop, ShieldCheck, ArrowUpRight, Check, MapPin, Wallet, IdentificationCard, FloppyDisk, PlugsConnected, Play, SignIn, Exam, CheckCircle, BookOpen } from "@phosphor-icons/react";
@@ -17,6 +17,7 @@ import { ReadQueue } from "./read-queue";
 import { FeeDisplay, feeLabel } from "./FeeDisplay";
 import { BusyLine } from "./BusyLine";
 import { ProfileEditor } from "./ProfileEditor";
+import { RunTiming } from "./RunTiming";
 import "../../hcmue/ui/page.css";
 import "./page.css";
 import { RunnerLaunch, preferredRunner } from "../../runner/ui/RunnerLaunch";
@@ -51,6 +52,8 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
   const [pairOpen,setPairOpen]=useState(false),[pairCode,setPairCode]=useState(""),[verify,setVerify]=useState<Device>(),[selected,setSelected]=useState<Set<string>>(new Set()),[plans,setPlans]=useState<Record<string,Plan>>({}),[rowErrors,setRowErrors]=useState<Record<string,string>>({}),[claims,setClaims]=useState<Record<string,string>>({}),[inspections,setInspections]=useState<Record<string,Row>>({}),[editor,setEditor]=useState<string>(),[livePreparation,setLivePreparation]=useState<string[]>(),[rules,setRules]=useState(false),[privacy,setPrivacy]=useState(false),[absence,setAbsence]=useState<string>();
   const selectedDevice=useRef("");
   const [agreeFeeAtOpening,setAgreeFeeAtOpening]=useState(false);
+  const [checkingLiveRunner,setCheckingLiveRunner]=useState(false),[liveRunnerError,setLiveRunnerError]=useState("");
+  const livePreparationHint=useId();
   const mounted=useRef(true),generation=useRef(0),deviceRef=useRef<Device|undefined>(undefined),trustedRef=useRef(false),busyRef=useRef(false),plansRef=useRef(plans);
   const readQueue=useRef(new ReadQueue()), feeReads=useRef(new Map<string,Promise<any>>());
   const stateReads=useRef(new Map<string,Promise<any>>()),stateRevision=useRef(0);
@@ -93,9 +96,17 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
     const data=await request("state") as RunnerState;
     if(data.protocolVersion!==1)throw new Error("Cần cập nhật ChineseTest Runner.");
   },[request]);
-  const refreshDevices=useCallback(async()=>{const rev=generation.current;const list=await api<Device[]>("devices");if(!mounted.current||rev!==generation.current)return;setDevices(list);if(!list.some(d=>d.id===deviceId))setDeviceId(preferredRunner("chinesetest",account.id,list));},[deviceId,account.id]);
+  const refreshDevices=useCallback(async()=>{
+    const rev=generation.current;
+    const list=await api<Device[]>("devices");
+    if(!mounted.current||rev!==generation.current)return;
+    const current=list.find(d=>d.id===deviceId);
+    if(selectedDevice.current===deviceId)deviceRef.current=current;
+    setDevices(list);
+    if(!current)setDeviceId(preferredRunner("chinesetest",account.id,list));
+  },[deviceId,account.id]);
   useEffect(()=>{mounted.current=true;void refreshDevices().catch(e=>setError(e.message)).finally(()=>setLoading(false));return()=>{mounted.current=false;generation.current++;};},[account.id]);
-  useEffect(()=>{if(selectedDevice.current===deviceId)return;selectedDevice.current=deviceId;generation.current++;setState(undefined);setPlans({});setClaims({});setSelected(new Set());setEditor(undefined);const d=devices.find(d=>d.id===deviceId);setTrusted(Boolean(d&&localStorage.getItem(trustKey(d.id))===d.fingerprint));},[deviceId]);
+  useEffect(()=>{if(selectedDevice.current===deviceId)return;selectedDevice.current=deviceId;generation.current++;setState(undefined);setPlans({});setClaims({});setSelected(new Set());setEditor(undefined);setLivePreparation(undefined);const d=devices.find(d=>d.id===deviceId);setTrusted(Boolean(d&&localStorage.getItem(trustKey(d.id))===d.fingerprint));},[deviceId]);
   useEffect(()=>{if(device&&trusted&&localStorage.getItem(trustKey(device.id))!==device.fingerprint){setTrusted(false);setState(undefined);}},[device?.fingerprint,trusted]);
   useEffect(()=>{if(device?.connected&&trusted)void refreshState().catch(e=>setMonitorError(e.message));},[device?.connected,trusted,refreshState]);
   useRunnerMonitor({source:`${account.id}:${deviceId}:${trusted}`,enabled:Boolean(deviceId),active:Boolean(state?.loginPending||state?.schedules.some(s=>activeStatus(s.status))),readDevices:refreshDevices,readState:refreshState,busy:()=>busyRef.current,error:setMonitorError});
@@ -104,7 +115,20 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
   function changePlan(id:string,p:Plan){setPlans(prev=>({...prev,[id]:p}));setInspections(prev=>{const next={...prev};delete next[id];return next;});}
   async function each(ids:string[],work:(id:string)=>Promise<void>){const errors:Record<string,string>={};for(const id of ids){try{await work(id);}catch(e){errors[id]=(e as Error).message;}}setRowErrors(prev=>({...prev,...Object.fromEntries(ids.map(id=>[id,errors[id] || ""]))}));}
   function openLivePreparation(ids:string[]){
-    setRules(false);setPrivacy(false);setAgreeFeeAtOpening(false);setLivePreparation(ids);
+    setRules(false);setPrivacy(false);setAgreeFeeAtOpening(false);setLiveRunnerError("");setLivePreparation(ids);
+  }
+  async function recheckLiveRunner(){
+    setCheckingLiveRunner(true);
+    setLiveRunnerError("");
+    try {
+      await refreshDevices();
+      const current=await request("state") as RunnerState;
+      if(!current.liveWithoutFee)setLiveRunnerError("Máy vẫn đang chạy bản cũ. Mở Start ChineseTest trong thư mục vừa giải nén rồi kiểm tra lại.");
+    } catch(e) {
+      setLiveRunnerError((e as Error).message);
+    } finally {
+      setCheckingLiveRunner(false);
+    }
   }
   async function prepare(ids:string[],consent=false,approvedWithoutQuote:string[]=[]){
     await each(ids,async id=>{
@@ -120,6 +144,13 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
   }
   const liveWithoutQuote=livePreparation?.filter(id=>plans[id]&&!plans[id].test&&!plans[id].target.feeQuote) ?? [];
   const rows=state?.accounts || [], selectedIds=rows.filter(a=>selected.has(a.id)).map(a=>a.id), ready=Boolean(device?.connected&&trusted), currentEditor=rows.find(a=>a.id===editor);
+  const liveNeedsUpdate=liveWithoutQuote.length>0&&state?.liveWithoutFee!==true;
+  const missingLiveConsents=[
+    !rules&&"đồng ý quy định thi",
+    !privacy&&"đồng ý gửi hồ sơ",
+    liveWithoutQuote.length>0&&!liveNeedsUpdate&&!agreeFeeAtOpening&&"chấp nhận lệ phí khi chưa có báo phí",
+  ].filter(Boolean);
+  const liveBlocked=busy||checkingLiveRunner||!ready||liveNeedsUpdate||missingLiveConsents.length>0;
   const catalog=useChineseTestCatalog(request,`${account.id}:${deviceId}`,ready,plans);
   return <FluentProvider theme={dark?darkTheme:lightTheme} className={`hc-app ct-app ${dark?"hc-dark":""}`}>
     <WorkspaceSidebar page="chinesetest" chinesetestEnabled hcmueEnabled={hcmueEnabled} connected={ready} email={account.email} logout={()=>void logout()} items={[
@@ -160,17 +191,29 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
         })}</div>}
       </section>
       <section id="runs" className="ct-runs"><div className="ct-section-heading"><div><span className="ct-section-kicker">02 / THEO DÕI</span><h2>Lịch và kết quả <span className="ct-section-count">{state?.schedules.length || 0}</span></h2><p>Lịch trên máy <strong>{device?.name}</strong>. Đã gửi request chưa đồng nghĩa có slot. Đổi máy xem không chuyển lịch.</p></div><Button icon={<Stop size={16}/>} disabled={!ready||!state?.schedules.some(s=>activeStatus(s.status)||s.status==="prepared")} onClick={()=>void stopRun()}>Dừng tất cả trên máy</Button></div>
-        {!state?.schedules.length?<div className="ct-runs-empty"><CalendarBlank size={26} weight="light"/><div><strong>Lịch đăng ký sẽ xuất hiện ở đây</strong><p>Chọn cấu hình và bấm Chuẩn bị ở tài khoản tương ứng.</p></div></div>:<div>{[...state.schedules].reverse().map(s=><article key={s.id} className={`ct-run ct-run--${s.status}`}><div><strong>{rows.find(a=>a.id===s.accountId)?.name || "Tài khoản đã gỡ"}</strong><span className="ct-run-label">{statusLabel[s.status]} · {s.test?"Test":"Live"}</span><p>{s.target.ksDate} · {s.target.centerName || s.target.center} · bắt đầu {time(s.target.targetAt)}</p><p>{s.message}</p>{s.attempt.orderNo&&<p>Mã đơn: <strong>{s.attempt.orderNo}</strong></p>}{s.attempt.bmid&&<p>Mã đăng ký: <strong>{s.attempt.bmid}</strong></p>}{s.attempt.jfEndDate&&<p>Hạn nộp phí từ máy chủ: {s.attempt.jfEndDate}</p>}{s.attempt.count>0&&<small>Đã gọi API gửi {s.attempt.count} lần. Công cụ không thanh toán.</small>}</div><div className="ct-actions">{(activeStatus(s.status)||s.status==="prepared")&&<Button disabled={!ready} onClick={()=>void stopRun(s.id)}>Dừng lượt</Button>}{s.attempt.count>0&&!s.verifiedAbsent&&<Button disabled={busy||!ready} onClick={()=>void act(async()=>{await request("reconcile",{id:s.id});})}>Đối chiếu kết quả</Button>}{!s.verifiedAbsent&&["uncertain","failed","accepted","confirmed"].includes(s.status)&&<Button disabled={busy||!ready} onClick={()=>{setAbsence(s.id);}}>{["accepted","confirmed"].includes(s.status)?"Xác minh đã hủy / đăng ký lại":"Xác minh chưa đăng ký"}</Button>}</div></article>)}</div>}
+        {!state?.schedules.length?<div className="ct-runs-empty"><CalendarBlank size={26} weight="light"/><div><strong>Lịch đăng ký sẽ xuất hiện ở đây</strong><p>Chọn cấu hình và bấm Chuẩn bị ở tài khoản tương ứng.</p></div></div>:<div>{[...state.schedules].reverse().map(s=><article key={s.id} className={`ct-run ct-run--${s.status}`}><div><strong>{rows.find(a=>a.id===s.accountId)?.name || "Tài khoản đã gỡ"}</strong><span className="ct-run-label">{statusLabel[s.status]} · {s.test?"Test":"Live"}</span><p>{s.target.ksDate} · {s.target.centerName || s.target.center} · bắt đầu {time(s.target.targetAt)}</p><p>{s.message}</p>{s.attempt.orderNo&&<p>Mã đơn: <strong>{s.attempt.orderNo}</strong></p>}{s.attempt.bmid&&<p>Mã đăng ký: <strong>{s.attempt.bmid}</strong></p>}{s.attempt.jfEndDate&&<p>Hạn nộp phí từ máy chủ: {s.attempt.jfEndDate}</p>}{s.attempt.count>0&&<small>Đã gọi API gửi {s.attempt.count} lần. Công cụ không thanh toán.</small>}<RunTiming run={s}/></div><div className="ct-actions">{(activeStatus(s.status)||s.status==="prepared")&&<Button disabled={!ready} onClick={()=>void stopRun(s.id)}>Dừng lượt</Button>}{s.attempt.count>0&&!s.verifiedAbsent&&<Button disabled={busy||!ready} onClick={()=>void act(async()=>{await request("reconcile",{id:s.id});})}>Đối chiếu kết quả</Button>}{!s.verifiedAbsent&&["uncertain","failed","accepted","confirmed"].includes(s.status)&&<Button disabled={busy||!ready} onClick={()=>{setAbsence(s.id);}}>{["accepted","confirmed"].includes(s.status)?"Xác minh đã hủy / đăng ký lại":"Xác minh chưa đăng ký"}</Button>}</div></article>)}</div>}
       </section></>}
       <footer className="ct-footer"><ShieldCheck size={17}/><p>Giữ máy có mạng và runner hoạt động. CAPTCHA/OTP cần bạn xử lý. Lịch không tự phát lại sau khi runner khởi động lại. <a href="https://www.chinesetest.cn/personal-test" target="_blank" rel="noreferrer">Mở Test Records<ArrowUpRight size={13}/></a></p></footer>
     </main></div>
     <Dialog surfaceMotion={null} inertTrapFocus open={pairOpen} onOpenChange={(_,d)=>setPairOpen(d.open)}><DialogSurface><DialogBody><DialogTitle>Liên kết ChineseTest Runner</DialogTitle><DialogContent><p>Mở runner trên máy, sao chép mã liên kết một lần rồi nhập vào đây.</p><p><a href="/chinesetest-downloads/index.html" target="_blank" rel="noreferrer">Hướng dẫn kết nối và tải runner</a></p><label className="ct-label">Mã liên kết<input value={pairCode} onChange={e=>setPairCode(e.target.value)}/></label>{error&&<p className="ct-error" role="alert">{error}</p>}</DialogContent><DialogActions><Button onClick={()=>setPairOpen(false)}>Đóng</Button><Button appearance="primary" disabled={busy||!pairCode.trim()} onClick={()=>void act(async()=>{const d=await api<Device>("pair",{code:pairCode});setDevices(prev=>[...prev.filter(x=>x.id!==d.id),d]);setDeviceId(d.id);setPairOpen(false);setPairCode("");setVerify(d);})}>Liên kết</Button></DialogActions></DialogBody></DialogSurface></Dialog>
     <Dialog surfaceMotion={null} inertTrapFocus open={Boolean(verify)} onOpenChange={(_,d)=>{if(!d.open)setVerify(undefined);}}><DialogSurface><DialogBody><DialogTitle>Đối chiếu đúng máy chạy</DialogTitle><DialogContent><p>So sánh toàn bộ dấu vân tay này với cửa sổ runner trên máy.</p><code className="ct-fingerprint">{verify?.fingerprint}</code></DialogContent><DialogActions><Button onClick={()=>setVerify(undefined)}>Đóng</Button><Button appearance="primary" onClick={()=>{if(verify){localStorage.setItem(trustKey(verify.id),verify.fingerprint);setTrusted(true);setVerify(undefined);}}}>Đã đối chiếu, đúng máy</Button></DialogActions></DialogBody></DialogSurface></Dialog>
     <Dialog surfaceMotion={null} inertTrapFocus open={Boolean(livePreparation)} onOpenChange={(_,d)=>{if(!d.open)setLivePreparation(undefined);}}><DialogSurface><DialogBody><DialogTitle data-walk="ct-live-confirm">Chuẩn bị lượt đăng ký thật</DialogTitle><DialogContent><p>Chuẩn bị hồ sơ chưa gửi đơn. Sau đó cần bấm Bật lịch Live để runner tự gửi khi điểm thi mở.</p><ul>{livePreparation?.map(id=><li key={id}>{rows.find(a=>a.id===id)?.name} · {plans[id]?.target.ksDate} · {plans[id]?feeLabel(plans[id].target):"Chưa lấy được lệ phí"}</li>)}</ul><label className="ct-check"><input type="checkbox" checked={rules} onChange={e=>setRules(e.target.checked)}/>Tôi đã đọc và đồng ý <a href="https://www.chinesetest.cn/regulation" target="_blank" rel="noreferrer">quy định thi</a>.</label><label className="ct-check"><input type="checkbox" checked={privacy} onChange={e=>setPrivacy(e.target.checked)}/>Tôi đồng ý gửi hồ sơ đến ChineseTest theo <a href="https://www.chinesetest.cn/privacy" target="_blank" rel="noreferrer">chính sách quyền riêng tư</a>.</label><p>Công cụ không thanh toán. Tạo đăng ký có thể phát sinh nghĩa vụ đóng phí.</p>
-      {liveWithoutQuote.length>0&&(state?.liveWithoutFee
-        ? <label className="ct-check"><input type="checkbox" checked={agreeFeeAtOpening} onChange={e=>setAgreeFeeAtOpening(e.target.checked)}/>Tôi đồng ý gửi đăng ký khi điểm thi mở và chấp nhận lệ phí ChineseTest áp dụng cho các lượt chưa có báo phí.</label>
-        : <p className="ct-warning">Cập nhật ChineseTest Runner để bật lịch Live khi chưa có báo phí.</p>)}
-    </DialogContent><DialogActions><Button onClick={()=>setLivePreparation(undefined)}>Đóng</Button><Button appearance="primary" disabled={!rules||!privacy||busy||(liveWithoutQuote.length>0&&(!state?.liveWithoutFee||!agreeFeeAtOpening))} onClick={()=>{const ids=livePreparation || [];setLivePreparation(undefined);void act(()=>prepare(ids,true,agreeFeeAtOpening?liveWithoutQuote:[]));}}>Chuẩn bị các lượt đã chọn</Button></DialogActions></DialogBody></DialogSurface></Dialog>
+      {liveWithoutQuote.length>0&&!liveNeedsUpdate&&<label className="ct-check"><input type="checkbox" checked={agreeFeeAtOpening} onChange={e=>setAgreeFeeAtOpening(e.target.checked)}/>Tôi đồng ý gửi đăng ký khi điểm thi mở và chấp nhận lệ phí ChineseTest áp dụng cho các lượt chưa có báo phí.</label>}
+      <div id={livePreparationHint} aria-live="polite">
+        {liveNeedsUpdate&&<div className="ct-warning">
+          <strong>Runner trên máy {device?.name || "đã chọn"} cần được cập nhật để chuẩn bị Live khi chưa có báo phí.</strong>
+          <p>Trên máy chạy lịch, tải và giải nén bản mới. Dừng các lịch đang chạy trước khi tắt runner cũ, rồi mở <strong>Start ChineseTest</strong> từ thư mục mới. Giữ nguyên kho dữ liệu để giữ liên kết.</p>
+          <div className="ct-actions">
+            <Button as="a" href="/chinesetest-downloads/index.html#tai-runner" target="_blank" rel="noreferrer">Tải bản runner mới</Button>
+            <Button disabled={checkingLiveRunner||busy} onClick={()=>void recheckLiveRunner()}>{checkingLiveRunner?"Đang kiểm tra runner…":"Kiểm tra lại runner"}</Button>
+          </div>
+          {liveRunnerError&&<p role="alert">{liveRunnerError}</p>}
+        </div>}
+        {!liveNeedsUpdate&&!ready&&<p className="ct-warning">Mở runner trên máy đã chọn và đợi kết nối lại để tiếp tục.</p>}
+        {!liveNeedsUpdate&&ready&&missingLiveConsents.length>0&&<p className="ct-warning">Để bật nút Chuẩn bị, hãy chọn các mục còn thiếu ({missingLiveConsents.join(", ")}).</p>}
+        {busy&&<p>Đang xử lý yêu cầu trên runner. Vui lòng chờ.</p>}
+      </div>
+    </DialogContent><DialogActions><Button onClick={()=>setLivePreparation(undefined)}>Đóng</Button><Button appearance="primary" disabled={liveBlocked} aria-describedby={livePreparationHint} onClick={()=>{const ids=livePreparation || [];setLivePreparation(undefined);void act(()=>prepare(ids,true,agreeFeeAtOpening?liveWithoutQuote:[]));}}>Chuẩn bị các lượt đã chọn</Button></DialogActions></DialogBody></DialogSurface></Dialog>
     {absence&&<AbsenceDialog key={absence} id={absence} request={request} close={()=>setAbsence(undefined)} verified={result=>{applyState(result);setAbsence(undefined);setError("");setNotice("Đã xác minh và mở khóa. Chuẩn bị rồi bật lượt mới để đăng ký lại.");}}/>}
     {currentEditor&&<ProfileEditor key={`${deviceId}:${currentEditor.id}`} deviceId={deviceId} accountId={currentEditor.id} name={currentEditor.name} request={request} close={()=>{setEditor(undefined);void refreshState();}}/>}
   </FluentProvider>;

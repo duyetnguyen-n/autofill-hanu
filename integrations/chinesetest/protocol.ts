@@ -25,10 +25,20 @@ export interface Personal {
 }
 export interface AccountView { id: string; email: string; name: string; maskedId: string; hasPhoto: boolean; loggedIn: boolean }
 export type Status = "prepared" | "armed" | "waiting_center" | "checking" | "reserved" | "sending" | "queued" | "accepted" | "confirmed" | "uncertain" | "failed" | "stopped" | "test_passed" | "released";
+export type TimingStage = "sites" | "capacity" | "region" | "linked" | "fee" | "validateLinked" | "inspect" | "pollWait" | "retryWait" | "identity" | "records" | "reserve" | "submit";
+export interface StageTiming {
+  count: number; errors: number; totalMs: number; maxMs: number; lastErrorCode?: number;
+}
+export interface RunTiming {
+  startedAt: number; centerSeenAt?: number; eligibleAt?: number;
+  missingCenter: number; notReady: number;
+  stages: Partial<Record<TimingStage, StageTiming>>;
+}
 export interface Run {
   id: string; accountId: string; accountKey: string; target: Target; personal: Personal;
   test: boolean; status: Status; message: string; version: number; updatedAt: number;
   agreedFeeAtOpening?: true;
+  timing?: RunTiming;
   attempt: { sentAt?: number; receivedAt?: number; lateMs?: number; orderNo?: string; orderKey?: string; bmid?: string; jfEndDate?: string; count: number; fee?: number; currency?: string };
   identityHash: string; verifiedAbsent?: boolean; verifiedAbsentAt?: number;
 }

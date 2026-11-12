@@ -12,6 +12,7 @@ it.each([
   ["forms", "Chuẩn bị profile", "forms-prepare"],
   ["forms", "Google Forms Direct", "forms-direct"],
   ["chinesetest", "Kết nối ChineseTest", "chinesetest-runner"],
+  ["chinesetest", "Vì sao tạo đơn lâu, xem chi tiết thời gian ở đâu?", "chinesetest-run-timing"],
   ["system", "Xem vector ở đâu?", "system-knowledge"],
   ["forms", "Chờ duyệt quyền sử dụng", "system-access"],
 ])("answers %s questions with the right source", async (workspace, message, id) => {
@@ -30,10 +31,18 @@ it("redacts data, bounds context, rejects invented references, and does not exec
   const fallback = await answerSystemAssistant({ message: "Xem vector" }, { apiKey: "fixture", send: async () => Response.json({}, { status: 429 }) });
   expect(fallback.source).toBe("guide");
 });
+it("explains the disabled ChineseTest Live button using the bundled knowledge guide", async () => {
+  const reply = await answerSystemAssistant({ workspace: "chinesetest", message: "Nút chuẩn bị bị mờ vì chưa lấy được lệ phí" }, {});
+  expect(reply.references).toContainEqual(expect.objectContaining({ id: "chinesetest-live-fee", href: "/chinesetest-downloads/index.html#tai-runner" }));
+  expect(reply.answer).toContain("Kiểm tra lại runner");
+  expect(reply.answer).toContain("ô chấp nhận lệ phí");
+});
 it("serves shared AI and knowledge without HCMUE enabled and keeps writes admin only", async () => {
   const f = await httpFixture(undefined, false, false, true); cleanup.push(f.close);
   expect((await f.api("assistant/chat", 1, { message: "Google Forms Direct" })).status).toBe(200);
-  expect((await f.api("knowledge", 1)).status).toBe(200);
+  const library = await f.api("knowledge", 1);
+  expect(library.status).toBe(200);
+  expect((await library.json()).documents).toContainEqual(expect.objectContaining({ id: "chinesetest-live-fee", scope: "chinesetest" }));
   expect((await f.api("knowledge/map", 1)).status).toBe(200);
   const draft = { title: "Hướng dẫn ảnh", content: "Ảnh dùng định dạng JPEG.", scope: "forms" };
   expect((await f.api("admin/knowledge", 1, draft)).status).toBe(403);
