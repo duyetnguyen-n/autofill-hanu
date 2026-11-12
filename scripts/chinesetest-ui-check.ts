@@ -157,6 +157,33 @@ try{
  expect(requests.filter(r=>r.command==="prepare").length).toBe(beforeOldPrepare);
  runner.engine.snapshot=snapshot;await page.getByRole("button",{name:"Đọc lại trạng thái",exact:true}).click();
  await expect(page.getByRole("status").filter({hasText:"Runner đang dùng bản cũ."})).toHaveCount(0);
+ // Reproduce a center that exists in the directory while the fee API reports closed registration.
+ runner.engine.execute=(command,args,limits)=>command==="quote-fee"&&args.target?.center==="9000"
+   ? Promise.reject(new Error("ChineseTest: [HSK Level 5] is not open for registration for the test (202)."))
+   : execute(command,args,limits);
+ const liveAccount=page.locator(".ct-account").nth(2);
+ await liveAccount.getByText("Cấu hình kỳ thi và giờ mở",{exact:true}).click();
+ const liveCenter=liveAccount.getByRole("combobox",{name:/^Điểm thi cho/});
+ await liveCenter.fill("9000");
+ await page.getByRole("listbox").getByRole("option",{name:/Test Center 3/}).click();
+ await liveAccount.getByLabel(/^Chế độ cho/).selectOption("live");
+ await expect(liveAccount.locator(".ct-fee-panel")).toContainText("is not open for registration");
+ await liveAccount.getByRole("button",{name:"Chuẩn bị",exact:true}).click();
+ const liveDialog=page.getByRole("dialog",{name:"Chuẩn bị lượt đăng ký thật"});
+ await liveDialog.getByRole("checkbox",{name:/Tôi đã đọc/}).check();
+ await liveDialog.getByRole("checkbox",{name:/Tôi đồng ý gửi hồ sơ/}).check();
+ const prepareLive=liveDialog.getByRole("button",{name:"Chuẩn bị các lượt đã chọn"});
+ await expect(prepareLive).toBeDisabled();
+ await liveDialog.getByRole("checkbox",{name:/chấp nhận lệ phí ChineseTest/}).check();
+ await prepareLive.click();
+ await expect(liveAccount.getByRole("button",{name:"Bật lịch Live",exact:true})).toBeEnabled();
+ await liveAccount.getByRole("button",{name:"Bật lịch Live",exact:true}).click();
+ const liveRun=page.locator(".ct-run").filter({hasText:"Test Center 3"});
+ await expect(liveRun).toContainText("Đã bật lịch");
+ await liveRun.getByRole("button",{name:"Dừng lượt"}).click();
+ await expect(liveRun).toContainText("Đã dừng");
+ expect(runner.shared.submits).toHaveLength(0);
+ runner.engine.execute=execute;
  await page.getByRole("link",{name:"Google Forms",exact:true}).click();
  await expect(page.getByRole("heading",{name:"Quản lý các phiên",exact:true})).toBeVisible();
  await expect(page.getByRole("heading",{name:"Đưa các profile về một màn hình.",exact:true})).toBeVisible();

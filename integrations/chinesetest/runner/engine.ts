@@ -54,7 +54,7 @@ export class Engine {
   }
   async identity() { return { id: this.data.id, name: this.data.name, platform: process.platform, publicKey: this.data.keys.publicKey, fingerprint: await fingerprint(this.data.keys.publicKey) }; }
   snapshot(): RunnerState {
-    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, photoFlowVersion:2, enrollmentChecksVersion:1, deviceId: this.data.id, name: this.data.name, platform: process.platform,
+    return { protocolVersion: 1, profileSyncVersion: 1, profileSyncJobsVersion: 1, photoFlowVersion:2, enrollmentChecksVersion:1, liveWithoutFee:true, deviceId: this.data.id, name: this.data.name, platform: process.platform,
       accounts: this.data.accounts.map(a => ({ ...a.view })), plans: structuredClone(this.data.plans), schedules: this.data.schedules.map(({ personal: _p, identityHash: _h, accountKey: _k, ...s }) => {
         const { orderKey: _secret, ...attempt } = s.attempt; return structuredClone({ ...s, attempt });
       }), loginPending: this.login.pending, now: new Date().toISOString(), eventLoopLagMs: this.lag };
@@ -266,14 +266,20 @@ export class Engine {
       if (command === "inspect" && !args.target) return { personal: a.personal, account: a.view };
       this.photoReady(a);
       const target = structuredClone(args.target) as Target; validateTarget(target); validatePersonal(a.personal);
-      if (command === "prepare" && !target.feeQuote && target.maxFee === undefined) throw new Error("Chờ lấy lệ phí ChineseTest rồi chuẩn bị lại.");
+      const missingFee = command === "prepare" && !target.feeQuote && target.maxFee === undefined;
+      const skipFee = missingFee && args.test !== true && args.agreeFeeAtOpening === true;
+      if (missingFee && !skipFee) {
+        throw new Error(args.test === true
+          ? "Chờ lấy lệ phí ChineseTest rồi chuẩn bị lại."
+          : "Cần xác nhận đồng ý với lệ phí ChineseTest áp dụng khi đăng ký mà chưa có báo phí.");
+      }
       const projects = await this.publicClient.options();
       if (!projects.data?.projectList?.some((p: Row) => String(p.KMID) === target.projectId)) throw new Error("Loại thi không còn trong danh mục.");
       const subjects = await this.publicClient.subjects(target.projectId);
       if (!Array.isArray(subjects.data) || !subjects.data.some((s: Row) => String(s.KMID) === target.kmId)) throw new Error("Cấp thi không thuộc loại thi đã chọn.");
       const duplicate = await existingRegistration(client, target);
       if (duplicate) throw new Error("Test Records đã có đăng ký cùng cấp/ngày. Không tạo lượt mới.");
-      const inspection = await inspectTarget(client, target, a.personal, await this.sites(target));
+      const inspection = await inspectTarget(client, target, a.personal, await this.sites(target), { skipFee });
       this.photoReady(a);
       if (command === "inspect") { const { payload: _payload, ...publicInspection } = inspection; return { ...publicInspection, personal: a.personal, checkedAt: Date.now() }; }
       const hash = candidateKey(a.session.key, a.personal, target);
@@ -284,6 +290,7 @@ export class Engine {
       if (args.test !== true && (args.agreeRules !== true || args.agreePrivacy !== true)) throw new Error("Cần đồng ý quy định và gửi hồ sơ cho lượt Live này.");
       for (const s of this.data.schedules) if (s.accountKey === a.session.key && s.status === "prepared") { s.status = "stopped"; s.message = "Đã thay bằng cấu hình mới."; }
       const s: Run = { id: randomUUID(), accountId: a.view.id, accountKey: a.session.key, personal: structuredClone(a.personal), target, test: args.test === true, identityHash: hash, status: "prepared", message: inspection.ready ? "Sẵn sàng; chưa bật lịch." : inspection.reason + " Đã lưu để chờ mở.", version: 1, updatedAt: Date.now(), attempt: { count: 0 } };
+      if (skipFee) s.agreedFeeAtOpening = true;
       this.data.schedules.push(s); await this.persist(); return { schedule: this.snapshot().schedules.find(x => x.id === s.id), claimKey: hash };
     }
     if (command === "arm") {
@@ -377,6 +384,7 @@ export class Engine {
       check();
       if (Date.now() - s.target.targetAt > 2000) throw new Error("Runner thức dậy quá trễ. Không tự gửi lượt này.");
       const a = this.account(s.accountId), client = this.client(a);
+      const skipFee = !s.test && s.agreedFeeAtOpening === true && !s.target.feeQuote && s.target.maxFee === undefined;
       let failures = 0;
       while (Date.now() < deadline) {
         check(); s.status = "waiting_center"; s.message = "Đang chờ đúng điểm thi xuất hiện."; this.changed();
@@ -384,7 +392,7 @@ export class Engine {
         try { sites = await this.sites(s.target); failures = 0; }
         catch (e) { if (e instanceof ApiError && (e.code === 429 || e.code === 503) && ++failures <= 3) { await wait(Math.max(s.target.intervalMs, Math.min(e.retryAfterMs || 2000, 60000))); continue; } throw e; }
         check();
-        const result = await inspectTarget(client, s.target, s.personal, sites, check); check();
+        const result = await inspectTarget(client, s.target, s.personal, sites, { checkpoint: check, skipFee }); check();
         if (!result.ready) { s.message = result.reason; this.changed(); await wait(s.target.intervalMs); continue; }
         s.status = "checking";
         for (let attempt = 0; ; attempt++) {

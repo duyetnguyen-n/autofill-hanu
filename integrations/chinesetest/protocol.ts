@@ -28,11 +28,12 @@ export type Status = "prepared" | "armed" | "waiting_center" | "checking" | "res
 export interface Run {
   id: string; accountId: string; accountKey: string; target: Target; personal: Personal;
   test: boolean; status: Status; message: string; version: number; updatedAt: number;
+  agreedFeeAtOpening?: true;
   attempt: { sentAt?: number; receivedAt?: number; lateMs?: number; orderNo?: string; orderKey?: string; bmid?: string; jfEndDate?: string; count: number; fee?: number; currency?: string };
   identityHash: string; verifiedAbsent?: boolean; verifiedAbsentAt?: number;
 }
 export interface Plan { target: Target; test: boolean }
-export interface RunnerState { protocolVersion: number; profileSyncVersion?: number; profileSyncJobsVersion?:number; photoFlowVersion?:number; enrollmentChecksVersion?:number; deviceId: string; name: string; platform: string; accounts: AccountView[]; schedules: Omit<Run, "personal" | "identityHash" | "accountKey">[]; plans: Record<string,Plan>; loginPending: boolean; now: string; eventLoopLagMs: number }
+export interface RunnerState { protocolVersion: number; profileSyncVersion?: number; profileSyncJobsVersion?:number; photoFlowVersion?:number; enrollmentChecksVersion?:number; liveWithoutFee?:true; deviceId: string; name: string; platform: string; accounts: AccountView[]; schedules: Omit<Run, "personal" | "identityHash" | "accountKey">[]; plans: Record<string,Plan>; loginPending: boolean; now: string; eventLoopLagMs: number }
 export const activeStatus = (s: Status) => ["armed", "waiting_center", "checking", "reserved", "sending", "queued"].includes(s);
 export const statusLabel: Record<Status, string> = { prepared: "Sẵn sàng", armed: "Đã bật lịch", waiting_center: "Chờ điểm thi mở", checking: "Đang kiểm tra", reserved: "Đã khóa gửi", sending: "Đang gửi", queued: "Máy chủ đang xử lý", accepted: "Đã tạo đơn", confirmed: "Đã có mã đăng ký", uncertain: "Chưa rõ kết quả", failed: "Cần xử lý", stopped: "Đã dừng", test_passed: "Test đạt, không gửi đơn", released: "Đã xác minh và mở khóa" };
 export const personalFields = ["ksEName", "ksName", "birthday", "ksSex", "gjId", "ksCountry", "ksNation", "idType", "idNo", "phone", "photo", "fid", "firstLanguage", "studyYear", "pfId", "address", "isExamHsk", "kmidHis", "fenshuHis"] as const;

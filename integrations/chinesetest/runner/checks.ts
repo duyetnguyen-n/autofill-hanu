@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { feeKey, personalFrom, validatePersonal, validateTarget, type FeeQuote, type Row, type Target, type Personal } from "../protocol";
-import type { ChineseTestClient } from "./client";
+import { ApiError, type ChineseTestClient } from "./client";
 const text = (v: unknown) => String(v ?? "").trim();
 const same = (a: unknown, b: unknown) => text(a) === text(b);
 const normal = (v: unknown) => text(v).normalize("NFKC").replace(/\s+/g, " ").toLowerCase();
@@ -46,7 +46,7 @@ export async function readFeeQuote(client: ChineseTestClient, t: Target, center:
   const value=checkFee({...t,feeQuote:undefined,maxFee:undefined},fees.data,center);
   return {key:feeKey(t),...value,linkedId:text(subject?.jlKmId),linked:subject?[text(subject.jlKmEName || subject.jlKmName || subject.jlKmId)]:[]};
 }
-export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], checkpoint = () => {}): Promise<Inspection> {
+export async function inspectTarget(client: ChineseTestClient, t: Target, personal: Personal, sites: Row[], { checkpoint = () => {}, skipFee = false } = {}): Promise<Inspection> {
   validateTarget(t); validatePersonal(personal); checkpoint();
   const center = centerFrom(sites, t);
   if (!center) return { ready: false, reason: "Điểm thi chưa xuất hiện cho đúng ngày/cấp/hình thức." };
@@ -54,14 +54,24 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
   if (same(center.gjId, 1)) throw new Error("Điểm thi Trung Quốc đại lục cần xác minh riêng; chưa hỗ trợ bản này.");
   if (["13", "16"].includes(t.projectId) && t.ksType !== "4" && String(center.tyFlag || "").split(",").includes("mail_yes")) throw new Error("Điểm thi bắt buộc gửi kết quả qua bưu điện; chưa hỗ trợ bản này.");
   const query = { kmId: t.kmId, kdId: String(center.kdId), ksType: t.ksType };
+  const read = (path: string, args?: Row) => {
+    const request = client.call(path, args);
+    if (!skipFee) return request;
+    return request.catch(error => {
+      if (error instanceof ApiError && error.code === 202 && /is not open for registration/i.test(error.message)) return undefined;
+      throw error;
+    });
+  };
   // These are independent reads. No POST may be made by an inspection.
   const [full, europe, linked, fees] = await Promise.all([
-    client.call("/examinee/enroll/juadgeFullBm", { kdid: center.kdId, kmid: t.kmId, kstime: t.ksDate, kstype: t.ksType }),
-    client.call(`/examinee/enroll/getOzKd/${center.kdId}/${t.ksDate}/${t.kmId}`),
-    client.call("/examinee/enroll/getJiLianList", { ...query, ksTime: t.ksDate }),
-    client.call("/examinee/enroll/getKsFees", { ...query, ksDate: t.ksDate }),
+    read("/examinee/enroll/juadgeFullBm", { kdid: center.kdId, kmid: t.kmId, kstime: t.ksDate, kstype: t.ksType }),
+    read(`/examinee/enroll/getOzKd/${center.kdId}/${t.ksDate}/${t.kmId}`),
+    read("/examinee/enroll/getJiLianList", { ...query, ksTime: t.ksDate }),
+    skipFee ? undefined : read("/examinee/enroll/getKsFees", { ...query, ksDate: t.ksDate }),
   ]);
   checkpoint();
+  const notOpen = { ready: false, reason: "ChineseTest chưa mở đăng ký cho kỳ thi này.", center };
+  if (!full || !europe || !linked) return notOpen;
   if (![true, 1, "1"].includes(full.data)) return { ready: false, reason: "Điểm thi chưa cho đăng ký hoặc đã hết chỗ.", center };
   if ([true, 1, "1"].includes(europe.data)) throw new Error("Điểm thi dùng hệ thống eu.chinesetest.cn riêng.");
   const group = linked.data;
@@ -70,9 +80,10 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
   if (subject) {
     if (!t.acceptLinked) throw new Error("Kỳ thi yêu cầu môn đi kèm. Cần chấp nhận môn này trước khi bật lịch.");
     linkedId = text(subject.jlKmId);
-    await client.call("/examinee/enroll/validJiLian", { ...query, jlKmId: linkedId, ksDate: t.ksDate });
+    if (!await read("/examinee/enroll/validJiLian", { ...query, jlKmId: linkedId, ksDate: t.ksDate })) return notOpen;
   } else if (["16", "24"].includes(t.projectId)) {
-    const extra = await client.call("/examinee/enroll/hskJiLian", { ...query, ksTime: t.ksDate });
+    const extra = await read("/examinee/enroll/hskJiLian", { ...query, ksTime: t.ksDate });
+    if (!extra) return notOpen;
     if (extra.data && !t.acceptLinked) throw new Error("Có môn/phí bắt buộc đi kèm; cần chấp nhận trước.");
   }
   checkpoint();
@@ -80,9 +91,8 @@ export async function inspectTarget(client: ChineseTestClient, t: Target, person
     if (!["0", "1"].includes(personal.isExamHsk)) throw new Error("Cần khai báo đã từng thi HSK hay chưa cho môn Speaking.");
     if (personal.isExamHsk === "1" && (!personal.kmidHis || !personal.fenshuHis || !Number.isFinite(Number(personal.fenshuHis)) || Number(personal.fenshuHis) < 0)) throw new Error("Cần cấp HSK và điểm đã thi trước đây.");
   }
-  const fee = fees.data;
-  const {currency}=checkFee(t,fee,center);
-  return { ready: true, reason: "API kiểm tra đạt; chưa gửi đăng ký.", center, fee: Number(fee), currency, linked: group, payload: buildPayload(t, personal, center, linkedId) };
+  const price = skipFee ? undefined : checkFee(t, fees?.data, center);
+  return { ready: true, reason: "API kiểm tra đạt; chưa gửi đăng ký.", center, fee: price?.amount, currency: price?.currency, linked: group, payload: buildPayload(t, personal, center, linkedId) };
 }
 export async function existingRegistration(client: ChineseTestClient, t: Target): Promise<Row | undefined> {
   // Read all rows in scope; don't infer "absent" from an unparsed or truncated list.

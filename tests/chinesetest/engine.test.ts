@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { performance } from "node:perf_hooks";
 import { Engine } from "../../integrations/chinesetest/runner/engine";
 import { DONG_A } from "../../integrations/chinesetest/protocol";
-import { fixtureEngine, FakeClient, limits } from "./support";
+import { fixtureEngine, FakeClient, center, limits } from "./support";
 import type { ChineseTestClient } from "../../integrations/chinesetest/runner/client";
 import { ApiError } from "../../integrations/chinesetest/runner/client";
 const engines:Engine[]=[];
@@ -11,6 +11,47 @@ afterEach(async()=>{for(const e of engines.splice(0))await e.close();vi.restoreA
 async function setup(count=1,write?:(_:any)=>Promise<void>){const f=await fixtureEngine(count,write);engines.push(f.engine);return f;}
 it("prepares a hidden center, waits for publication, and Test never invokes registration POST",async()=>{
  const f=await setup();f.shared.sites=[];const p=await f.prepare();expect(p.schedule.message).toContain("chưa xuất hiện");await f.arm(p);await vi.advanceTimersByTimeAsync(7100);expect(f.engine.snapshot().schedules[0].status).toBe("waiting_center");f.shared.sites=[(await import('./support')).center];await vi.advanceTimersByTimeAsync(1100);expect(f.engine.snapshot().schedules[0].status).toBe("test_passed");expect(f.shared.submits).toHaveLength(0);
+});
+it("waits for the selected center and sends once when it opens without calling the fee API for an approved Live schedule", async () => {
+ const f = await setup();
+ const ulis = { ...center, kdId: "50820135", kdEName: "ULIS IBT" };
+ f.shared.directory.push(ulis);
+ const target = { ...DONG_A, center: ulis.kdId, centerName: ulis.kdEName, targetAt: Date.now() + 7000, maxFee: undefined, currency: undefined };
+ const args = { accountId: "account-0", target, test: false, agreeRules: true, agreePrivacy: true };
+ const closed = new ApiError("ChineseTest: [HSK Level 5] is not open for registration for the test (202).", 202);
+ const call = FakeClient.prototype.call;
+ let open = false;
+ vi.spyOn(FakeClient.prototype, "call").mockImplementation(function (this: FakeClient, path) {
+   if (path.endsWith("/getKsFees") || (!open && path.endsWith("/juadgeFullBm"))) return Promise.reject(closed);
+   return call.call(this, path);
+ });
+ await expect(f.engine.execute("quote-fee", args, limits)).rejects.toThrow("is not open");
+ await expect(f.engine.execute("prepare", args, limits)).rejects.toThrow("đồng ý với lệ phí");
+ const reads = vi.mocked(FakeClient.prototype.call);
+ reads.mockClear();
+ const prepared = await f.engine.execute("prepare", { ...args, agreeFeeAtOpening: true }, limits);
+ expect(prepared.schedule).toMatchObject({ agreedFeeAtOpening: true, message: expect.stringContaining("chưa xuất hiện") });
+ await f.arm(prepared);
+ await vi.advanceTimersByTimeAsync(7100);
+ expect(f.engine.snapshot().schedules[0].status).toBe("waiting_center");
+ expect(f.shared.submits).toHaveLength(0);
+ f.shared.sites = [center, ulis];
+ await vi.advanceTimersByTimeAsync(1000);
+ expect(f.engine.snapshot().schedules[0].message).toContain("chưa mở đăng ký");
+ expect(f.shared.submits).toHaveLength(0);
+ open = true;
+ await vi.advanceTimersByTimeAsync(3000);
+ expect(reads.mock.calls.some(([path]) => path.endsWith("/getKsFees"))).toBe(false);
+ expect(f.shared.submits).toHaveLength(1);
+ expect(f.shared.submits[0].payload).toMatchObject({ kdId: ulis.kdId, kmId: target.kmId, ksDate: target.ksDate, ksType: target.ksType });
+ expect(f.engine.snapshot().schedules[0]).toMatchObject({ status: "confirmed", attempt: { count: 1 } });
+});
+it("keeps the existing fee requirement for Test even if Live fee consent is supplied", async () => {
+ const f = await setup();
+ const target = { ...DONG_A, targetAt: Date.now() + 7000, maxFee: undefined, currency: undefined };
+ await expect(f.engine.execute("prepare", { accountId: "account-0", target, test: true, agreeFeeAtOpening: true }, limits))
+   .rejects.toThrow("Chờ lấy lệ phí ChineseTest rồi chuẩn bị lại.");
+ expect(f.engine.snapshot().schedules).toHaveLength(0);
 });
 it("handles actual boolean capacity and final fee 60, rather than the catalog fee 35",async()=>{
  const f=await setup();const p=await f.prepare(false);await f.arm(p);await vi.advanceTimersByTimeAsync(9500);expect(f.shared.submits).toHaveLength(1);expect(f.shared.submits[0].payload).toMatchObject({kmId:DONG_A.kmId,kdId:DONG_A.center,jlKmId:"60202044",mailInfo:{mid:"",mailSum:1},isExamHsk:"0",willing:0});expect(f.engine.snapshot().schedules[0]).toMatchObject({status:"confirmed",attempt:{count:1,fee:60,bmid:"FIXTURE-BMID"}});
