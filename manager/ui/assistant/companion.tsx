@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
 import { companionPaths, readCompanionContext, readCompanionHistory, safeCompanionText, type CompanionContext, type CompanionEvent, type CompanionFact, type CompanionPage, type CompanionTurn } from "../../assistant/context";
+import { createRunTracker, type TrackingFeed, type TrackingState } from "./tracking";
 
 const excluded = ".ai-panel, .ai-launcher, .hc-assistant, .hc-assistant-launcher, .guide-spotlight, [data-companion-ignore]";
 const interactive = 'button, a[href], input:not([type=hidden]), select, textarea, summary, [role=tab], [role=button]';
@@ -35,17 +36,21 @@ export type CompanionMemory = {
   turns: CompanionTurn[];
   hcmueTurns: CompanionTurn[];
   open: boolean;
+  tracking: TrackingState;
+  feed?: TrackingFeed;
 };
 
 /** One account-scoped, tab-local observer. No network requests are made by observation. */
 export function createCompanion(owner: string) {
   const key = `hanu-companion-v1:${owner}`;
   let events: CompanionEvent[] = [], turns: CompanionTurn[] = [], hcmueTurns: CompanionTurn[] = [], goal = "", resume = "";
+  let savedTracking: unknown;
   try {
     const saved = JSON.parse(sessionStorage.getItem(key) ?? "null");
     if (saved?.owner === owner && typeof saved.updatedAt === "number" && Date.now() - saved.updatedAt < ttl && saved.updatedAt <= Date.now()) {
       turns = readCompanionHistory(saved.turns); hcmueTurns = readCompanionHistory(saved.hcmueTurns);
       goal = safeCompanionText(saved.goal, 400);
+      savedTracking = saved.tracking;
       events = readCompanionContext({ page: { path: location.pathname, capturedAt: new Date().toISOString() }, events: saved.events })?.events ?? [];
       if (saved.resume?.path === location.pathname && Date.now() - saved.resume.at < 60_000) resume = saved.resume.path;
     }
@@ -53,19 +58,23 @@ export function createCompanion(owner: string) {
   let context: CompanionContext = {
     page: { path: location.pathname, title: titles[location.pathname] || "HANU", capturedAt: new Date().toISOString(), facts: [], dialogs: [], notices: [], controls: [] }, goal, events,
   };
-  let snapshot: CompanionMemory = { context, turns, hcmueTurns, open: false };
+  const openChannels = new Set<string>();
+  const tracker = createRunTracker(savedTracking, () => {
+    context = { ...context, tracking: { active: tracker.get().watch?.active === true, summary: tracker.summary(), latestUpdate: tracker.get().updates.at(-1)?.text } };
+    publish();
+  }, () => openChannels.size > 0);
+  let snapshot: CompanionMemory = { context, turns, hcmueTurns, open: false, tracking: tracker.get() };
   const listeners = new Set<() => void>(), factSources = new Map<string, CompanionFact[]>();
   const ids = new WeakMap<HTMLElement, string>(), elements = new Map<string, HTMLElement>();
   let sequence = 0, focused: HTMLElement | undefined, stopped = false;
-  const openChannels = new Set<string>();
   let resumeTarget: { path: string; at: number } | undefined;
   const persist = () => {
     if (stopped) return;
-    try { sessionStorage.setItem(key, JSON.stringify({ owner, updatedAt: Date.now(), goal, events, turns, hcmueTurns, resume: resumeTarget })); }
+    try { sessionStorage.setItem(key, JSON.stringify({ owner, updatedAt: Date.now(), goal, events, turns, hcmueTurns, tracking: tracker.get(), resume: resumeTarget })); }
     catch { /* Quota or private browsing must not interrupt the page. */ }
   };
   const publish = () => {
-    snapshot = { context, turns, hcmueTurns, open: openChannels.size > 0 };
+    snapshot = { context, turns, hcmueTurns, open: openChannels.size > 0, tracking: tracker.get(), feed: tracker.feed() };
     listeners.forEach(listener => listener());
     persist();
   };
@@ -93,8 +102,9 @@ export function createCompanion(owner: string) {
     if (focused && (!focused.isConnected || !visible(focused))) focused = undefined;
     const scope = dialogs.at(-1) ?? document.body;
     const candidates = [...scope.querySelectorAll<HTMLElement>(interactive)].filter(element => visible(element) && !sensitive(element) && label(element));
-    const ordered = [...new Set([...(focused ? [focused] : []), ...candidates.filter(element => disabled(element) && reason(element)), ...candidates])].slice(0, 12);
-    const controls = ordered.map(element => ({ id: idFor(element), label: label(element), disabled: disabled(element), reason: reason(element) || undefined }));
+    const ordered = [...new Set([...(focused ? [focused] : []), ...candidates.filter(element => element.dataset.companionAction === "launch-runner"), ...candidates.filter(element => disabled(element) && reason(element)), ...candidates])].slice(0, 12);
+    const controls = ordered.map(element => ({ id: idFor(element), label: label(element), disabled: disabled(element), reason: reason(element) || undefined,
+      purpose: element.dataset.companionAction === "launch-runner" ? "launch-runner" as const : element.matches("a[href]") ? "navigate" as const : undefined }));
     const workflowElement = document.querySelector<HTMLElement>('.ai-panel .guide-card-workflow .guide-card-copy');
     const workflow = workflowElement ? { title: text(workflowElement.querySelector("strong")), detail: text(workflowElement.querySelector("p"), 240), done: workflowElement.textContent?.includes("Hoàn tất") } : undefined;
     const page: CompanionPage = {
@@ -103,7 +113,7 @@ export function createCompanion(owner: string) {
       dialogs: dialogs.map(element => safeCompanionText(element.getAttribute("aria-label") || labelledBy(element, "aria-labelledby") || text(element.querySelector("h1,h2,h3")), 100)).filter(Boolean).slice(-3),
       notices: uniqueNotices, controls, focusedControl: focused ? ids.get(focused) : undefined, workflow,
     };
-    const next = { page, goal, events };
+    const next = { page, goal, events, tracking: { active: tracker.get().watch?.active === true, summary: tracker.summary(), latestUpdate: tracker.get().updates.at(-1)?.text } };
     if (JSON.stringify(next) !== JSON.stringify(context)) {
       context = { ...next, page: { ...page, capturedAt: new Date().toISOString() } };
       publish();
@@ -118,6 +128,7 @@ export function createCompanion(owner: string) {
     setOpen(value: boolean, channel = "system") {
       if (openChannels.has(channel) === value) return;
       if (value) openChannels.add(channel); else openChannels.delete(channel);
+      if (value) tracker.read();
       publish();
     },
     resolve(id: string) { const element = elements.get(id); return element?.isConnected && visible(element) ? element : undefined; },
@@ -127,6 +138,10 @@ export function createCompanion(owner: string) {
       publish();
     },
     setGoal(value: string) { goal = safeCompanionText(value, 400); refresh(); },
+    startTracking: (ids?: string[]) => tracker.start(ids),
+    stopTracking: () => tracker.stop(),
+    reportRuns: (feed: TrackingFeed) => { tracker.observe(feed); publish(); },
+    suspendRuns: (source: string) => tracker.suspend(source),
     report(source: string, facts: CompanionFact[]) {
       factSources.set(source, facts.map(item => ({ label: safeCompanionText(item.label, 60), value: safeCompanionText(item.value) })).filter(item => item.label && item.value));
       refresh();
@@ -158,13 +173,17 @@ export function createCompanion(owner: string) {
         attributeFilter: ["disabled", "aria-disabled", "aria-describedby", "aria-hidden", "hidden", "inert", "open", "class", "title"] });
       function clear() {
         stopped = true; turns = []; hcmueTurns = []; goal = ""; events = [];
-        context = { ...context, goal: "", events: [], page: { ...context.page, facts: [], notices: [], controls: [] } };
-        snapshot = { context, turns, hcmueTurns, open: false }; listeners.forEach(listener => listener());
+        tracker.clear();
+        context = { ...context, goal: "", events: [], tracking: { active: false, summary: "" }, page: { ...context.page, facts: [], notices: [], controls: [] } };
+        snapshot = { context, turns, hcmueTurns, open: false, tracking: tracker.get() }; listeners.forEach(listener => listener());
         try { sessionStorage.removeItem(key); } catch { /* Optional storage. */ }
       }
       const types = ["pointerdown", "focusin", "click", "change"];
       types.forEach(type => document.addEventListener(type, select, true));
       window.addEventListener("hanu-session-ended", clear);
+      const watch = tracker.get().watch;
+      const watchPath = watch?.provider === "forms" ? "/" : watch?.provider === "direct" ? "/google-direct" : `/${watch?.provider}`;
+      if (watch?.active && location.pathname !== watchPath) tracker.suspend(watch.source);
       event("navigate", `Mở ${titles[location.pathname] || "HANU"}`); refresh(); persist();
       return () => {
         observer.disconnect(); clearTimeout(timer);
@@ -189,4 +208,24 @@ export function useCompanionOpen() {
 export function useCompanionFacts(source: string, facts: CompanionFact[]) {
   const companion = useCompanion(), serialized = JSON.stringify(facts);
   useEffect(() => companion?.report(source, JSON.parse(serialized)), [companion, source, serialized]);
+}
+export function useCompanionRuns(feed: TrackingFeed) {
+  const companion = useCompanion(), serialized = JSON.stringify(feed);
+  useEffect(() => { companion?.reportRuns(JSON.parse(serialized)); }, [companion, serialized]);
+  useEffect(() => () => companion?.suspendRuns(feed.source), [companion, feed.source]);
+}
+export function useTrackingRevision() {
+  const companion = useCompanion();
+  return useSyncExternalStore(companion?.subscribe ?? noopSubscribe, () => companion?.getSnapshot().tracking.updates.at(-1)?.id ?? "");
+}
+export function useTrackingUnread(companion?: Companion) {
+  const inherited = useCompanion(), store = companion ?? inherited;
+  return useSyncExternalStore(store?.subscribe ?? noopSubscribe, () => store?.getSnapshot().tracking.unread ?? 0);
+}
+export function useTrackingActive(source: string) {
+  const companion = useCompanion();
+  return useSyncExternalStore(companion?.subscribe ?? noopSubscribe, () => {
+    const watch = companion?.getSnapshot().tracking.watch;
+    return watch?.source === source && watch.active;
+  }) === true;
 }

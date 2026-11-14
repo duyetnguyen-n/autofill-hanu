@@ -1,7 +1,7 @@
 import { redactAssistantText } from "./privacy";
 
 export type CompanionFact = { label: string; value: string };
-export type CompanionControl = { id: string; label: string; disabled: boolean; reason?: string };
+export type CompanionControl = { id: string; label: string; disabled: boolean; reason?: string; purpose?: "launch-runner" | "navigate" };
 export type CompanionEvent = { kind: "navigate" | "click" | "change" | "notice"; label: string; path: string; at: string };
 export type CompanionTurn = { role: "user" | "assistant"; text: string };
 export interface CompanionPage {
@@ -19,6 +19,7 @@ export interface CompanionContext {
   page: CompanionPage;
   goal: string;
   events: CompanionEvent[];
+  tracking?: { active: boolean; summary: string; latestUpdate?: string };
 }
 
 export const companionPaths = ["/", "/google-direct", "/hcmue", "/chinesetest", "/account", "/admin", "/knowledge", "/hcmue/knowledge"];
@@ -36,7 +37,8 @@ export function readCompanionContext(value: unknown, now = Date.now()): Companio
   if (!companionPaths.includes(raw.path as string) || !capturedAt || Math.abs(now - Date.parse(capturedAt)) > 5 * 60_000) return;
   const controls: CompanionControl[] = list(raw.controls).slice(0, 12).flatMap(value => {
     const item = record(value), id = controlId(item.id), label = safeCompanionText(item.label, 100);
-    return id && label ? [{ id, label, disabled: item.disabled === true, reason: safeCompanionText(item.reason, 240) || undefined }] : [];
+    const purpose = item.purpose === "launch-runner" || item.purpose === "navigate" ? item.purpose : undefined;
+    return id && label ? [{ id, label, disabled: item.disabled === true, reason: safeCompanionText(item.reason, 240) || undefined, purpose }] : [];
   });
   const workflow = record(raw.workflow), workflowTitle = safeCompanionText(workflow.title);
   const stage = typeof workflow.stage === "number" && Number.isInteger(workflow.stage) && workflow.stage >= 0 && workflow.stage <= 100 ? workflow.stage : undefined;
@@ -54,6 +56,8 @@ export function readCompanionContext(value: unknown, now = Date.now()): Companio
       workflow: workflowTitle ? { title: workflowTitle, detail: safeCompanionText(workflow.detail, 240), stage, total, done: workflow.done === true } : undefined,
     },
     goal: safeCompanionText(source.goal, 400),
+    tracking: typeof record(source.tracking).active === "boolean"
+      ? { active: record(source.tracking).active === true, summary: safeCompanionText(record(source.tracking).summary, 300), latestUpdate: safeCompanionText(record(source.tracking).latestUpdate, 600) || undefined } : undefined,
     events: list(source.events).slice(-12).flatMap(value => {
       const item = record(value), at = timestamp(item.at), label = safeCompanionText(item.label, 140);
       return ["navigate", "click", "change", "notice"].includes(item.kind as string) && companionPaths.includes(item.path as string) &&
@@ -73,26 +77,30 @@ export function readCompanionHistory(value: unknown): CompanionTurn[] {
 
 export function asksAboutCurrentPage(message: string) {
   const text = message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
-  return /(?:dang (?:vuong|o dau|lam gi)|lam (?:gi |the nao )?tiep|buoc tiep|man (?:hinh )?nay|trang nay|nut nay|cai nay|loi nay|thong bao nay|vua (?:bam|lam|sua|thao tac)|khong (?:bam|an|nhan) duoc|bi (?:mo|khoa)|cho nao|tinh trang hien tai)/i.test(text);
+  return /(?:dang (?:vuong|o dau|lam gi)|lam (?:gi |the nao )?tiep|buoc tiep|man (?:hinh )?nay|trang nay|nut nay|cai nay|loi nay|thong bao nay|mo.*runner|vua (?:bam|lam|sua|thao tac)|khong (?:bam|an|nhan) duoc|bi (?:mo|khoa)|cho nao|tinh trang hien tai)/i.test(text);
 }
 
-export function currentPageAnswer(context: CompanionContext) {
+export function currentPageAnswer(context: CompanionContext, message = "") {
   const { page } = context;
+  if (/mở.*runner|mo.*runner/i.test(message)) {
+    const launch = page.controls.find(item => item.purpose === "launch-runner" && !item.disabled);
+    return { answer: launch ? `Bạn bấm “${launch.label}” ở phần Máy thực thi nhé. Nếu trình duyệt hỏi, chọn Mở ứng dụng. Khi máy hiện đang kết nối thì mình mới xác nhận được Runner đã sẵn sàng.`
+      : "Bạn vào phần Máy thực thi rồi tìm nút ‘Mở runner trên máy này’ nhé. Mình chưa thấy nút mở Runner trong phần đang hiển thị, nên chưa thể chỉ đúng vị trí cho bạn.",
+      focus: launch ? { id: launch.id, label: launch.label } : undefined };
+  }
   const focused = page.controls.find(item => item.id === page.focusedControl);
   const blocked = focused?.disabled ? focused : page.controls.find(item => item.disabled && item.reason);
-  const lines = [`Bạn đang ở ${page.title || page.path}${page.dialogs.length ? `, đang mở “${page.dialogs.at(-1)}”` : ""}.`];
-  if (context.goal) lines.push(`Mục tiêu đang theo: ${context.goal}`);
-  if (blocked) lines.push(`“${blocked.label}” đang bị khóa. ${blocked.reason || "Trang chưa cung cấp lý do cụ thể; kiểm tra điều kiện của thao tác này."}`);
-  if (page.notices.length) lines.push(`Thông báo trên trang: ${page.notices.join(" · ")}`);
-  if (page.workflow) lines.push(`${page.workflow.done ? "Đã hoàn tất" : "Bước hiện tại"}: ${page.workflow.title}. ${page.workflow.detail}`);
+  const lines: string[] = [];
+  if (blocked) lines.push(`Bạn chưa bấm được “${blocked.label}” vì ${blocked.reason || "mình chưa đọc được điều kiện còn thiếu. Bạn mở phần chi tiết của thao tác này để mình kiểm tra tiếp nhé."}`);
+  if (page.notices.length) lines.push(page.notices.at(-1)!);
+  if (page.workflow) lines.push(`${page.workflow.done ? "Xong bước này rồi" : "Mình cùng làm bước này nhé"}: ${page.workflow.title}. ${page.workflow.detail}`);
   const nextStep = page.facts.find(fact => fact.label === "Bước tiếp theo");
-  if (nextStep && !page.workflow) lines.push(`Bước tiếp theo: ${nextStep.value}`);
+  if (nextStep && !page.workflow) lines.push(nextStep.value);
   if (!blocked && !page.workflow && !page.notices.length && !nextStep) {
-    if (page.facts.length) lines.push(page.facts.slice(0, 4).map(fact => `${fact.label}: ${fact.value}`).join(". "));
-    else lines.push("Mình chưa có đủ trạng thái để xác định bước bị vướng. Chọn đối tượng hoặc mở phần chi tiết bạn muốn kiểm tra.");
+    lines.push("Bạn chọn hồ sơ hoặc mở lịch cần xem nhé. Mình sẽ dựa vào trạng thái của mục đó để chỉ bước tiếp theo.");
   }
   const event = context.events.filter(item => item.kind === "click" || item.kind === "change").at(-1);
   if (event && /lưu|gửi|bật|chuẩn bị|đăng ký|xóa|dừng/i.test(event.label))
-    lines.push(`Thao tác gần nhất${event.path !== page.path ? ` ở ${event.path}` : ""}: ${event.label}. Thao tác bấm chưa chứng minh yêu cầu đã hoàn tất.`);
+    lines.push("Mình thấy bạn vừa thao tác, nhưng chưa có xác nhận hoàn tất. Mình chưa thể kết luận đã lưu hay gửi thành công.");
   return { answer: lines.join("\n\n"), focus: blocked ? { id: blocked.id, label: blocked.label } : undefined };
 }

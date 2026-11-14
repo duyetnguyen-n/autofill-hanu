@@ -7,8 +7,10 @@ import { type AssistantContext, type AssistantProposal, type AssistantReply, run
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
 import { type AccountPlan, planForSchedule } from "./planning";
 import { NoticeCenter } from "./HcmueNotice";
-import { useCompanion } from "../../../manager/ui/assistant/companion";
+import { useCompanion, useTrackingRevision } from "../../../manager/ui/assistant/companion";
 import { CompanionCard } from "../../../manager/ui/assistant/CompanionCard";
+import { CompanionProgress } from "../../../manager/ui/assistant/CompanionProgress";
+import { trackingIntent } from "../../../manager/ui/assistant/tracking";
 import { asksAboutCurrentPage } from "../../../manager/assistant/context";
 
 export interface AssistantScope {
@@ -40,6 +42,7 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
   const [scheduleId, setScheduleId] = useState(scope.scheduleId ?? "");
   const [message, setMessage] = useState("");
   const companion = useCompanion();
+  const progressRevision = useTrackingRevision();
   const [turns, setTurns] = useState<Turn[]>(() => companion?.getSnapshot().hcmueTurns ?? []);
   useEffect(() => { companion?.remember(turns, "hcmue"); }, [companion, turns]);
   useEffect(() => { companion?.setOpen(true, "hcmue"); return () => companion?.setOpen(false, "hcmue"); }, [companion]);
@@ -64,7 +67,7 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
     requestRef.current = undefined;
     request?.abort();
   }, []);
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [turns, pending]);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [turns, pending, progressRevision]);
   const schedule = schedules.find(s => s.id === scheduleId);
   const proposal = turns.at(-1)?.reply?.proposal;
   const preparedDraft = schedules.find(s => s.accountId === draft?.accountId && s.status === "prepared");
@@ -81,6 +84,13 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
   async function send(question: string, keepContext = false) {
     const text = question.trim();
     if (!text || requestRef.current) return;
+    const tracking = trackingIntent(text);
+    if (companion && tracking) {
+      const answer = tracking === "start" ? companion.startTracking(scheduleId ? [scheduleId] : undefined) : companion.stopTracking();
+      setMessage("");
+      setTurns(old => [...old, { role: "user", text }, { role: "assistant", text: answer }]);
+      return;
+    }
     if (!keepContext && !asksAboutCurrentPage(text) && guideIntent(text) && guide.handoff(text)) {
       onClose();
       return;
@@ -161,9 +171,9 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
             </Select>
           </Field>}
         </div>
+        {companion && <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>}
         <div className="hc-assistant-content" ref={logRef} tabIndex={0}>
           <div className="hc-assistant-turns" role="log" aria-label="Cuộc trò chuyện">
-            {companion && <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>}
             {!turns.length && <>
               <article className="hc-assistant-turn hc-assistant-assistant"><p>Chào bạn! Mình có thể hướng dẫn dùng HCMUE, giải thích lỗi và kiểm tra trạng thái lịch.</p></article>
               <div className="hc-assistant-prompts">
@@ -182,7 +192,8 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
                 {turn.reply.references.map(ref => <li key={ref.id}><a href={ref.href ?? `/hcmue-downloads/knowledge.html#${ref.id}`} target="_blank" rel="noreferrer">{ref.title}</a></li>)}
               </ul>}
             </article>)}
-            {pending && <Spinner size="tiny" label="Đang tìm hướng dẫn…" />}
+            {companion && <CompanionProgress companion={companion}/>}
+            {pending && <Spinner size="tiny" label="Mình đang kiểm tra phần bạn vừa hỏi…" />}
           </div>
           {proposal && !draft && <div className="hc-assistant-proposal">
             {proposal.action === "prepare" || proposal.action === "edit" ? <>

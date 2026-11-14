@@ -4,12 +4,15 @@ Danh mục gồm 68 luồng theo giao diện HANU hiện có. Mở **Danh mục 
 
 ## Đồng hành theo màn hình hiện tại
 
-Trợ lý chung và trợ lý HCMUE nhận cùng lớp ngữ cảnh trang. Bấm **Mình nên làm gì
-tiếp?** để đọc trạng thái thực tế và lý do đang bị chặn. Mở **Ngữ cảnh đang theo**
-để xem các dữ kiện, thao tác gần đây và lưu mục tiêu. Gợi ý xuất hiện ngay trong
-chat, có thể bỏ qua hoặc **Chỉ vị trí** nếu gợi ý nói về nút bị khóa. Khi chuyển
-trang bằng liên kết nội bộ lúc chat đang mở, chat tiếp tục ở trang đích; đóng rồi
-mở lại vẫn giữ hội thoại. Xem [hướng dẫn chi tiết](AI-COMPANION.md).
+Thanh **Gợi ý · Theo dõi · Ngữ cảnh** nằm dưới tiêu đề trợ lý, không ghim lên
+hội thoại. **Ngữ cảnh** mở thành màn riêng; bấm **Về cuộc trò chuyện** để trở lại.
+Có thể xem trạng thái, lưu mục tiêu hoặc chọn lịch ở màn này.
+
+Nhắn “sắp đki rồi, theo dõi giúp mình” để nhận tin tiến trình và kết quả từ đúng
+lịch, tài khoản và máy. Có nhiều lịch thì chọn rõ đối tượng. Các tin mới dựa trên
+trạng thái Runner hoặc lượt chạy, không suy luận từ click. Chỉ báo xác nhận khi
+có bằng chứng; diễn tập và kết quả chưa rõ được phân biệt. Dừng theo dõi của AI
+không dừng lịch. Xem [cách dùng và giới hạn](AI-COMPANION.md).
 
 ## Cách hướng dẫn dùng chung
 

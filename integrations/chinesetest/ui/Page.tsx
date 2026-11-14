@@ -1,4 +1,5 @@
-import { useCompanionFacts } from "../../../manager/ui/assistant/companion";
+import { chineseRuns } from "../../../manager/ui/assistant/run-observations";
+import { useCompanionFacts, useCompanionRuns, useTrackingActive } from "../../../manager/ui/assistant/companion";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import { FluentProvider, Button, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
@@ -110,7 +111,10 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
   useEffect(()=>{if(selectedDevice.current===deviceId)return;selectedDevice.current=deviceId;generation.current++;setState(undefined);setPlans({});setClaims({});setSelected(new Set());setEditor(undefined);setLivePreparation(undefined);const d=devices.find(d=>d.id===deviceId);setTrusted(Boolean(d&&localStorage.getItem(trustKey(d.id))===d.fingerprint));},[deviceId]);
   useEffect(()=>{if(device&&trusted&&localStorage.getItem(trustKey(device.id))!==device.fingerprint){setTrusted(false);setState(undefined);}},[device?.fingerprint,trusted]);
   useEffect(()=>{if(device?.connected&&trusted)void refreshState().catch(e=>setMonitorError(e.message));},[device?.connected,trusted,refreshState]);
-  useRunnerMonitor({source:`${account.id}:${deviceId}:${trusted}`,enabled:Boolean(deviceId),active:Boolean(state?.loginPending||state?.schedules.some(s=>activeStatus(s.status))),readDevices:refreshDevices,readState:refreshState,busy:()=>busyRef.current,error:setMonitorError});
+  const trackingSource=`chinesetest:${deviceId || "unselected"}`;
+  const trackingActive=useTrackingActive(trackingSource);
+  useCompanionRuns({source:trackingSource,provider:"chinesetest",initializing:loading||Boolean(device?.connected&&!state),connected:Boolean(device?.connected&&trusted&&!monitorError),checkedAt:state?.now??"",selected:[...selected],runs:chineseRuns(state)});
+  useRunnerMonitor({source:`${account.id}:${deviceId}:${trusted}`,enabled:Boolean(deviceId),active:trackingActive||Boolean(state?.loginPending||state?.schedules.some(s=>activeStatus(s.status))),background:trackingActive,readDevices:refreshDevices,readState:refreshState,busy:()=>busyRef.current,error:setMonitorError});
   async function act(work:()=>Promise<void>){if(busyRef.current)return;busyRef.current=true;setBusy(true);setError("");setNotice("");try{await work();await refreshState();}catch(e){setError((e as Error).message);}finally{busyRef.current=false;if(mounted.current)setBusy(false);}}
   async function stopRun(id?:string){try{await request(id?"stop":"stop-all",id?{id}:{});await refreshState();}catch(e){setError((e as Error).message);}}
   function changePlan(id:string,p:Plan){setPlans(prev=>({...prev,[id]:p}));setInspections(prev=>{const next={...prev};delete next[id];return next;});}

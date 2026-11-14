@@ -14,9 +14,10 @@
         "trợ lý hiểu màn hình"
       ],
       "steps": [
-        "Mở Hỏi AI và bấm Mình nên làm gì tiếp? để hỏi theo trạng thái màn hình hiện tại. Trợ lý đọc khu vực, hộp thoại, thông báo, lý do khóa nút và thao tác gần đây; có thể bấm Chỉ vị trí để đánh dấu nút được nhắc tới.",
-        "Mở Ngữ cảnh đang theo để xem trạng thái và lưu Mục tiêu đang làm. Hội thoại, mục tiêu và tối đa 12 sự kiện gần đây được nhớ riêng theo tài khoản trong tab trong 2 giờ; chuyển trang qua liên kết nội bộ khi đang mở sẽ giữ khung chat. Đăng xuất sẽ xóa bộ nhớ này.",
-        "Trợ lý không đọc giá trị nhập trong biểu mẫu, mật khẩu, cookie hoặc mã liên kết. Quan sát không gọi model liên tục; chỉ gửi ngữ cảnh khi bạn đặt câu hỏi. Gợi ý từ trạng thái trang vẫn dùng được khi model lỗi. Một lần bấm không chứng minh đã lưu, bật lịch hoặc đăng ký thành công."
+        "Mở Hỏi AI. Thanh nhỏ dưới tiêu đề có Gợi ý, Theo dõi và Ngữ cảnh. Ngữ cảnh mở ở một màn riêng; bấm Về cuộc trò chuyện để đọc chat, không có bảng ghim che tin nhắn.",
+        "Để nhận tiến trình và kết quả, nhắn \"theo dõi giúp mình\" hoặc \"sắp đki rồi\". Có nhiều lịch thì chọn đúng lịch; chưa có lịch thì chọn tài khoản, chuẩn bị và bật lịch. AI chỉ theo dõi, không tự bật lịch.",
+        "Tin mới dựa trên trạng thái Runner, không dựa vào click. Đã gửi chưa phải đã đăng ký. Giữ trang và đúng máy mở để nhận cập nhật; rời ứng dụng hoặc đổi máy sẽ tạm dừng theo dõi. Đóng khung chat vẫn có dấu cập nhật mới.",
+        "Mở Ngữ cảnh để lưu mục tiêu và xem dữ liệu. Bộ nhớ riêng theo tài khoản và tab, khôi phục trong 2 giờ từ hoạt động cuối. Không đọc giá trị nhập. ID nút, tên trường JSON và giờ UTC không được đưa vào lời trả lời."
       ],
       "source": "docs/AI-COMPANION.md",
       "href": "/account"

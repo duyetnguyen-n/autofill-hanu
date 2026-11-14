@@ -5,8 +5,11 @@
 Mở **Trợ lý HCMUE** trên màn HCMUE, hoặc bấm **Hỏi AI** từ thông báo, báo cáo hay lịch cần xem. Trợ lý tra hướng dẫn theo mã lỗi và câu hỏi. Khi chọn một lịch, trợ lý có thể giải thích trạng thái và các mốc chẩn đoán của lịch đó. Nhật ký gốc nằm trên Runner.
 
 Trợ lý nhận thêm trạng thái màn HCMUE, hộp thoại, lý do nút bị khóa và các thao tác
-gần đây. Bấm **Mình nên làm gì tiếp?** để hỏi ngay theo màn đang xem. Trong
-**Ngữ cảnh đang theo**, lưu mục tiêu để tiếp tục khi chuyển ứng dụng. Giá trị nhập
+gần đây. Bấm **Gợi ý** để hỏi ngay theo màn đang xem. **Ngữ cảnh** mở thành màn riêng, có
+nút **Về cuộc trò chuyện**; bảng trạng thái không che tin nhắn. Lưu mục tiêu ở
+màn này để tiếp tục khi chuyển ứng dụng. Nhắn “theo dõi lịch này giúp mình”
+để nhận các bước mới và kết quả của lịch đã chọn ngay trong chat. Theo dõi
+không tạo hay bật lịch và cần giữ trang/máy kết nối. Giá trị nhập
 vào biểu mẫu không được thu thập; các trạng thái lịch được đọc riêng như trước.
 Xem [AI đồng hành](../AI-COMPANION.md) về bộ nhớ phiên và phạm vi quan sát.
 

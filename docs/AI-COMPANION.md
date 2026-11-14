@@ -3,10 +3,20 @@
 ## Sử dụng
 
 1. Mở **Hỏi AI** trên Google Forms, Direct, ChineseTest, Tài khoản, Quản trị hoặc Kho tri thức; HCMUE dùng **Trợ lý HCMUE**.
-2. Bấm **Mình nên làm gì tiếp?**, hoặc chọn nút trên trang rồi hỏi “Nút này vì sao bị khóa?”. Trợ lý nhận ngữ cảnh mới tại thời điểm gửi câu hỏi.
-3. Mở **Ngữ cảnh đang theo** để xem trạng thái ứng dụng và ba sự kiện gần đây. Nhập **Mục tiêu đang làm** rồi bấm **Lưu mục tiêu**. Mục tiêu này theo bạn qua các ứng dụng trong cùng tab.
-4. Với gợi ý về nút bị khóa, bấm **Chỉ vị trí** để đánh dấu trên trang. **Bỏ qua gợi ý** ẩn gợi ý đó trong lần mở chat hiện tại. Trợ lý chỉ đánh dấu phần tử còn tồn tại và hiển thị, không tự bấm nút đó.
-5. Khi chat đang mở, chuyển trang qua liên kết nội bộ để tiếp tục trò chuyện ở trang đích. Đóng và mở lại vẫn giữ lịch sử. Trợ lý chung và HCMUE giữ hội thoại riêng, dùng chung mục tiêu và sự kiện của tab.
+2. Thanh nhỏ dưới tiêu đề dành cho **Gợi ý**, **Theo dõi** và **Ngữ cảnh**. Hội thoại có toàn bộ vùng cuộn; không ghim bảng ngữ cảnh lên trên tin nhắn.
+3. Bấm **Gợi ý**, hoặc chọn nút trên trang rồi hỏi “Nút này vì sao bị khóa?”. Trợ lý nhận trạng thái mới tại thời điểm gửi câu hỏi, trả lời bằng lời dễ hiểu và chỉ vị trí qua nút riêng. ID điều khiển, tên trường dữ liệu và dấu thời gian UTC không xuất hiện trong câu trả lời.
+4. **Ngữ cảnh** mở thành một màn riêng trong khung trợ lý để xem trạng thái, lưu **Mục tiêu đang làm** và chọn lịch. Bấm **Về cuộc trò chuyện** để đọc chat. Màn này không đè lên nội dung hội thoại.
+5. Khi chat đang mở, chuyển trang qua liên kết nội bộ để tiếp tục trò chuyện ở trang đích. Đóng và mở lại giữ lịch sử. Hai trợ lý giữ hội thoại riêng, dùng chung mục tiêu và các tin cập nhật đăng ký.
+
+## Nhận tiến trình và kết quả chủ động
+
+- Bấm **Theo dõi** hoặc nhắn “Sắp đki rồi, theo dõi và báo kết quả giúp mình”. Trợ lý bám lịch của tài khoản/profile đang chọn; nếu chỉ có một lịch đang hoạt động thì dùng lịch đó. Nếu có nhiều lịch chưa xác định đối tượng, chọn đúng lịch trong **Ngữ cảnh → Theo dõi đăng ký**.
+- Chưa có lượt phù hợp: chọn tài khoản/profile trước, chuẩn bị và bật lịch trên giao diện. Theo dõi không tạo lịch, sửa giờ, bật lịch hoặc đăng ký thay người dùng.
+- Khung chat tự có tin khi lịch chuyển sang chờ giờ, kiểm tra điều kiện, gửi yêu cầu, chờ phản hồi, cần xử lý hoặc có kết quả. Trạng thái không đổi sẽ không nhắc lại mỗi lần làm mới. Đóng riêng khung chat vẫn theo dõi và có dấu số tin mới trên nút mở trợ lý.
+- Một lần gửi chỉ được báo là đã gửi. ChineseTest chỉ báo xác nhận khi trạng thái đã đối chiếu kèm mã đăng ký; HCMUE cần trạng thái đã xác nhận kèm mã đăng ký. Diễn tập luôn được báo riêng, không coi là đơn thật. Với kết quả chưa rõ, cần đối chiếu trước khi chạy lại.
+- Mở **Ngữ cảnh** và chọn **Dừng theo dõi của AI**, hoặc nhắn “Dừng theo dõi”, để dừng tin cập nhật. Thao tác này không dừng lịch trên Runner.
+- Theo dõi thuộc đúng ứng dụng và máy đã chọn. Giữ trang đăng ký đó mở và Runner có kết nối. Rời màn đăng ký hoặc đổi máy sẽ tạm ngừng cập nhật; khi quay lại đúng nguồn, trợ lý tiếp tục đối chiếu trạng thái. Chế độ ChineseTest đã bật theo dõi tiếp tục yêu cầu trạng thái khi tab ẩn, trong giới hạn bộ định thời của trình duyệt.
+- Đóng tab/trình duyệt hoặc máy ngủ không có dịch vụ đẩy kết quả bên ngoài. Lịch có thể vẫn chạy trên Runner. Mở lại để đọc kết quả; không coi việc mất kết nối là đăng ký thất bại.
 
 ## Trạng thái được quan sát
 
@@ -26,15 +36,15 @@ Theo dõi trạng thái chạy trong trình duyệt, không gọi model theo m�
 
 ## Phạm vi bản này và triển khai
 
-Đây là lớp quan sát, bộ nhớ phiên và chỉ dẫn theo trạng thái. Công cụ thay đổi dữ liệu qua MCP chưa được triển khai. Các thao tác lịch HCMUE vẫn dùng đề xuất và xác nhận hiện có. Không thay model mặc định và không thêm dịch vụ bên ngoài.
+Đây là lớp quan sát, bộ nhớ phiên, chỉ dẫn và theo dõi tiến trình theo trạng thái thực tế. Công cụ thay đổi dữ liệu qua MCP chưa được triển khai. Các thao tác lịch HCMUE vẫn dùng đề xuất và xác nhận hiện có. Không thay model mặc định và không thêm dịch vụ bên ngoài.
 
 Build/deploy lại backend và giao diện bằng `npm run build:cloud-server`. Không có migration cơ sở dữ liệu mới. Khi kho tri thức đã được lập chỉ mục, quản trị viên chọn **Lập chỉ mục bài có sẵn** để đưa hướng dẫn `system-companion` mới vào kho.
 
 ## Kiểm tra
 
 - `npm run typecheck`
-- `npm test -- tests/companion.test.ts tests/cloud/system-assistant.test.ts tests/hcmue/assistant.test.ts`
+- `npm test -- tests/assistant-tracking.test.ts tests/companion.test.ts tests/cloud/system-assistant.test.ts tests/hcmue/assistant.test.ts tests/chinesetest/monitor.test.tsx --maxWorkers=1`
 - `npm run build:cloud-server`
-- `npm run test:companion-ui` và `npm run test:assistant-ui` sau khi build.
+- `npm run test:companion-ui`, `npm run test:companion-tracking-ui` và `npm run test:assistant-ui` sau khi build.
 
 Các kiểm tra dùng tài khoản và API giả lập; không gửi đăng ký thật hoặc gọi dịch vụ model thật.

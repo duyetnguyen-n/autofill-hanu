@@ -12,6 +12,7 @@ const app = await httpFixture(resolve("build/cloud-ui"), true, true, false, asyn
   if (!modelAvailable) return new Response(null, { status: 429 });
   return Response.json({ choices: [{ message: { content: JSON.stringify({ answer: `Đang cùng bạn ở ${input.companion?.page.title}. Mục tiêu: ${input.companion?.goal}.`, referenceIds: [] }) } }] });
 });
+await mkdir("test-results/assistant", { recursive: true });
 const browser = await chromium.launch({ channel: process.platform === "win32" ? "msedge" : "chrome", headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
@@ -22,9 +23,13 @@ try {
   await expect(page.getByRole("heading", { name: "Quản lý các phiên", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
   const panel = page.getByRole("dialog", { name: "Trợ lý HANU", exact: true });
-  await panel.getByText("Ngữ cảnh đang theo", { exact: true }).click();
+  await panel.getByRole("button", { name: "Ngữ cảnh đang theo", exact: true }).click();
+  await expect(panel.getByRole("log")).not.toBeVisible();
   await panel.getByLabel("Mục tiêu đang làm").fill("Chuẩn bị HSK 5");
   await panel.getByRole("button", { name: "Lưu mục tiêu", exact: true }).click();
+  await page.screenshot({ path: "test-results/assistant/companion-context-desktop.png" });
+  await panel.getByRole("button", { name: "Về cuộc trò chuyện", exact: true }).click();
+  await expect(panel.getByRole("log")).toBeVisible();
   // Observing and setting a goal must not invoke the model.
   expect(requests).toHaveLength(0);
   await panel.getByRole("button", { name: "Mình nên làm gì tiếp?", exact: true }).click();
@@ -52,9 +57,11 @@ try {
   await expect(panel.getByRole("log")).toContainText("Màn hình này đang chờ gì?");
   modelAvailable = false;
   await panel.getByRole("button", { name: "Mình nên làm gì tiếp?", exact: true }).click();
-  await expect(panel.getByRole("log")).toContainText("Bước tiếp theo: Mở ChineseTest Runner");
+  await expect(panel.getByRole("log")).toContainText("Mở ChineseTest Runner");
   await expect(panel.getByText("Từ màn hình", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  expect((await panel.locator(".ai-companion-bar").boundingBox())!.height).toBeLessThanOrEqual(44);
+  expect((await panel.getByRole("log").boundingBox())!.height).toBeGreaterThan(250);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await mkdir("test-results/assistant", { recursive: true });
   await page.screenshot({ path: "test-results/assistant/companion-mobile.png" });
@@ -67,7 +74,7 @@ try {
   await page.getByRole("button", { name: "Trợ lý HCMUE", exact: true }).click();
   const hcmue = page.getByRole("dialog", { name: "Trợ lý HCMUE", exact: true });
   await hcmue.getByRole("button", { name: "Mình nên làm gì tiếp?", exact: true }).click();
-  await expect(hcmue.getByRole("log")).toContainText("Mục tiêu đang theo: Chuẩn bị HSK 5");
+  await expect(hcmue.getByRole("log")).toContainText("Liên kết máy");
   expect(requests.at(-1).companion.page.path).toBe("/hcmue");
   expect(requests.at(-1).companion.page.facts.some((fact: any) => fact.label === "HCMUE Runner")).toBe(true);
   expect(requests.at(-1).context).toBeDefined();
@@ -78,6 +85,7 @@ try {
   const blocked = pair.getByRole("button", { name: "Liên kết", exact: true });
   await expect(blocked).toBeDisabled();
   await blocked.dispatchEvent("pointerdown");
+  await hcmue.getByRole("button", { name: "Ngữ cảnh đang theo", exact: true }).click();
   await expect(hcmue.getByRole("region", { name: "Đồng hành trên trang" })).toContainText("Chưa nhập mã liên kết");
   await hcmue.getByRole("button", { name: "Chỉ vị trí", exact: true }).click();
   await expect(page.locator('.guide-spotlight[data-companion-focus=true] .guide-halo')).toBeVisible();

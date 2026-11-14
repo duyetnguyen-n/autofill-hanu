@@ -1,4 +1,5 @@
-import { useCompanionFacts, useCompanionOpen } from "./assistant/companion";
+import { formRuns } from "./assistant/run-observations";
+import { useCompanionFacts, useCompanionOpen, useCompanionRuns } from "./assistant/companion";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "./assistant/GuidedDialog";
 import React,{useEffect,useLayoutEffect,useState,useRef,lazy,Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -105,6 +106,7 @@ function App({cloud=false,account,logout,hcmueEnabled=false,chinesetestEnabled=f
     finally{const count=(pending.get(scope)??1)-1;if(count)pending.set(scope,count);else pending.delete(scope);setPendingScopes(new Set(pending.keys()));setBusy(pending.size>0);}
   }
   const selected=state.sessions.filter(s=>selection.has(s.id));
+  useCompanionRuns({ source: directWorkspace ? "direct:profiles" : "forms:profiles", provider: directWorkspace ? "direct" : "forms", connected: serverConnected, checkedAt: new Date().toISOString(), selected: [...selection], runs: formRuns(state.sessions, directWorkspace) });
   useCompanionFacts("forms", [
     { label: "Kết nối trang quản lý", value: serverConnected ? "Đang kết nối" : "Đang mất kết nối; dữ liệu có thể đã cũ" },
     { label: "Chrome profile", value: `${state.sessions.length} profile; ${selection.size} đang chọn; ${state.sessions.filter(sessionReady).length} sẵn sàng` },

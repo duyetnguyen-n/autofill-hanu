@@ -9,8 +9,10 @@ import { WalkthroughPanel } from "./WalkthroughPanel";
 import { WalkthroughCatalog } from "./WalkthroughCatalog";
 import { walkAreaLabels, walkthroughFor } from "./walkthroughs";
 import { asksAboutCurrentPage, readCompanionHistory } from "../../assistant/context";
-import { CompanionContextProvider, createCompanion, type Companion } from "./companion";
+import { CompanionContextProvider, createCompanion, useTrackingRevision, useTrackingUnread, type Companion } from "./companion";
 import { CompanionCard } from "./CompanionCard";
+import { CompanionProgress } from "./CompanionProgress";
+import { trackingIntent } from "./tracking";
 import "./assistant.css";
 
 type Turn = { role: "user" | "assistant"; text: string; reply?: SystemReply };
@@ -89,6 +91,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
   const [turns, setTurns] = useState<Turn[]>(() => restored ? [
     ...restored.turns, { role: "assistant", text: arrivalMessage(restored.guide, account) },
   ] : companion.getSnapshot().turns);
+  const progressRevision = useTrackingRevision();
   useEffect(() => { companion.remember(turns); }, [companion, turns]);
   const [focus, setFocus] = useState<{ id: string; label: string }>();
   const resolveFocus = useCallback(() => focus ? companion.resolve(focus.id) : undefined, [companion, focus]);
@@ -119,7 +122,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
     document.addEventListener("keydown", keyboard);
     return () => { document.removeEventListener("keydown", keyboard); request.current?.abort(); request.current = undefined; };
   }, [onClose]);
-  useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns, pending, error]);
+  useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns, pending, error, progressRevision]);
   useEffect(() => {
     if (guide !== "CH-03" && (!guide || arrived || !destination)) return;
     const remember = (event: MouseEvent) => {
@@ -159,6 +162,14 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
 
   async function send(question: string) {
     if (!question.trim() || request.current) return;
+    const tracking = trackingIntent(question);
+    if (tracking) {
+      const answer = tracking === "start" ? companion.startTracking() : companion.stopTracking();
+      if (tracking === "start" && !companion.read().goal) companion.setGoal(question);
+      setError(""); setText("");
+      setTurns(old => [...old, { role: "user", text: question.trim() }, { role: "assistant", text: answer, reply: { answer, source: "context", references: [] } }]);
+      return;
+    }
     setFocus(undefined);
     const intent = asksAboutCurrentPage(question) ? undefined : guideIntent(question, active && (!arrived || Boolean(formsStep?.action) ||
       Boolean(walk && document.querySelector(".ai-panel [data-walk-open]"))));
@@ -274,8 +285,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         </button>
       </>}
     </section>}
+    <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>
     <div className="ai-log" ref={log} role="log" aria-label="Cuộc trò chuyện">
-      <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>
       {focus && !active && <GuideSpotlight companion label={focus.label} resolve={resolveFocus}/>}
       {!guide && <WalkthroughCatalog initiallyOpen={initialQuestion === ""} onStart={id => void send(id)} allowed={(area, id) => {
         if (area === "admin" && account.role !== "admin") return false;
@@ -298,7 +309,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
         {!!turn.reply?.references.length && <nav aria-label="Nguồn tham khảo">{turn.reply.references.map(ref =>
           <a key={ref.id} href={ref.href} target="_blank" rel="noreferrer"><Books size={13} />{ref.title}</a>)}</nav>}
       </article>)}
-      {pending && <div className="ai-thinking" role="status"><span /><span /><span />Đang xem ngữ cảnh và hướng dẫn</div>}
+      <CompanionProgress companion={companion}/>
+      {pending && <div className="ai-thinking" role="status"><span /><span /><span />Mình đang kiểm tra phần bạn vừa hỏi…</div>}
       {error && <div className="ai-error" role="alert"><strong>Chưa có câu trả lời</strong><p>{error}</p></div>}
     </div>
     <form className="ai-composer" onSubmit={event => { event.preventDefault(); void send(text); }}>
@@ -316,6 +328,7 @@ export function SystemAssistant({ account, availableProducts, children }: {
   account: Account; availableProducts: readonly Product[]; children: ReactNode;
 }) {
   const [companion] = useState(() => createCompanion(account.id));
+  const unread = useTrackingUnread(companion);
   const [restored, setRestored] = useState(() => restoreGuide(account, availableProducts));
   const [open, setOpen] = useState(Boolean(restored) || companion.shouldResume());
   const [guide, setGuide] = useState(restored?.guide);
@@ -358,7 +371,7 @@ export function SystemAssistant({ account, availableProducts, children }: {
     {children}
     {(!dedicatedHcmue || open) && <button ref={trigger} type="button" className="ai-launcher" aria-label="Trợ lý AI" title="Hỏi trợ lý HANU"
       aria-expanded={open} aria-haspopup="dialog" onClick={() => open ? close() : setOpen(true)}>
-      {open ? <X size={24} /> : <ChatTeardropText size={27} weight="duotone" />}<span>Hỏi AI</span>
+      {open ? <X size={24} /> : <ChatTeardropText size={27} weight="duotone" />}<span>Hỏi AI</span>{!open && unread > 0 && <b className="ai-unread" aria-label={`${unread} cập nhật đăng ký mới`}>{Math.min(9, unread)}</b>}
     </button>}
     {open && <AssistantBoundary onClose={close}><Conversation account={account} availableProducts={availableProducts} restored={restored}
       initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} formsStep={formsStep} onClose={close} companion={companion}/></AssistantBoundary>}

@@ -1,4 +1,5 @@
-import { useCompanionFacts } from "../../../manager/ui/assistant/companion";
+import { hcmueRuns } from "../../../manager/ui/assistant/run-observations";
+import { useCompanionFacts, useCompanionRuns, useTrackingUnread } from "../../../manager/ui/assistant/companion";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -383,6 +384,8 @@ export function HcmuePage({
     );
   }, [accountIds]);
   const ready = !!device?.connected && trusted && !!state;
+  const unreadProgress=useTrackingUnread();
+  useCompanionRuns({source:`hcmue:${deviceId || "unselected"}`,provider:"hcmue",initializing:loading||Boolean(device?.connected&&!state),connected:ready,checkedAt:state?.now??"",selected:[...selected],runs:hcmueRuns(state)});
   const updatedRunner = (state?.protocolVersion ?? 1) >= 2;
   const connectionProblem = !device
     ? blocked("HC-LIEN-KET", "Chưa chọn máy chạy HCMUE", "Mở HCMUE Runner trên máy, sau đó bấm Liên kết máy.")
@@ -453,7 +456,7 @@ export function HcmuePage({
       <NoticeCenter.Provider value={showNotice}>
       <button type="button" className="hc-assistant-launcher" aria-label="Trợ lý HCMUE"
         title="Hỏi trợ lý HCMUE" aria-haspopup="dialog" onClick={() => setAssistant({})}>
-        <ChatsCircle size={27} weight="duotone" aria-hidden="true" />
+        <ChatsCircle size={27} weight="duotone" aria-hidden="true" />{unreadProgress>0&&<b className="ai-unread" aria-label={`${unreadProgress} cập nhật đăng ký mới`}>{Math.min(9,unreadProgress)}</b>}
       </button>
       {!modalOpen && noticeHost}
       <WorkspaceSidebar page="hcmue" hcmueEnabled chinesetestEnabled={chinesetestEnabled} connected={ready} email={account.email} logout={()=>void logout()} items={[

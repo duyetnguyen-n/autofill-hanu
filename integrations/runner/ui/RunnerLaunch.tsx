@@ -15,7 +15,7 @@ export function RunnerLaunch({ provider, device, accountId, onSelect }: {
   const guideUrl = `/${provider}-downloads/index.html`;
   return <div className="runner-launch">
     <div className="runner-launch-actions">
-      <Button as="a" href={runnerLaunchUrl(provider, window.location.origin)} onClick={() => setRequested(true)}>
+      <Button as="a" data-companion-action="launch-runner" href={runnerLaunchUrl(provider, window.location.origin)} onClick={() => setRequested(true)}>
         Mở runner trên máy này
       </Button>
       <a href={guideUrl} target="_blank" rel="noreferrer">Cài runner lần đầu / mở không được</a>

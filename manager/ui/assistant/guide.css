@@ -164,7 +164,7 @@ body:has(.hc-assistant) .guide-spotlight:not([data-companion-focus=true]):has([d
   padding: 12px clamp(16px, 4vw, 48px);
 }
 #root:has(.ai-panel) .hc-assistant-launcher { visibility: hidden; }
-.ai-panel[data-has-step=true] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+
 /* Fluent UI copies the workspace class to its portal. Only the menu itself
    should receive pointer events while the chat stays usable. */
 [data-portal-node]:has(.workspace-tools-guided, .pair-dialog-guided) {
@@ -204,10 +204,6 @@ body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bot
     bottom: max(10px, env(safe-area-inset-bottom));
     height: 43dvh;
     max-height: 43dvh;
-  }
-  body:has(.walk-dialog, .workspace-tools-guided, .pair-dialog-guided, .drawer-overlay[data-guided=true]) .ai-companion {
-    position: static;
-    max-height: 110px;
   }
   .workspace-tools-dialog.workspace-tools-guided, .pair-dialog.pair-dialog-guided {
     inset: max(10px, env(safe-area-inset-top)) 12px auto;

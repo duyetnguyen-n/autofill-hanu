@@ -6,7 +6,7 @@ import { useRunnerMonitor } from "../../integrations/chinesetest/ui/monitor";
 
 let root: Root, host: HTMLDivElement, hidden = false, busy = false;
 let devices = vi.fn(async () => {}), state = vi.fn(async () => {}), error = vi.fn((_message: string) => {});
-function View({ active = false }: { active?: boolean }) { useRunnerMonitor({ source: "runner-a", enabled: true, active, readDevices: devices, readState: state, busy: () => busy, error }); return null; }
+function View({ active = false, background = false }: { active?: boolean; background?: boolean }) { useRunnerMonitor({ source: "runner-a", enabled: true, active, background, readDevices: devices, readState: state, busy: () => busy, error }); return null; }
 beforeEach(() => {
   vi.useFakeTimers(); hidden = busy = false; vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => hidden ? "hidden" : "visible");
@@ -37,6 +37,14 @@ it("makes no requests in a hidden tab and coalesces repeated visibility notifica
   await advance(180000); expect(devices).toHaveBeenCalledTimes(1); expect(state).toHaveBeenCalledTimes(1);
   hidden = false; await act(async () => { document.dispatchEvent(new Event("visibilitychange")); document.dispatchEvent(new Event("visibilitychange")); });
   expect(devices).toHaveBeenCalledTimes(2); expect(state).toHaveBeenCalledTimes(2);
+});
+it("continues bounded state reads in a hidden tab only while explicit tracking is enabled", async () => {
+  hidden = true;
+  await act(async () => root.render(<View active background/>));
+  expect(state).toHaveBeenCalledTimes(1);
+  await advance(5000); expect(state).toHaveBeenCalledTimes(3);
+  await act(async () => root.render(<View active/>));
+  await advance(10000); expect(state).toHaveBeenCalledTimes(3);
 });
 it("backs off failed reads instead of accumulating commands", async () => {
   state.mockRejectedValue(new Error("offline")); await render(true); expect(error).toHaveBeenLastCalledWith("offline");

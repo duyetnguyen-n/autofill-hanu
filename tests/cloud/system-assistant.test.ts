@@ -46,8 +46,8 @@ it("explains the current screen on model failure, while treating a click as an a
   const reply = await answerSystemAssistant({ workspace: "chinesetest", message: "Nút này sao không bấm được?", companion }, {});
   expect(reply).toMatchObject({ source: "context", focus: { id: "c-2", label: "Chuẩn bị" } });
   expect(reply.answer).toContain("Cập nhật Runner");
-  expect(reply.answer).toContain("Chuẩn bị HSK 5");
-  expect(reply.answer).toContain("chưa chứng minh");
+  expect(reply.answer).not.toContain("Mục tiêu đang theo:");
+  expect(reply.answer).toContain("chưa có xác nhận");
 });
 it("passes sanitized live context and longer history, and only permits pointing at observed controls", async () => {
   const send = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: {

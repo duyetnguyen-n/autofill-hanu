@@ -3,9 +3,9 @@
 ## AI đồng hành trên website
 
 Trợ lý nhận trạng thái của trang, hộp thoại, thông báo, lý do khóa nút và thao tác
-gần đây từ Google Forms, HCMUE và ChineseTest. Mở **Hỏi AI**, bấm **Mình nên làm
-gì tiếp?** hoặc hỏi trực tiếp về màn đang xem. Mở **Ngữ cảnh đang theo** để lưu
-mục tiêu. Bộ nhớ riêng theo tài khoản trong từng tab giữ hội thoại và mục tiêu
+gần đây từ Google Forms, HCMUE và ChineseTest. Mở **Hỏi AI**, bấm **Gợi ý** hoặc hỏi trực tiếp về màn đang xem. **Ngữ cảnh**
+mở thành màn riêng để lưu mục tiêu, không che hội thoại. Nhắn “sắp đki rồi,
+theo dõi giúp mình” để nhận tiến trình và kết quả từ đúng lịch/máy đã chọn. Bộ nhớ riêng theo tài khoản trong từng tab giữ hội thoại và mục tiêu
 khi chuyển trang, không thu thập giá trị nhập trong biểu mẫu.
 Xem [cách dùng và giới hạn](docs/AI-COMPANION.md).
 

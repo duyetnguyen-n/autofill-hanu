@@ -93,3 +93,14 @@ it("validates every field, caps observations and strips unknown data before mode
   expect(JSON.stringify(result)).not.toMatch(/keep-secret|secret-value|session-secret|private-data|private-key|private@example/);
   expect(readCompanionContext({ page: { path: "/account?token=secret", capturedAt: new Date().toISOString() } })).toBeUndefined();
 });
+it("includes the actual latest monitoring result in the next model context and clears it on logout", () => {
+  const companion = createCompanion("owner"); stop = companion.start();
+  const feed = { source: "chinesetest:machine-a", provider: "chinesetest" as const, connected: true, checkedAt: new Date().toISOString(), selected: [],
+    runs: [{ id: "run", account: "account", label: "Lịch HSK 5", phase: "sending" as const, test: false }] };
+  companion.reportRuns(feed); companion.startTracking();
+  companion.reportRuns({ ...feed, runs: [{ ...feed.runs[0], phase: "confirmed" }] });
+  expect(companion.read().tracking).toMatchObject({ active: false, latestUpdate: expect.stringContaining("Đã có xác nhận đăng ký") });
+  window.dispatchEvent(new Event("hanu-session-ended"));
+  expect(companion.read().tracking).toEqual({ active: false, summary: "" });
+  expect(companion.getSnapshot().tracking.updates).toEqual([]);
+});

@@ -144,9 +144,8 @@
 .hc-assistant > .hc-assistant-body {
   position: absolute;
   inset: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 0;
   max-height: none;
 }
@@ -1145,3 +1144,5 @@
   .hc-exam-details { padding: 0 17px 20px; }
   .hc-exam-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
 }
+
+.hc-assistant-header,.hc-assistant-scope,.hc-assistant-form{flex-shrink:0}.hc-assistant-content{flex:1;min-height:0}.hc-assistant-turns .ai-progress-message{color:var(--colorNeutralForeground1);background:var(--colorNeutralBackground1)}
