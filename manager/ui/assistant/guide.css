@@ -153,7 +153,7 @@
 }
 body:has(.ai-panel[data-walk-active=true]) :is(.workspace, .hc-main main, .kv-main, .account-page) { padding-bottom: min(750px, 100dvh); }
 body:has(.hc-assistant) .ai-panel[data-walk-active=true],
-body:has(.hc-assistant) .guide-spotlight:has([data-step=walkthrough]) { visibility: hidden; }
+body:has(.hc-assistant) .guide-spotlight:not([data-companion-focus=true]):has([data-step=walkthrough]) { visibility: hidden; }
 .login-walk-help { display: grid; gap: 10px; }
 .login-walk-help .guide-card { border: 1px solid var(--colorNeutralStroke2); border-radius: 10px; }
 .login-walk-help .guide-card-copy { grid-column: 1 / -1; }
@@ -200,6 +200,15 @@ body:has(.ai-panel[data-forms-guide=true]) .application .workspace { padding-bot
   70%, 100% { opacity: 0; transform: scale(1.09, 1.28); }
 }
 @media (max-width: 820px) {
+  body:has(.walk-dialog, .workspace-tools-guided, .pair-dialog-guided, .drawer-overlay[data-guided=true]) :is(.ai-panel, .hc-assistant) {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    height: 43dvh;
+    max-height: 43dvh;
+  }
+  body:has(.walk-dialog, .workspace-tools-guided, .pair-dialog-guided, .drawer-overlay[data-guided=true]) .ai-companion {
+    position: static;
+    max-height: 110px;
+  }
   .workspace-tools-dialog.workspace-tools-guided, .pair-dialog.pair-dialog-guided {
     inset: max(10px, env(safe-area-inset-top)) 12px auto;
     width: auto;

@@ -275,13 +275,13 @@ export async function serveCloud(options: {
           assertAccess(account);
           if (req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý.', 404);
           assistantRate.check(user.id, 12, 60000);
-          return json(res, await answerSystemAssistant(await body(req, 24 * 1024), { ...assistantOptions, knowledge }));
+          return json(res, await answerSystemAssistant(await body(req, 64 * 1024), { ...assistantOptions, knowledge }));
         }
         if (path === '/api/hcmue/assistant/chat') {
           assertAccess(account);
           if (!hcmue || req.method !== 'POST') throw new CloudError('Không tìm thấy API trợ lý HCMUE.', 404);
           assistantRate.check(user.id, 12, 60000);
-          const input = await body(req, 24 * 1024);
+          const input = await body(req, 64 * 1024);
           const workspace = requestedWorkspace(input.message);
           return json(res, workspace && workspace !== 'hcmue'
             ? await answerSystemAssistant({ ...input, workspace }, { ...assistantOptions, knowledge })

@@ -26,7 +26,7 @@ export interface AssistantContext {
 }
 export interface AssistantReply {
   answer: string;
-  source: "model" | "guide";
+  source: "model" | "guide" | "context";
   references: { id: string; title: string; href?: string }[];
   proposal?: AssistantProposal;
 }

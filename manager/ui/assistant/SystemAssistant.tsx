@@ -8,6 +8,9 @@ import { readReply, type SystemReply } from "./reply";
 import { WalkthroughPanel } from "./WalkthroughPanel";
 import { WalkthroughCatalog } from "./WalkthroughCatalog";
 import { walkAreaLabels, walkthroughFor } from "./walkthroughs";
+import { asksAboutCurrentPage, readCompanionHistory } from "../../assistant/context";
+import { CompanionContextProvider, createCompanion, type Companion } from "./companion";
+import { CompanionCard } from "./CompanionCard";
 import "./assistant.css";
 
 type Turn = { role: "user" | "assistant"; text: string; reply?: SystemReply };
@@ -78,13 +81,17 @@ function arrivalMessage(guide: Guide, account: Account) {
   return `Bạn đã vào ${guide === "admin" ? "trang " : ""}${guideName(guide)}. Bạn có thể hỏi tiếp ngay tại đây.`;
 }
 
-function Conversation({ account, availableProducts, restored, initialQuestion, guide, setGuide, formsStep, active, onClose }: {
+function Conversation({ account, availableProducts, restored, initialQuestion, guide, setGuide, formsStep, active, onClose, companion }: {
   account: Account; availableProducts: readonly Product[]; restored?: Handoff; initialQuestion?: string;
   guide?: Guide; setGuide(guide?: Guide): void; formsStep?: FormsGuideStep; active: boolean; onClose(): void;
+  companion: Companion;
 }) {
   const [turns, setTurns] = useState<Turn[]>(() => restored ? [
     ...restored.turns, { role: "assistant", text: arrivalMessage(restored.guide, account) },
-  ] : []);
+  ] : companion.getSnapshot().turns);
+  useEffect(() => { companion.remember(turns); }, [companion, turns]);
+  const [focus, setFocus] = useState<{ id: string; label: string }>();
+  const resolveFocus = useCallback(() => focus ? companion.resolve(focus.id) : undefined, [companion, focus]);
   const [step, setStep] = useState<GuideTarget>();
   const arrived = Boolean(guide && onGuidePage(guide));
   const walk = walkthroughFor(guide);
@@ -152,7 +159,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
 
   async function send(question: string) {
     if (!question.trim() || request.current) return;
-    const intent = guideIntent(question, active && (!arrived || Boolean(formsStep?.action) ||
+    setFocus(undefined);
+    const intent = asksAboutCurrentPage(question) ? undefined : guideIntent(question, active && (!arrived || Boolean(formsStep?.action) ||
       Boolean(walk && document.querySelector(".ai-panel [data-walk-open]"))));
     if (intent) {
       setError("");
@@ -194,7 +202,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
     try {
       const response = await fetch("/api/assistant/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ message: question.trim(), workspace: workspace(), history: turns.slice(-4).map(({ role, text }) => ({ role, text })) }),
+        body: JSON.stringify({ message: question.trim(), workspace: workspace(), history: readCompanionHistory(turns), companion: companion.read() }),
       });
       let raw;
       try { raw = await response.json(); } catch { throw new Error("Máy chủ chưa trả câu trả lời hợp lệ. Thử gửi lại sau ít phút."); }
@@ -225,7 +233,7 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
     {active && destination && <GuideSpotlight destination={destination} fallback={!arrived} label={targetLabel} onStep={setStep}/>}
     <header className="ai-header">
       <span className="ai-mark"><ChatTeardropText size={23} weight="duotone" /></span>
-      <div><h2 id="system-ai-title">Trợ lý HANU</h2><span>{workspaceName()} · Tra cứu có nguồn</span></div>
+      <div><h2 id="system-ai-title">Trợ lý HANU</h2><span>{workspaceName()} · Đồng hành trên trang</span></div>
       <button disabled={active} aria-label={expanded ? "Thu gọn trợ lý" : "Mở rộng trợ lý"} onClick={() => setExpanded(!expanded)}>
         {expanded ? <ArrowsInSimple size={18} /> : <ArrowsOutSimple size={18} />}</button>
       <button aria-label="Đóng trợ lý" onClick={onClose}><X size={19} /></button>
@@ -267,6 +275,8 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       </>}
     </section>}
     <div className="ai-log" ref={log} role="log" aria-label="Cuộc trò chuyện">
+      <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>
+      {focus && !active && <GuideSpotlight companion label={focus.label} resolve={resolveFocus}/>}
       {!guide && <WalkthroughCatalog initiallyOpen={initialQuestion === ""} onStart={id => void send(id)} allowed={(area, id) => {
         if (area === "admin" && account.role !== "admin") return false;
         const item = walkthroughFor(id);
@@ -274,17 +284,21 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
       }}/>}
       {!turns.length && <div className="ai-welcome">
         <span className="ai-welcome-mark"><ChatTeardropText size={32} weight="duotone" /></span>
-        <h3>Mình có thể giúp gì?</h3><p>Hỏi cách dùng, giải thích lỗi hoặc tìm hướng dẫn cho từng ứng dụng.</p>
+        <h3>Mình có thể giúp gì?</h3><p>Mình theo trạng thái trang và thao tác gần đây để cùng bạn xử lý bước tiếp theo.</p>
         <div className="ai-suggestions">{["Làm sao vào trang Quản trị?", "Tôi có quyền Live không?", "Xem bản đồ vector ở đâu?", ...(workspace() === "forms" ? ["Cách liên kết Chrome profile?", "Cách chuẩn bị hồ sơ?"] : [])].map(question =>
           <button key={question} onClick={() => void send(question)}>{question}<ArrowUp size={14} /></button>)}</div>
       </div>}
       {turns.map((turn, index) => <article key={index} className={`ai-message ai-message-${turn.role}`}>
-        {turn.role === "assistant" && <strong>HANU <small>{turn.reply?.source === "guide" ? "Từ tài liệu" : "AI"}</small></strong>}
+        {turn.role === "assistant" && <strong>HANU <small>{turn.reply?.source === "guide" ? "Từ tài liệu" : turn.reply?.source === "context" ? "Từ màn hình" : "AI"}</small></strong>}
         <p>{turn.text}</p>
+        {turn.reply?.focus && <button className="ai-focus-action" type="button" onClick={() => {
+          const target = turn.reply!.focus!;
+          if (companion.resolve(target.id)) { setGuide(undefined); setFocus(target); }
+        }}>Chỉ vị trí “{turn.reply.focus.label}”</button>}
         {!!turn.reply?.references.length && <nav aria-label="Nguồn tham khảo">{turn.reply.references.map(ref =>
           <a key={ref.id} href={ref.href} target="_blank" rel="noreferrer"><Books size={13} />{ref.title}</a>)}</nav>}
       </article>)}
-      {pending && <div className="ai-thinking" role="status"><span /><span /><span />Đang tra cứu hướng dẫn</div>}
+      {pending && <div className="ai-thinking" role="status"><span /><span /><span />Đang xem ngữ cảnh và hướng dẫn</div>}
       {error && <div className="ai-error" role="alert"><strong>Chưa có câu trả lời</strong><p>{error}</p></div>}
     </div>
     <form className="ai-composer" onSubmit={event => { event.preventDefault(); void send(text); }}>
@@ -301,12 +315,20 @@ function Conversation({ account, availableProducts, restored, initialQuestion, g
 export function SystemAssistant({ account, availableProducts, children }: {
   account: Account; availableProducts: readonly Product[]; children: ReactNode;
 }) {
+  const [companion] = useState(() => createCompanion(account.id));
   const [restored, setRestored] = useState(() => restoreGuide(account, availableProducts));
-  const [open, setOpen] = useState(Boolean(restored));
+  const [open, setOpen] = useState(Boolean(restored) || companion.shouldResume());
   const [guide, setGuide] = useState(restored?.guide);
   const [initialQuestion, setInitialQuestion] = useState<string>();
   const [formsStep, setFormsStep] = useState<FormsGuideStep>();
   const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => companion.start(), [companion]);
+  useEffect(() => { companion.setOpen(open); }, [companion, open]);
+  useEffect(() => companion.report("account", [
+    { label: "Quyền Live", value: account.liveEnabled ? "Đã được cấp" : "Chưa được cấp" },
+    { label: "Vai trò HANU", value: account.role === "admin" ? "Quản trị viên" : "Người dùng" },
+  ]), [companion, account.liveEnabled, account.role]);
+  useEffect(() => { companion.read(); }, [companion, formsStep, guide]);
   const close = useCallback(() => {
     setOpen(false);
     setGuide(undefined);
@@ -331,7 +353,7 @@ export function SystemAssistant({ account, availableProducts, children }: {
     return handoff("");
   };
   const dedicatedHcmue = location.pathname === "/hcmue";
-  return <GuideContext.Provider value={{ active, handoff, openCatalog, formsGuide, walkthrough: walk && onGuidePage(walk.id) ? walk.id : undefined, reportFormsStep: setFormsStep, startFormsGuide: setGuide,
+  return <CompanionContextProvider.Provider value={companion}><GuideContext.Provider value={{ active, handoff, openCatalog, formsGuide, walkthrough: walk && onGuidePage(walk.id) ? walk.id : undefined, reportFormsStep: setFormsStep, startFormsGuide: setGuide,
     switching: active && Boolean(allowedGuide && (allowedGuide === "CH-03" || productForGuide(allowedGuide) || isFormsGuide(allowedGuide) && !formsGuide)), availableProducts }}>
     {children}
     {(!dedicatedHcmue || open) && <button ref={trigger} type="button" className="ai-launcher" aria-label="Trợ lý AI" title="Hỏi trợ lý HANU"
@@ -339,6 +361,6 @@ export function SystemAssistant({ account, availableProducts, children }: {
       {open ? <X size={24} /> : <ChatTeardropText size={27} weight="duotone" />}<span>Hỏi AI</span>
     </button>}
     {open && <AssistantBoundary onClose={close}><Conversation account={account} availableProducts={availableProducts} restored={restored}
-      initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} formsStep={formsStep} onClose={close}/></AssistantBoundary>}
-  </GuideContext.Provider>;
+      initialQuestion={initialQuestion} active={active} guide={allowedGuide} setGuide={setGuide} formsStep={formsStep} onClose={close} companion={companion}/></AssistantBoundary>}
+  </GuideContext.Provider></CompanionContextProvider.Provider>;
 }

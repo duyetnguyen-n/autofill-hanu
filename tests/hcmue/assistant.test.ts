@@ -8,6 +8,14 @@ import { scheduleEvents } from "../../integrations/hcmue/runner/diagnostics";
 import type { Schedule } from "../../integrations/hcmue/protocol";
 
 describe("HCMUE assistant", () => {
+  it("keeps notice-specific diagnostics when a live page snapshot is also available", async () => {
+    const input = { message: "Thông báo này có nghĩa gì?", context: { noticeCode: "HC-RUNNER-OFFLINE" } };
+    const original = await answerAssistant(input, {});
+    const withPage = await answerAssistant({ ...input, companion: {
+      page: { path: "/hcmue", title: "HCMUE", capturedAt: new Date().toISOString() }, goal: "Chuẩn bị HSK 5",
+    } }, {});
+    expect(withPage).toEqual(original);
+  });
   it("offers local guidance and a typed action when the model is unavailable", async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 429 }));
     const reply = await answerAssistant({ message: "Tạo lịch HSK 5 diễn tập" }, { apiKey: "fixture-key", send });

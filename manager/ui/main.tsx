@@ -1,3 +1,4 @@
+import { useCompanionFacts, useCompanionOpen } from "./assistant/companion";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "./assistant/GuidedDialog";
 import React,{useEffect,useLayoutEffect,useState,useRef,lazy,Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -104,6 +105,16 @@ function App({cloud=false,account,logout,hcmueEnabled=false,chinesetestEnabled=f
     finally{const count=(pending.get(scope)??1)-1;if(count)pending.set(scope,count);else pending.delete(scope);setPendingScopes(new Set(pending.keys()));setBusy(pending.size>0);}
   }
   const selected=state.sessions.filter(s=>selection.has(s.id));
+  useCompanionFacts("forms", [
+    { label: "Kết nối trang quản lý", value: serverConnected ? "Đang kết nối" : "Đang mất kết nối; dữ liệu có thể đã cũ" },
+    { label: "Chrome profile", value: `${state.sessions.length} profile; ${selection.size} đang chọn; ${state.sessions.filter(sessionReady).length} sẵn sàng` },
+    { label: "Chế độ chạy", value: mode === "test" ? "Diễn tập, không gửi đơn thật" : "Live, đăng ký thật" },
+    { label: "Profile đang xem", value: detail ? status(state.sessions.find(s=>s.id===detail) ?? {connected:false} as SessionView) : "Chưa mở chi tiết" },
+    { label: "Profile đang chọn", value: selected.length ? selected.slice(0,3).map((s,i)=>`Profile ${i+1}: ${status(s)}`).join("; ") : "Chưa chọn profile" },
+    { label: "Đang xử lý", value: working ? "Đang chờ kết quả thao tác" : "Không có thao tác đang chờ" },
+    { label: "Bước tiếp theo", value: !serverConnected ? "Chờ trang quản lý kết nối lại trước khi thao tác; các lượt có thể vẫn đang chạy." : !state.sessions.length ? "Bấm Thêm profile để liên kết extension trong đúng Chrome profile." : state.sessions.some(s=>!s.connected) ? "Mở đúng Chrome profile và kiểm tra kết nối extension của các profile mất kết nối." : state.sessions.some(s=>!profileReady(s)) ? "Mở Chi tiết của profile cần dùng để kiểm tra email, hồ sơ, ảnh và đồng bộ." : "Chọn profile, kiểm tra cấu hình và chạy Test trước khi dùng Live." },
+  ]);
+
   const duplicate=selected.filter((s,i)=>{const key=s.profile?.values.identityType==='HỘ CHIẾU'?s.profile?.values.passportNumber||s.profile?.values.identityNumber:s.profile?.values.identityNumber;return key&&selected.some((other,j)=>j!==i&&(other.profile?.values.identityType==='HỘ CHIẾU'?other.profile?.values.passportNumber||other.profile?.values.identityNumber:other.profile?.values.identityNumber)===key);});
   const sessions=state.sessions.filter(s=>(filter==='all'||filter==='attention'&&attention(s)||filter==='ready'&&sessionReady(s)||filter==='completed'&&s.run?.status==='completed')&&`${s.name} ${s.expectedEmail} ${s.profile?.values.fullName??''}`.toLowerCase().includes(query.toLowerCase()));
   const liveTarget=pinnedLive??currentRunTarget(state.registrationSchedule,state.groups,state.sessions);
@@ -184,7 +195,8 @@ function Details({session:s,close,act,busy,cloud=false,relink}:{session:SessionV
   const [verified,setVerified]=useState(false),[confirmUnlink,setConfirmUnlink]=useState(false),[actionsOpen,setActionsOpen]=useState(false);
   const { formsGuide, reportFormsStep, walkthrough }=useGuide();
   const guided=formsGuide==='prepare-profile';
-  const shareWithChat=Boolean(formsGuide||walkthrough);
+  const companionOpen=useCompanionOpen();
+  const shareWithChat=Boolean(formsGuide||walkthrough||companionOpen);
   const [phase,setPhase]=useState<2|3|4|5>(2);
   const [saved,setSaved]=useState<{name:string;email:string;profile:Profile;custom:typeof custom}>();
   const savedCurrent=saved?.name===name&&saved.email===email&&saved.profile===profile&&saved.custom===custom;

@@ -71,7 +71,7 @@ export function CloudGate({children,hcmueEnabled=false,chinesetestEnabled=false}
       const timeout=setTimeout(()=>controller?.abort(),15000);
       inFlight=(async()=>{try{
         const response=await fetch('/api/auth/me',{cache:'no-store',signal});const result=await response.json();if(stopped||current!==generation)return;
-        if(response.status===401){currentAccount=undefined;setUnavailable(false);setAccount(undefined);setError('Phiên đăng nhập đã hết hạn. Đăng nhập lại bằng Google.');}
+        if(response.status===401){window.dispatchEvent(new Event('hanu-session-ended'));currentAccount=undefined;setUnavailable(false);setAccount(undefined);setError('Phiên đăng nhập đã hết hạn. Đăng nhập lại bằng Google.');}
         else if(!response.ok)throw new Error(result.error??'Không kiểm tra được đăng nhập.');
         else{currentAccount=result;setAccount(result);setUnavailable(false);setError('');}
         failures=0;lastChecked=Date.now();
@@ -97,7 +97,7 @@ export function CloudGate({children,hcmueEnabled=false,chinesetestEnabled=false}
     if(!response.ok)throw new Error(data.error??'Không mở được đăng nhập.');location.assign(data.url);
   }catch(e){setError((e as Error).message);setPending(false);}}
   async function logout(){setPending(true);try{
-    const response=await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const result=await response.json();if(!response.ok)throw new Error(result.error??'Không đăng xuất được.');monitor.current.signedOut();setAccount(undefined);setError('');
+    const response=await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const result=await response.json();if(!response.ok)throw new Error(result.error??'Không đăng xuất được.');window.dispatchEvent(new Event('hanu-session-ended'));monitor.current.signedOut();setAccount(undefined);setError('');
     try{localStorage.setItem('hanu-session-updated',crypto.randomUUID());}catch{}
   }finally{setPending(false);}}
   if(checking)return <div className="login-loading" role="status"><div className="login-skeleton"/><span>Đang mở không gian của bạn…</span></div>;

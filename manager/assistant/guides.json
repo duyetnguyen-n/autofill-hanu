@@ -1,6 +1,27 @@
 {
   "guides": [
     {
+      "id": "system-companion",
+      "scope": "system",
+      "title": "AI đồng hành theo trạng thái trang",
+      "codes": [],
+      "aliases": [
+        "AI đồng hành",
+        "ngữ cảnh đang theo",
+        "mục tiêu đang làm",
+        "thao tác gần đây",
+        "mình nên làm gì tiếp",
+        "trợ lý hiểu màn hình"
+      ],
+      "steps": [
+        "Mở Hỏi AI và bấm Mình nên làm gì tiếp? để hỏi theo trạng thái màn hình hiện tại. Trợ lý đọc khu vực, hộp thoại, thông báo, lý do khóa nút và thao tác gần đây; có thể bấm Chỉ vị trí để đánh dấu nút được nhắc tới.",
+        "Mở Ngữ cảnh đang theo để xem trạng thái và lưu Mục tiêu đang làm. Hội thoại, mục tiêu và tối đa 12 sự kiện gần đây được nhớ riêng theo tài khoản trong tab trong 2 giờ; chuyển trang qua liên kết nội bộ khi đang mở sẽ giữ khung chat. Đăng xuất sẽ xóa bộ nhớ này.",
+        "Trợ lý không đọc giá trị nhập trong biểu mẫu, mật khẩu, cookie hoặc mã liên kết. Quan sát không gọi model liên tục; chỉ gửi ngữ cảnh khi bạn đặt câu hỏi. Gợi ý từ trạng thái trang vẫn dùng được khi model lỗi. Một lần bấm không chứng minh đã lưu, bật lịch hoặc đăng ký thành công."
+      ],
+      "source": "docs/AI-COMPANION.md",
+      "href": "/account"
+    },
+    {
       "id": "system-knowledge", "scope": "system", "title": "Kho tri thức và bản đồ vector", "codes": [],
       "aliases": ["xem vector", "bản đồ vector", "kho tri thức", "thêm tài liệu", "rag", "tự học"],
       "steps": ["Mở Kho tri thức từ thanh điều hướng hoặc truy cập /knowledge. Chọn Bản đồ vector để khám phá các đoạn đã lập chỉ mục.", "Quản trị viên có thể thêm tệp Markdown hoặc TXT, xem trước và xuất bản. Chọn Tạo vector nếu tài liệu chưa có embedding.", "RAG tra cứu các tài liệu đã xuất bản, không tự huấn luyện model từ cuộc trò chuyện. Các điểm 2D/3D là phép chiếu vector, không phải toàn bộ không gian ngữ nghĩa."],

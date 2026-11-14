@@ -4,6 +4,12 @@
 
 Mở **Trợ lý HCMUE** trên màn HCMUE, hoặc bấm **Hỏi AI** từ thông báo, báo cáo hay lịch cần xem. Trợ lý tra hướng dẫn theo mã lỗi và câu hỏi. Khi chọn một lịch, trợ lý có thể giải thích trạng thái và các mốc chẩn đoán của lịch đó. Nhật ký gốc nằm trên Runner.
 
+Trợ lý nhận thêm trạng thái màn HCMUE, hộp thoại, lý do nút bị khóa và các thao tác
+gần đây. Bấm **Mình nên làm gì tiếp?** để hỏi ngay theo màn đang xem. Trong
+**Ngữ cảnh đang theo**, lưu mục tiêu để tiếp tục khi chuyển ứng dụng. Giá trị nhập
+vào biểu mẫu không được thu thập; các trạng thái lịch được đọc riêng như trước.
+Xem [AI đồng hành](../AI-COMPANION.md) về bộ nhớ phiên và phạm vi quan sát.
+
 Bạn có thể yêu cầu tạo hoặc sửa lịch nháp, mở bước xác nhận bật lịch và kiểm tra kết quả. Xem lại tài khoản, đợt thi, ngày giờ Việt Nam và chế độ trước khi lưu. Nếu có câu hỏi bổ sung, hoàn thành chúng trong hộp chuẩn bị lịch. Với Runner cũ, cập nhật để đọc các mốc chẩn đoán và lưu lịch nháp từ trợ lý.
 
 Người vận hành cấu hình `OPENROUTER_API_KEY` trong môi trường backend. `HANU_HCMUE_ASSISTANT_MODEL` chọn model và mặc định là `deepseek/deepseek-v3.2`. Khi thiếu key hoặc dịch vụ model gặp lỗi, khung chat trả hướng dẫn từ kho HCMUE. Chat và các thao tác Runner có giới hạn yêu cầu riêng.

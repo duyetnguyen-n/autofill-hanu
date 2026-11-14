@@ -1,3 +1,4 @@
+import { useCompanionFacts } from "../../../manager/ui/assistant/companion";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -395,6 +396,17 @@ export function HcmuePage({
   const accountProblem = busy ? busyProblem : !updatedRunner
     ? blocked("HC-BAN-CU", "Runner đang dùng bản cũ", "Tải bản mới trong Cài Runner, đóng bản cũ rồi mở bản mới.")
     : !chosen.length ? selectProblem : !exams.length ? examsProblem : undefined;
+
+  useCompanionFacts("hcmue", [
+    { label: "HCMUE Runner", value: connectionProblem?.title ?? "Đã kết nối và đối chiếu" },
+    { label: "Tài khoản thi", value: `${accounts.length} tài khoản; ${chosen.length} đang chọn` },
+    { label: "Kỳ thi đã tải", value: String(exams.length) },
+    { label: "Lịch đang hoạt động", value: String(active.length) },
+    { label: "Lịch cần kiểm tra", value: String(attention.length) },
+    { label: "Chế độ mẫu", value: test ? "Diễn tập, không gửi đơn thật" : "Live, đăng ký thật" },
+    { label: "Đang xử lý", value: busy ? "Đang chờ Runner phản hồi" : "Không có thao tác đang chờ" },
+    { label: "Bước tiếp theo", value: connectionProblem ? connectionProblem.steps.join(" ") : !accounts.length ? "Bấm Thêm tài khoản và đăng nhập HCMUE." : !exams.length ? "Tải kỳ thi rồi chọn đợt thi và giờ gửi cho tài khoản cần dùng." : accountProblem ? accountProblem.steps.join(" ") : "Kiểm tra hồ sơ/API, chuẩn bị lịch và xem lại thông tin trước khi bật lịch." },
+  ]);
   const loadProblem = busy ? busyProblem : !accounts.length
     ? blocked("HC-CHUA-TK", "Chưa có tài khoản để tải kỳ thi", "Bấm Thêm tài khoản và đăng nhập HCMUE trước.") : undefined;
   const bulkProblem = busy ? busyProblem : !chosen.length ? selectProblem : !exam
@@ -992,7 +1004,7 @@ export function HcmuePage({
         </main>
       </div>
       <Dialog
-        open={pairOpen && !assistant}
+        open={pairOpen}
         onOpenChange={(_, d) => {
           setPairOpen(d.open);
           setPairCode("");
@@ -1037,7 +1049,7 @@ export function HcmuePage({
         </DialogSurface>
       </Dialog>
       <Dialog
-        open={!!verify && !assistant}
+        open={!!verify}
         onOpenChange={(_, d) => {
           if (!d.open) setVerify(undefined);
         }}
@@ -1072,7 +1084,7 @@ export function HcmuePage({
         </DialogSurface>
       </Dialog>
       <Dialog
-        open={loginOpen && !assistant}
+        open={loginOpen}
         onOpenChange={(_, d) => {
           setLoginOpen(d.open);
           if (!d.open) setPassword("");
@@ -1137,7 +1149,7 @@ export function HcmuePage({
           {loginOpen && !assistant && noticeHost}
         </DialogSurface>
       </Dialog>
-      <Dialog open={armOpen && !assistant} onOpenChange={(_, d) => setArmOpen(d.open)}>
+      <Dialog open={armOpen} onOpenChange={(_, d) => setArmOpen(d.open)}>
         <DialogSurface>
           <DialogBody>
             <DialogTitle>Bật {arming.length} lịch trên máy?</DialogTitle>
@@ -1185,7 +1197,7 @@ export function HcmuePage({
           {armOpen && !assistant && noticeHost}
         </DialogSurface>
       </Dialog>
-      <Dialog open={!!details && !assistant} onOpenChange={(_, d) => { if (!d.open) setDetails(undefined); }}>
+      <Dialog open={!!details} onOpenChange={(_, d) => { if (!d.open) setDetails(undefined); }}>
         <DialogSurface><DialogBody>
           <DialogTitle>Dữ liệu kỳ thi từ HCMUE</DialogTitle>
           <DialogContent><p>Giữ nguyên các trường API trả về. Nhận xét của tool được hiển thị riêng trên website.</p><pre className="hc-api-data">{JSON.stringify(details, null, 2)}</pre></DialogContent>
@@ -1193,7 +1205,7 @@ export function HcmuePage({
         </DialogBody>{details && !assistant && noticeHost}</DialogSurface>
       </Dialog>
       <Dialog
-        open={!!questionDraft && !assistant}
+        open={!!questionDraft}
         onOpenChange={(_, d) => {
           if (!d.open) setQuestionDraft(undefined);
         }}

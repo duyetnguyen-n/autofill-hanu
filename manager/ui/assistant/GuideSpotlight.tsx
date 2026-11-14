@@ -12,12 +12,13 @@ export function visibleGuideTarget(step: GuideTarget) {
       getComputedStyle(element).visibility === "visible");
 }
 
-export function GuideSpotlight({ destination, fallback = false, label, onStep, resolve }: {
+export function GuideSpotlight({ destination, fallback = false, label, onStep, resolve, companion = false }: {
   destination?: GuideTarget;
   fallback?: boolean;
   label: string;
   onStep?(step: GuideTarget): void;
   resolve?(): HTMLElement | undefined;
+  companion?: boolean;
 }) {
   const [target, setTarget] = useState<Target>();
   useLayoutEffect(() => {
@@ -71,7 +72,7 @@ export function GuideSpotlight({ destination, fallback = false, label, onStep, r
     };
   }, [destination, fallback, onStep, resolve]);
   if (!target) return null;
-  return createPortal(<div className="guide-spotlight" aria-hidden="true">
+  return createPortal(<div className="guide-spotlight" data-companion-focus={companion} aria-hidden="true">
     <div className="guide-halo" data-step={target.step} style={{ left: target.x, top: target.y, width: target.width, height: target.height }} />
     <div className="guide-pin" data-below={target.below} style={{ left: target.labelX, top: target.below ? target.y + target.height + 12 : target.y - 12 }}>
       <CursorClick size={16} weight="fill" />

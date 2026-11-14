@@ -37,6 +37,33 @@ it("explains the disabled ChineseTest Live button using the bundled knowledge gu
   expect(reply.answer).toContain("Kiểm tra lại runner");
   expect(reply.answer).toContain("ô chấp nhận lệ phí");
 });
+it("explains the current screen on model failure, while treating a click as an attempt only", async () => {
+  const companion = {
+    page: { path: "/chinesetest", title: "ChineseTest", capturedAt: new Date().toISOString(),
+      dialogs: ["Chuẩn bị Live"], controls: [{ id: "c-2", label: "Chuẩn bị", disabled: true, reason: "Cập nhật Runner rồi kiểm tra lại runner." }], focusedControl: "c-2" },
+    goal: "Chuẩn bị HSK 5", events: [{ kind: "click", path: "/chinesetest", label: "Đã chọn: Chuẩn bị", at: new Date().toISOString() }],
+  };
+  const reply = await answerSystemAssistant({ workspace: "chinesetest", message: "Nút này sao không bấm được?", companion }, {});
+  expect(reply).toMatchObject({ source: "context", focus: { id: "c-2", label: "Chuẩn bị" } });
+  expect(reply.answer).toContain("Cập nhật Runner");
+  expect(reply.answer).toContain("Chuẩn bị HSK 5");
+  expect(reply.answer).toContain("chưa chứng minh");
+});
+it("passes sanitized live context and longer history, and only permits pointing at observed controls", async () => {
+  const send = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: {
+    content: JSON.stringify({ answer: "Kết nối Runner trước.", referenceIds: [], focusControlId: "c-3" }),
+  } }] }));
+  const companion = { page: { path: "/hcmue", capturedAt: new Date().toISOString(), controls: [{ id: "c-3", label: "Bật lịch", disabled: true, reason: "Runner chưa kết nối" }], password: "secret" } };
+  const history = Array.from({ length: 12 }, (_, i) => ({ role: "user", text: `Câu hỏi ${i}` }));
+  const reply = await answerSystemAssistant({ message: "Làm tiếp thế nào?", history, companion }, { apiKey: "fixture", send });
+  const input = JSON.parse(JSON.parse(String(send.mock.calls[0][1]?.body)).messages[1].content);
+  expect(input.companion.page.controls[0]).toMatchObject({ id: "c-3", reason: "Runner chưa kết nối" });
+  expect(input.history).toHaveLength(10);
+  expect(input.companion.page).not.toHaveProperty("password");
+  expect(reply.focus?.id).toBe("c-3");
+  const invented = readReply({ answer: "x", source: "context", focus: { id: "#arbitrary-selector", label: "bad" } });
+  expect(invented.focus).toBeUndefined();
+});
 it("serves shared AI and knowledge without HCMUE enabled and keeps writes admin only", async () => {
   const f = await httpFixture(undefined, false, false, true); cleanup.push(f.close);
   expect((await f.api("assistant/chat", 1, { message: "Google Forms Direct" })).status).toBe(200);

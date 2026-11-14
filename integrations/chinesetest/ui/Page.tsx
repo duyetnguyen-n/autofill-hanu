@@ -1,3 +1,4 @@
+import { useCompanionFacts } from "../../../manager/ui/assistant/companion";
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import { GuidedDialog as Dialog, GuidedDialogSurface as DialogSurface } from "../../../manager/ui/assistant/GuidedDialog";
 import { FluentProvider, Button, DialogBody, DialogTitle, DialogContent, DialogActions } from "@fluentui/react-components";
@@ -151,6 +152,16 @@ export function ChineseTestPage({account,logout,hcmueEnabled=false}:{account:Acc
     liveWithoutQuote.length>0&&!liveNeedsUpdate&&!agreeFeeAtOpening&&"chấp nhận lệ phí khi chưa có báo phí",
   ].filter(Boolean);
   const liveBlocked=busy||checkingLiveRunner||!ready||liveNeedsUpdate||missingLiveConsents.length>0;
+  useCompanionFacts("chinesetest", [
+    { label: "ChineseTest Runner", value: !device ? "Chưa chọn máy" : !device.connected ? "Mất kết nối; trạng thái đã đọc có thể đã cũ" : !trusted ? "Chưa đối chiếu dấu vân tay" : ready ? "Đã kết nối và đối chiếu" : "Chưa đọc được trạng thái" },
+    { label: "Tài khoản thi", value: `${rows.length} tài khoản; ${selected.size} đang chọn` },
+    { label: "Lịch đang hoạt động", value: String(state?.schedules.filter(s=>activeStatus(s.status)).length ?? 0) },
+    { label: "Cần kiểm tra", value: String(Object.values(rowErrors).filter(Boolean).length)+" tài khoản có lỗi thao tác" },
+    { label: "Hồ sơ đang xem", value: editor ? "Đang mở phần sửa hồ sơ ChineseTest" : "Chưa mở hồ sơ" },
+    { label: "Đang xử lý", value: busy ? "Đang chờ Runner phản hồi" : "Không có thao tác đang chờ" },
+    { label: "Bước tiếp theo", value: !device ? "Mở ChineseTest Runner và bấm Nhập mã liên kết." : !device.connected ? "Mở Runner trên máy đã liên kết, kiểm tra mạng và chờ kết nối lại." : !trusted ? "Đối chiếu dấu vân tay với cửa sổ Runner trước khi dùng." : !state ? "Đọc lại trạng thái Runner." : !rows.length ? "Thêm tài khoản thi, kiểm tra hồ sơ và ảnh trước khi chuẩn bị lịch." : "Kiểm tra hồ sơ, kỳ thi, điểm thi, lệ phí và giờ bắt đầu trước khi chuẩn bị lịch." },
+  ]);
+
   const catalog=useChineseTestCatalog(request,`${account.id}:${deviceId}`,ready,plans);
   return <FluentProvider theme={dark?darkTheme:lightTheme} className={`hc-app ct-app ${dark?"hc-dark":""}`}>
     <WorkspaceSidebar page="chinesetest" chinesetestEnabled hcmueEnabled={hcmueEnabled} connected={ready} email={account.email} logout={()=>void logout()} items={[

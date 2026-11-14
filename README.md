@@ -1,5 +1,14 @@
 # HANU Coordinator 1.9.0
 
+## AI đồng hành trên website
+
+Trợ lý nhận trạng thái của trang, hộp thoại, thông báo, lý do khóa nút và thao tác
+gần đây từ Google Forms, HCMUE và ChineseTest. Mở **Hỏi AI**, bấm **Mình nên làm
+gì tiếp?** hoặc hỏi trực tiếp về màn đang xem. Mở **Ngữ cảnh đang theo** để lưu
+mục tiêu. Bộ nhớ riêng theo tài khoản trong từng tab giữ hội thoại và mục tiêu
+khi chuyển trang, không thu thập giá trị nhập trong biểu mẫu.
+Xem [cách dùng và giới hạn](docs/AI-COMPANION.md).
+
 ## Google Forms thử nghiệm
 
 Mở **Google Forms thử nghiệm** (`/google-direct`) trong trang quản lý. Màn hình

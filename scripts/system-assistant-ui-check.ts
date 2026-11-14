@@ -90,7 +90,9 @@ try {
   await expect(page.getByRole("button", { name: "Trợ lý AI", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Trợ lý AI", exact: true }).click();
   panel = page.getByRole("dialog", { name: "Trợ lý HANU", exact: true });
-  await panel.getByRole("button", { name: "Làm sao vào trang Quản trị?" }).click();
+  await expect(panel.getByRole("log")).toContainText("Liên kết extension");
+  await panel.getByRole("textbox").fill("Làm sao vào trang Quản trị?");
+  await panel.getByRole("button", { name: "Gửi câu hỏi" }).click();
   await expect(page.locator(".guide-halo[data-step=menu]")).toBeVisible();
   await page.getByRole("button", { name: "Tài khoản và công cụ", exact: true }).click();
   const menu = page.getByRole("dialog", { name: "Tài khoản và công cụ", exact: true });

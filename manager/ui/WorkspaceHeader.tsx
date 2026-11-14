@@ -3,6 +3,7 @@ import { Button, Dialog, DialogTrigger, DialogSurface, DialogBody, DialogTitle, 
 import { BookOpen, Moon, Sun, UserCircle, Clock, ArrowUpRight, ShieldCheck, Graph } from '@phosphor-icons/react';
 import type { Account } from '../../src/account';
 import { guideTargets, productAtPath, targetMarker, useGuide } from './assistant/guide';
+import { useCompanionOpen } from './assistant/companion';
 import './workspace-header.css';
 
 export function WorkspaceHeader({ title, icon, context='Không gian làm việc', dark, toggleTheme, themeLabel='Đổi giao diện sáng tối', guideHref, guideLabel='Hướng dẫn', primaryAction, tools, account, logout, products=[] }: {
@@ -13,10 +14,12 @@ export function WorkspaceHeader({ title, icon, context='Không gian làm việc'
 }) {
   const [error,setError]=useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
-  const { active: guiding, switching, availableProducts, walkthrough } = useGuide();
+  const { active: guideActive, switching, availableProducts, walkthrough } = useGuide();
+  const companionOpen = useCompanionOpen();
+  const guiding = guideActive || companionOpen;
   const guidedDownload = walkthrough && ["CH-04", "GF-01", "HC-01", "CT-01"].includes(walkthrough);
   const productLinks = switching ? availableProducts.filter(product => product.href !== location.pathname) : products;
-  useLayoutEffect(() => { if (!guiding) setToolsOpen(false); }, [guiding]);
+  useLayoutEffect(() => { if (!guideActive) setToolsOpen(false); }, [guideActive, companionOpen]);
   return <header className="workspace-header">
     <div className="wh-location"><span className="wh-product-icon">{icon}</span><div><span className="wh-context">{context}</span><strong>{title}</strong></div></div>
     <div className="wh-actions">

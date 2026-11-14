@@ -7,6 +7,9 @@ import { type AssistantContext, type AssistantProposal, type AssistantReply, run
 import { examKey, statusLabel, type Exam, type HcmueAccount, type Schedule } from "../protocol";
 import { type AccountPlan, planForSchedule } from "./planning";
 import { NoticeCenter } from "./HcmueNotice";
+import { useCompanion } from "../../../manager/ui/assistant/companion";
+import { CompanionCard } from "../../../manager/ui/assistant/CompanionCard";
+import { asksAboutCurrentPage } from "../../../manager/assistant/context";
 
 export interface AssistantScope {
   noticeCode?: string;
@@ -36,7 +39,10 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
 }) {
   const [scheduleId, setScheduleId] = useState(scope.scheduleId ?? "");
   const [message, setMessage] = useState("");
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const companion = useCompanion();
+  const [turns, setTurns] = useState<Turn[]>(() => companion?.getSnapshot().hcmueTurns ?? []);
+  useEffect(() => { companion?.remember(turns, "hcmue"); }, [companion, turns]);
+  useEffect(() => { companion?.setOpen(true, "hcmue"); return () => companion?.setOpen(false, "hcmue"); }, [companion]);
   const [pending, setPending] = useState(false);
   const showNotice = useContext(NoticeCenter);
   const guide = useGuide();
@@ -75,14 +81,14 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
   async function send(question: string, keepContext = false) {
     const text = question.trim();
     if (!text || requestRef.current) return;
-    if (!keepContext && guideIntent(text) && guide.handoff(text)) {
+    if (!keepContext && !asksAboutCurrentPage(text) && guideIntent(text) && guide.handoff(text)) {
       onClose();
       return;
     }
     const controller = new AbortController();
     requestRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), 20_000);
-    const history = turns.slice(-6).map(({ role, text }) => ({ role, text: text.slice(0, 600) }));
+    const history = turns.slice(-10).map(({ role, text }) => ({ role, text: text.slice(0, 900) }));
     setTurns(old => [...old, { role: "user", text }]);
     setMessage("");
     setDraft(undefined);
@@ -96,7 +102,7 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
       });
       const response = await fetch("/api/hcmue/assistant/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ message: text, history, context }),
+        body: JSON.stringify({ message: text, history, context, companion: companion?.read() }),
       });
       const reply = await response.json() as AssistantReply & { error?: string };
       if (!response.ok) throw new Error(reply.error || "Chưa nhận được câu trả lời.");
@@ -157,6 +163,7 @@ function HcmueAssistantPanel({ scope, schedules, exams, accounts, liveEnabled, r
         </div>
         <div className="hc-assistant-content" ref={logRef} tabIndex={0}>
           <div className="hc-assistant-turns" role="log" aria-label="Cuộc trò chuyện">
+            {companion && <CompanionCard companion={companion} pending={pending} onAsk={question => void send(question)}/>}
             {!turns.length && <>
               <article className="hc-assistant-turn hc-assistant-assistant"><p>Chào bạn! Mình có thể hướng dẫn dùng HCMUE, giải thích lỗi và kiểm tra trạng thái lịch.</p></article>
               <div className="hc-assistant-prompts">

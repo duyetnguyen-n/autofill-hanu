@@ -2,6 +2,15 @@
 
 Danh mục gồm 68 luồng theo giao diện HANU hiện có. Mở **Danh mục hướng dẫn** trong chat để tìm theo tên hoặc lọc theo ứng dụng. Có thể nhập mã luồng, chẳng hạn `HC-06`, trực tiếp trong chat. Những mục quản trị và ứng dụng chưa được bật tuân theo quyền của tài khoản. Luồng đăng nhập bắt đầu ở nút **Hướng dẫn đăng nhập** và tiếp tục trên trang Tài khoản khi quay lại từ Google.
 
+## Đồng hành theo màn hình hiện tại
+
+Trợ lý chung và trợ lý HCMUE nhận cùng lớp ngữ cảnh trang. Bấm **Mình nên làm gì
+tiếp?** để đọc trạng thái thực tế và lý do đang bị chặn. Mở **Ngữ cảnh đang theo**
+để xem các dữ kiện, thao tác gần đây và lưu mục tiêu. Gợi ý xuất hiện ngay trong
+chat, có thể bỏ qua hoặc **Chỉ vị trí** nếu gợi ý nói về nút bị khóa. Khi chuyển
+trang bằng liên kết nội bộ lúc chat đang mở, chat tiếp tục ở trang đích; đóng rồi
+mở lại vẫn giữ hội thoại. Xem [hướng dẫn chi tiết](AI-COMPANION.md).
+
 ## Cách hướng dẫn dùng chung
 
 - **Chỉ dẫn trên web.** Làm nổi đúng nút hoặc trường trên màn hình, hiển thị việc cần làm và giữ khung chat. Sau khi người dùng thao tác, đọc trạng thái mới để quyết định bước kế tiếp.

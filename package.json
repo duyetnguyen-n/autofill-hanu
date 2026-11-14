@@ -50,6 +50,7 @@
     "test:hcmue": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue",
     "test:hcmue-rag": "node scripts/run-node24.mjs node_modules/vitest/vitest.mjs run tests/hcmue/knowledge.test.ts tests/hcmue/knowledge-store.test.ts tests/hcmue/assistant.test.ts",
     "test:hcmue-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-ui-check.ts",
+    "test:companion-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/companion-ui-check.ts",
     "test:assistant-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/system-assistant-ui-check.ts",
     "bench:hcmue": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/hcmue-benchmark.ts",
     "test:runner-launch-ui": "node scripts/run-node24.mjs node_modules/tsx/dist/cli.mjs scripts/runner-launch-ui-check.ts",
